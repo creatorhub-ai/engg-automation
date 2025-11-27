@@ -3,12 +3,12 @@ import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
 import nodemailer from "nodemailer";
-import xlsx from 'xlsx';
+import xlsx from "xlsx";
 import cron from "node-cron";
 import fetch from "node-fetch";
 import dayjs from "dayjs";
 import multer from "multer";
-import fs from 'fs';
+import fs from "fs";
 import path from "path";
 import { supabase } from "./supabaseClient.js";
 import { sendRawEmail } from "./emailSender.js";
@@ -17,8 +17,8 @@ import { scheduleCourseApplicationEmails } from "./courseApplicationScheduler.js
 import { scheduleInternalEmail } from "./emailScheduler.js";
 import { scheduleIntermediateAssessmentReminders } from "./reminderScheduler.js";
 import { processAttendanceFile } from "./attendanceMailer.js";
-import bcrypt from 'bcrypt';
-import bodyParser from 'body-parser';
+import bcrypt from "bcrypt";
+import bodyParser from "body-parser";
 import PDFDocument from "pdfkit";
 import stream from "stream";
 import PDFTable from "pdfkit-table";
@@ -28,36 +28,46 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const router = express.Router();
 
-//const supabaseUrl = process.env.SUPABASE_URL;
-//const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
-// If not importing supabase client, initialize here:
-//const supabase = createClient(supabaseUrl, supabaseKey); 
+// ⬅️ YOUR REAL RENDER FRONTEND URL
+const FRONTEND_URL = "https://engg-automation-r1ke.onrender.com/";
 
-// Hardcoded email times: change as needed
-const TRAINER_MAIL_TIME = "15:50";
-const COORDINATOR_MAIL_TIME = "10:00";
-const LEARNER_MAIL_TIME = "11:00";
-const MOCK_INTERVIEW_OFFSET_DAYS = -7;
+// =============== CORS FIXED (Render Friendly) ===============
+app.use(
+  cors({
+    origin: FRONTEND_URL,
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: [
+      "Origin",
+      "X-Requested-With",
+      "Content-Type",
+      "Accept",
+      "Authorization",
+    ],
+  })
+);
 
-// Add these config values somewhere in your config or pass from client
-const now = dayjs().toISOString();
-const TRAINER_SOFT_SKILLS_REMINDER_TIME = "17:08"; // HH:mm format - configurable for trainer emails
-const LEARNER_SOFT_SKILLS_REMINDER_TIME = "17:10"; // HH:mm format - configurable for learner emails
+// =============== FIX OPTIONS PREFLIGHT MANUALLY ===============
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", FRONTEND_URL);
+  res.header(
+    "Access-Control-Allow-Headers",
+    "Origin, X-Requested-With, Content-Type, Accept, Authorization"
+  );
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
 
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200); // Important for CORS preflight
+  }
+  next();
+});
 
-app.use(cors({
-  origin: [
-    'https://engg-automation-0oct.onrender.com', // Your Render frontend URL
-    'http://localhost:3000' // For local development
-  ],
-  credentials: true
-}));
+// =============== Body Parsers ===============
 app.use(express.json({ limit: "10mb" }));
-app.use(express.urlencoded({ extended: true })); // CRITICAL for form submissions
+app.use(express.urlencoded({ extended: true }));
 
-// === Multer Setup for File Uploads ===
+// =============== Multer Setup ===============
 const upload = multer({ dest: "uploads/" });
 
 // Nodemailer transporter - update with your email provider settings
