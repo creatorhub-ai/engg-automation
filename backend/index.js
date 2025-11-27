@@ -47,7 +47,13 @@ const TRAINER_SOFT_SKILLS_REMINDER_TIME = "17:08"; // HH:mm format - configurabl
 const LEARNER_SOFT_SKILLS_REMINDER_TIME = "17:10"; // HH:mm format - configurable for learner emails
 
 
-app.use(cors());
+app.use(cors({
+  origin: [
+    'https://engg-automation-0oct.onrender.com', // Your Render frontend URL
+    'http://localhost:3000' // For local development
+  ],
+  credentials: true
+}));
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true })); // CRITICAL for form submissions
 
