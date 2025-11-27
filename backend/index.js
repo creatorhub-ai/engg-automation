@@ -796,7 +796,7 @@ app.post('/api/login', async (req, res) => {
       });
     }
 
-    // Password check – adjust if you later add hashing with bcrypt
+    // Plain password check (replace with hashing later)
     if (password !== user.password_hash) {
       return res.status(401).json({
         success: false,
@@ -804,7 +804,6 @@ app.post('/api/login', async (req, res) => {
       });
     }
 
-    // TODO: replace with real JWT if you use auth tokens
     const token = 'dummy-token';
 
     const role = (user.role || '').toString().toLowerCase();
@@ -827,6 +826,7 @@ app.post('/api/login', async (req, res) => {
     });
   }
 });
+
 
 //=== Reset password ===
 app.post('/api/reset-password', async (req, res) => {
