@@ -754,47 +754,78 @@ app.get("/api/templates", async (req, res) => {
 });
 
 // Express + Supabase (ESM syntax)
+// === Login API ===
 app.post('/api/login', async (req, res) => {
-  const { email, password } = req.body;
-  const lookupEmail = email ? email.toLowerCase().trim() : "";
-  if (!lookupEmail || !password) {
-    return res.status(400).json({ success: false, error: "Email and password required" });
+  try {
+    const { email, password } = req.body;
+    const lookupEmail = email ? email.toLowerCase().trim() : '';
+
+    if (!lookupEmail || !password) {
+      return res.status(400).json({
+        success: false,
+        error: 'Email and password required'
+      });
+    }
+
+    const { data: users, error } = await supabase
+      .from('internal_users')
+      .select('*')
+      .eq('email', lookupEmail);
+
+    if (error) {
+      console.error('DB error in /api/login:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Database error'
+      });
+    }
+
+    if (!users || users.length === 0) {
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid email or password'
+      });
+    }
+
+    const user = users[0];
+
+    if (user.is_active === false) {
+      return res.json({
+        success: false,
+        error: 'User account is inactive.'
+      });
+    }
+
+    // Password check – adjust if you later add hashing with bcrypt
+    if (password !== user.password_hash) {
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid email or password'
+      });
+    }
+
+    // TODO: replace with real JWT if you use auth tokens
+    const token = 'dummy-token';
+
+    const role = (user.role || '').toString().toLowerCase();
+
+    return res.json({
+      success: true,
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role
+      }
+    });
+  } catch (err) {
+    console.error('Unexpected /api/login error:', err);
+    return res.status(500).json({
+      success: false,
+      error: 'Server error'
+    });
   }
-
-  const { data: users, error } = await supabase
-    .from('internal_users')
-    .select('*')
-    .eq('email', lookupEmail);
-
-  if (error) {
-    return res.status(500).json({ success: false, error: "Database error" });
-  }
-  if (!users || users.length === 0) {
-    return res.json({ success: false, error: "Invalid email or password" });
-  }
-  const user = users[0];
-
-  if (!user.is_active) {
-    return res.json({ success: false, error: "User account is inactive." });
-  }
-
-  // NOTE: currently comparing plaintext password to password_hash.
-  // Consider hashing/salting with bcrypt in production.
-  if (password !== user.password_hash) {
-    return res.json({ success: false, error: "Invalid email or password" });
-  }
-
-  // Normalize role to lowercase here if needed
-  const role = (user.role || "").toString().toLowerCase();
-
-  console.log("LOGIN SUCCESS:", user);
-
-  return res.json({
-    success: true,
-    role: role,  // ensure role matches "admin", "trainer", "coordinator"
-    name: user.name,
-    email: user.email
-  });
 });
 
 //=== Reset password ===
