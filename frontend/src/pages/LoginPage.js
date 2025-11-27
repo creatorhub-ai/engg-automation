@@ -17,10 +17,11 @@ import {
   Lock as LockIcon,
   Visibility,
   VisibilityOff,
-  Login as LoginIcon,
 } from "@mui/icons-material";
 
 export default function LoginPage({ onLogin }) {
+  const BACKEND_URL = "https://engg-automation.up.railway.app"; // ✅ FIXED
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -37,9 +38,9 @@ export default function LoginPage({ onLogin }) {
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmNewPassword, setShowConfirmNewPassword] = useState(false);
 
-  // =============================================
+  // ======================================================
   // LOGIN SUBMIT
-  // =============================================
+  // ======================================================
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
@@ -52,25 +53,41 @@ export default function LoginPage({ onLogin }) {
     setLoading(true);
 
     try {
-      const res = await fetch("/api/login", {
+      const res = await fetch(`${BACKEND_URL}/api/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
       });
 
-      const data = await res.json();
-      setLoading(false);
-
-      if (!data || !data.success) {
-        setError(data?.error || "Login failed");
+      // Avoid JSON parse crash
+      let data = {};
+      try {
+        data = await res.json();
+      } catch (err) {
+        setError("Invalid server response");
+        setLoading(false);
         return;
       }
 
-      // 🔥 FIXED — correct values from backend
+      setLoading(false);
+
+      if (!res.ok) {
+        setError(data.error || "Login failed");
+        return;
+      }
+
+      if (!data.success || !data.user) {
+        setError("Invalid login details");
+        return;
+      }
+
+      // Final correct session format
       const userSession = {
+        id: data.user.id,
         role: data.user.role,
         name: data.user.name,
         email: data.user.email,
+        token: data.token,
         loginTime: Date.now(),
       };
 
@@ -84,9 +101,9 @@ export default function LoginPage({ onLogin }) {
     }
   }
 
-  // =============================================
+  // ======================================================
   // RESET PASSWORD SUBMIT
-  // =============================================
+  // ======================================================
   async function handleResetSubmit(e) {
     e.preventDefault();
     setResetError("");
@@ -100,15 +117,25 @@ export default function LoginPage({ onLogin }) {
     setResetLoading(true);
 
     try {
-      const res = await fetch("/api/reset-password", {
+      const res = await fetch(`${BACKEND_URL}/api/reset-password`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, new_password: newPassword }),
       });
 
+      let data = {};
+      try {
+        data = await res.json();
+      } catch (err) {
+        setResetError("Invalid server response");
+        setResetLoading(false);
+        return;
+      }
+
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Reset failed");
+        setResetError(data.error || "Reset failed");
+        setResetLoading(false);
+        return;
       }
 
       setResetSuccess(true);
@@ -119,16 +146,15 @@ export default function LoginPage({ onLogin }) {
       }, 2500);
 
     } catch (err) {
-      setResetError(err.message);
+      setResetError("Network error");
     } finally {
       setResetLoading(false);
     }
   }
 
-  // =============================================
-  // UI / JSX
-  // =============================================
-
+  // ======================================================
+  // UI
+  // ======================================================
   return (
     <Box
       sx={{
@@ -245,9 +271,9 @@ export default function LoginPage({ onLogin }) {
               {(error || resetError) && (
                 <Fade in={true}>
                   <Box sx={{ mt: 2 }}>
-                    <Typography 
-                      color="error" 
-                      variant="body2" 
+                    <Typography
+                      color="error"
+                      variant="body2"
                       textAlign="center"
                     >
                       {resetMode ? resetError : error}
