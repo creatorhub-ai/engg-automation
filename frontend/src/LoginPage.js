@@ -1,40 +1,51 @@
 // frontend/src/LoginPage.js
 import React, { useState } from "react";
-import { login } from "./api";
+
+const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
 export default function LoginPage({ onLogin }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState("");
 
   async function handleSubmit(e) {
     e.preventDefault();
-    setLoading(true);
-    try {
-      const data = await login(email, password);
-      console.log("Login response:", data);
+    setMsg("Logging in...");
 
-      // Expecting our api.js to always return an object
-      if (data && (data.token || data.success)) {
-        // Handle both {token,user} or {success, token, user}
-        const token = data.token;
-        if (token) {
-          localStorage.setItem("token", token);
-          if (data.user) {
-            localStorage.setItem("user", JSON.stringify(data.user));
-          }
-          onLogin(token);
-        } else {
-          alert(data.error || "Login failed. No token returned.");
-        }
+    try {
+      const res = await fetch(`${API_BASE}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const text = await res.text();        // NEVER res.json() directly
+      console.log("Login raw response:", res.status, text);
+
+      if (!text) {
+        setMsg(`Empty response from server (HTTP ${res.status})`);
+        return;
+      }
+
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (err) {
+        setMsg(`Invalid JSON from server (HTTP ${res.status})`);
+        return;
+      }
+
+      if (data.token) {
+        localStorage.setItem("token", data.token);
+        localStorage.setItem("user", JSON.stringify(data.user || {}));
+        setMsg("Login success");
+        if (onLogin) onLogin(data.token);
       } else {
-        alert(data?.error || "Login failed. Please check your credentials.");
+        setMsg(data.error || "Login failed");
       }
     } catch (err) {
-      console.error("Login error:", err);
-      alert("Network or server error during login.");
-    } finally {
-      setLoading(false);
+      console.error("Login fetch error:", err);
+      setMsg("Network or server error during login.");
     }
   }
 
@@ -46,7 +57,6 @@ export default function LoginPage({ onLogin }) {
           placeholder="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          autoComplete="username"
         />
       </div>
       <div>
@@ -55,12 +65,10 @@ export default function LoginPage({ onLogin }) {
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          autoComplete="current-password"
         />
       </div>
-      <button type="submit" disabled={loading}>
-        {loading ? "Logging in..." : "Login"}
-      </button>
+      <button type="submit">Login</button>
+      {msg && <p>{msg}</p>}
     </form>
   );
 }
