@@ -1,56 +1,33 @@
-// frontend/src/LoginPage.js
-import React, { useState } from "react";
-import { login } from "./api";
+// frontend/src/api.js
+const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 
-export default function LoginPage({ onLogin }) {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
+export async function login(email, password) {
+  try {
+    const res = await fetch(`${API_BASE}/api/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
 
-  async function handleSubmit(e) {
-    e.preventDefault();
-    setLoading(true);
-    try {
-      const data = await login(email, password);
+    // Read raw text first to avoid JSON parse errors on empty response
+    const text = await res.text();
 
-      if (data && data.token) {
-        localStorage.setItem("token", data.token);
-        localStorage.setItem("user", JSON.stringify(data.user || {}));
-        onLogin(data.token);
-      } else {
-        alert(data?.error || "Login failed. Please check your credentials.");
-      }
-    } catch (err) {
-      console.error("Login error:", err);
-      alert("Network or server error during login.");
-    } finally {
-      setLoading(false);
+    if (!text) {
+      return { success: false, error: `Empty response from server (HTTP ${res.status})` };
     }
-  }
 
-  return (
-    <form onSubmit={handleSubmit}>
-      <h2>Login</h2>
-      <div>
-        <input
-          placeholder="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          autoComplete="username"
-        />
-      </div>
-      <div>
-        <input
-          placeholder="password"
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          autoComplete="current-password"
-        />
-      </div>
-      <button type="submit" disabled={loading}>
-        {loading ? "Logging in..." : "Login"}
-      </button>
-    </form>
-  );
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      console.error('Invalid JSON from /api/login:', text);
+      return { success: false, error: `Invalid JSON from server (HTTP ${res.status})` };
+    }
+
+    // Optionally normalize
+    return data;
+  } catch (err) {
+    console.error('Network error calling /api/login:', err);
+    return { success: false, error: 'Network error. Please try again.' };
+  }
 }
