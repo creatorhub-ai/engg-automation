@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import axios from "axios";
 import { Button, Box, Alert, Typography, Paper } from "@mui/material";
 
-const API_BASE = "http://localhost:5000";  // Your Flask backend base URL
+const API_BASE = "https://engg-automation.onrender.com";  // Your Flask backend base URL
 
 export default function AttendanceMailerUI() {
   const [file, setFile] = useState(null);

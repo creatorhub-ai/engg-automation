@@ -26,7 +26,7 @@ import DownloadIcon from "@mui/icons-material/Download";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
-const API_BASE = process.env.API_BASE || "http://localhost:5000";
+const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 
 export default function DateChangeReport({ user, token }) {
   const [batches, setBatches] = useState([]);

@@ -1988,7 +1988,7 @@ app.post("/api/schedule-email", async (req, res) => {
         continue;
       }
 
-      const confirmUrl = `${process.env.API_BASE || "http://localhost:5000"}/api/confirm-mock-interview?planner_id=${row.id}&batch_no=${row.batch_no}`;
+      const confirmUrl = `${process.env.REACT_APP_API_URL || "http://localhost:5000"}/api/confirm-mock-interview?planner_id=${row.id}&batch_no=${row.batch_no}`;
 
       const emailHtml = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -2282,7 +2282,7 @@ app.post("/api/confirm-mock-interview", async (req, res) => {
     console.log('✅ [Trainer Confirmation] Coordinator found:', coordinators.email);
 
     // 5. Compose coordinator email
-    const API_BASE = process.env.API_BASE || "http://localhost:5000";
+    const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:5000';
     let mailHtml = "";
     let subject = "";
     

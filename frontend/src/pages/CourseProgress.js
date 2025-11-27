@@ -21,7 +21,7 @@ import { PieChart, Pie, Cell, Legend, Tooltip } from "recharts";
 import RestartAltIcon from "@mui/icons-material/RestartAlt";
 
 const COLORS = ["#ffbb28", "#0088fe", "#00c49f"];
-const API_BASE = process.env.API_BASE || "http://localhost:5000";
+const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 
 export default function CourseProgress() {
   const [domains, setDomains] = useState([]);

@@ -23,7 +23,7 @@ import SearchIcon from "@mui/icons-material/Search";
 import PersonAddIcon from "@mui/icons-material/PersonAdd";
 import MenuBookIcon from "@mui/icons-material/MenuBook";
 
-const API_BASE = process.env.API_BASE || "http://localhost:5000";
+const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 
 export default function LearnersDashboard({ user, token }) {
   const [searchEmail, setSearchEmail] = useState("");
