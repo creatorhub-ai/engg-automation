@@ -1,5 +1,5 @@
 // frontend/src/api.js
-const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:5000";
+const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 
 // Helper to safely parse JSON (handles empty / invalid responses)
 async function safeJson(res) {

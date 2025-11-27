@@ -16,7 +16,7 @@ import {
 import Papa from 'papaparse';
 import axios from 'axios';
 
-const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 
 // New component to resend failed emails for selected batch
 function ResendFailedEmails({ batchNo }) {

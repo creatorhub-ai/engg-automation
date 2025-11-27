@@ -29,7 +29,7 @@ import {
 import CheckIcon from "@mui/icons-material/Check";
 import { green, orange, red, grey } from "@mui/material/colors";
 
-const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 const statusChipColor = {
   Completed: green[600],
   "In Progress": orange[600],

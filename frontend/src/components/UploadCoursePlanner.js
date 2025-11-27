@@ -11,7 +11,7 @@ import {
   Alert,
 } from "@mui/material";
 
-const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 
 export default function UploadCoursePlanner() {
   const [file, setFile] = useState(null);
