@@ -33,8 +33,6 @@ dayjs.tz.setDefault("Asia/Kolkata");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const utc = require("dayjs/plugin/utc");
-const timezone = require("dayjs/plugin/timezone");
 
 // ============================
 // 🔥 IMPORTANT: NO TRAILING /
