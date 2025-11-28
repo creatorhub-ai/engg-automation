@@ -7,17 +7,19 @@ import xlsx from "xlsx";
 import cron from "node-cron";
 import fetch from "node-fetch";
 import dayjs from "dayjs";
-import utc from "dayjs/plugin/utc";
-import timezone from "dayjs/plugin/timezone";
+import utc from "dayjs/plugin/utc.js";
+import timezone from "dayjs/plugin/timezone.js";
 import multer from "multer";
 import fs from "fs";
 import path from "path";
 import { supabase } from "./supabaseClient.js";
 import { sendRawEmail } from "./emailSender.js";
-import { scheduleWeeklyQuizReminders } from "./reminderScheduler.js";
+import {
+  scheduleWeeklyQuizReminders,
+  scheduleIntermediateAssessmentReminders,
+} from "./reminderScheduler.js";
 import { scheduleCourseApplicationEmails } from "./courseApplicationScheduler.js";
 import { scheduleInternalEmail } from "./emailScheduler.js";
-import { scheduleIntermediateAssessmentReminders } from "./reminderScheduler.js";
 import { processAttendanceFile } from "./attendanceMailer.js";
 import bcrypt from "bcrypt";
 import bodyParser from "body-parser";
@@ -27,6 +29,8 @@ import PDFTable from "pdfkit-table";
 import ExcelJS from "exceljs";
 
 dotenv.config();
+
+// Day.js timezone configuration (IST)
 dayjs.extend(utc);
 dayjs.extend(timezone);
 dayjs.tz.setDefault("Asia/Kolkata");
@@ -84,7 +88,7 @@ const upload = multer({ dest: "uploads/" });
 
 // Nodemailer transporter - update with your email provider settings
 const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",    // ← CHANGE THIS LINE
+  host: "smtp.gmail.com",
   port: 587,
   secure: false,
   auth: {
@@ -93,14 +97,12 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-const SENDER_EMAIL = 'customer.success@chipedge.com';
-const SENDER_PASS = 'hvxdizbuidwsitpg'; // Replace it with your app password
+const SENDER_EMAIL = "customer.success@chipedge.com";
+const SENDER_PASS = "hvxdizbuidwsitpg"; // app password
 
-const MOCK_INTERVIEW_REMINDER_SEND_TIME = "17:05"; // hardcoded send time HH:mm
-
-// Soft Skills Reminder Times (Define them globally!)
-const TRAINER_SOFT_SKILLS_REMINDER_TIME = "17:08"; // Trainer email time
-const LEARNER_SOFT_SKILLS_REMINDER_TIME = "17:10"; // Learner email time
+const MOCK_INTERVIEW_REMINDER_SEND_TIME = "17:05"; // HH:mm
+const TRAINER_SOFT_SKILLS_REMINDER_TIME = "17:08"; // HH:mm
+const LEARNER_SOFT_SKILLS_REMINDER_TIME = "17:10"; // HH:mm
 
 app.use(bodyParser.json());
 
