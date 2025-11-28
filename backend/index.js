@@ -7,6 +7,8 @@ import xlsx from "xlsx";
 import cron from "node-cron";
 import fetch from "node-fetch";
 import dayjs from "dayjs";
+import utc from "dayjs/plugin/utc";
+import timezone from "dayjs/plugin/timezone";
 import multer from "multer";
 import fs from "fs";
 import path from "path";
@@ -25,15 +27,14 @@ import PDFTable from "pdfkit-table";
 import ExcelJS from "exceljs";
 
 dotenv.config();
+dayjs.extend(utc);
+dayjs.extend(timezone);
+dayjs.tz.setDefault("Asia/Kolkata");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 const utc = require("dayjs/plugin/utc");
 const timezone = require("dayjs/plugin/timezone");
-dayjs.extend(utc);
-dayjs.extend(timezone);
-// Set your local timezone (IST)
-dayjs.tz.setDefault("Asia/Kolkata");
 
 // ============================
 // 🔥 IMPORTANT: NO TRAILING /
