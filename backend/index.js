@@ -1890,14 +1890,21 @@ app.post("/api/schedule-email", async (req, res) => {
       }
     }
 
-    // Schedule emails for learners
+    // ✅ FIXED: CORRECTLY SCHEDULE EMAILS USING TEMPLATE send_time
     let scheduledCount = 0;
     for (const template of templates) {
-      const scheduledAtISO = computeScheduledAtISO(
-        startDateStr,
-        template.offset_days || 0,
-        template.send_time || "09:00"
-      );
+      // CRITICAL FIX: Parse send_time CORRECTLY for the target offset date
+      const offsetDate = dayjs(startDateStr).add(template.offset_days || 0, 'day');
+      const [hours, minutes] = (template.send_time || "09:00").split(':');
+      
+      const scheduledAtISO = offsetDate
+        .hour(parseInt(hours))
+        .minute(parseInt(minutes))
+        .second(0)
+        .millisecond(0)
+        .toISOString();
+
+      console.log(`📧 Template "${template.template_name}": offset=${template.offset_days}, send_time="${template.send_time}" → ${dayjs(scheduledAtISO).format('YYYY-MM-DD HH:mm:ss Z')} [${template.id}]`);
 
       // Loop through each learner to personalize subject and body
       for (const learner of learners) {
@@ -2222,7 +2229,11 @@ app.post("/api/schedule-email", async (req, res) => {
     // Return success response with all counts
     return res.json({
       success: true,
+      scheduled: scheduledCount,
+      batch_no,
+      start_date: formattedStartDate,
       message: `Scheduled soft skills reminders for batch ${batch_no}`,
+      mock_interview_reminders_scheduled: mockScheduledCount || 0,
       soft_skills_monthly_reminders: softSkillsMonthlyCount,
       soft_skills_1week_reminders: softSkillsOneWeekCount,
       // plus your existing scheduledCount etc below if you want included
