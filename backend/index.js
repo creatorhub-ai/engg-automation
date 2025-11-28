@@ -28,6 +28,12 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const utc = require("dayjs/plugin/utc");
+const timezone = require("dayjs/plugin/timezone");
+dayjs.extend(utc);
+dayjs.extend(timezone);
+// Set your local timezone (IST)
+dayjs.tz.setDefault("Asia/Kolkata");
 
 // ============================
 // 🔥 IMPORTANT: NO TRAILING /
@@ -1811,7 +1817,7 @@ app.post("/api/schedule-email", async (req, res) => {
       return res.status(404).json({ error: "Batch course details not found" });
     }
 
-    const startDateStr = courseData.date;
+    const startDateStr = courseData.date;  // e.g. "2025-11-28"
     const formattedStartDate = formatDate(startDateStr);
 
     // Fetch learners data (include name)
@@ -1890,25 +1896,38 @@ app.post("/api/schedule-email", async (req, res) => {
       }
     }
 
-    // ✅ FIXED: CORRECTLY SCHEDULE EMAILS USING TEMPLATE send_time
+    // ---------- FIXED SCHEDULING USING IST + send_time ----------
     let scheduledCount = 0;
-    for (const template of templates) {
-      // CRITICAL FIX: Parse send_time CORRECTLY for the target offset date
-      const offsetDate = dayjs(startDateStr).add(template.offset_days || 0, 'day');
-      const [hours, minutes] = (template.send_time || "09:00").split(':');
-      
-      const scheduledAtISO = offsetDate
-        .hour(parseInt(hours))
-        .minute(parseInt(minutes))
-        .second(0)
-        .millisecond(0)
-        .toISOString();
 
-      console.log(`📧 Template "${template.template_name}": offset=${template.offset_days}, send_time="${template.send_time}" → ${dayjs(scheduledAtISO).format('YYYY-MM-DD HH:mm:ss Z')} [${template.id}]`);
+    for (const template of templates) {
+      const offsetDays = template.offset_days || 0;
+      const sendTime = (template.send_time || "09:00").trim(); // "HH:mm"
+      const [hhStr, mmStr] = sendTime.split(":");
+      const hh = parseInt(hhStr, 10) || 0;
+      const mm = parseInt(mmStr, 10) || 0;
+
+      // Build the intended local time in IST based on batch start date + offset
+      const localDateTime = dayjs
+        .tz(startDateStr, "Asia/Kolkata") // start date at 00:00 IST
+        .add(offsetDays, "day")
+        .hour(hh)
+        .minute(mm)
+        .second(0)
+        .millisecond(0);
+
+      // Convert IST local time to UTC ISO string for storage
+      const scheduledAtISO = localDateTime.utc().toISOString();
+
+      console.log(
+        `Template ${template.template_name} -> date=${localDateTime.format(
+          "YYYY-MM-DD HH:mm"
+        )} IST, stored as ${scheduledAtISO}`
+      );
 
       // Loop through each learner to personalize subject and body
       for (const learner of learners) {
         try {
+          // Avoid duplicates
           const { data: existing } = await supabase
             .from("scheduled_emails")
             .select("id")
@@ -1920,13 +1939,11 @@ app.post("/api/schedule-email", async (req, res) => {
 
           if (existing) continue;
 
-          // Personalize subject with learner's name
           const personalizedSubject = (template.subject || "")
             .replace(/{{batch_no}}/g, batch_no)
             .replace(/{{name}}/g, learner.name || "Learner")
             .replace(/{{start_date}}/g, formattedStartDate);
 
-          // Personalize body with learner's name and other placeholders
           const personalizedBody = (template.body_html || "")
             .replace(/{{batch_no}}/g, batch_no)
             .replace(/{{start_date}}/g, formattedStartDate)
