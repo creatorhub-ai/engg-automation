@@ -93,6 +93,10 @@ const SENDER_PASS = 'hvxdizbuidwsitpg'; // Replace it with your app password
 
 const MOCK_INTERVIEW_REMINDER_SEND_TIME = "17:05"; // hardcoded send time HH:mm
 
+// Soft Skills Reminder Times (Define them globally!)
+const TRAINER_SOFT_SKILLS_REMINDER_TIME = "17:08"; // Trainer email time
+const LEARNER_SOFT_SKILLS_REMINDER_TIME = "17:10"; // Learner email time
+
 app.use(bodyParser.json());
 
 // === Helpers ===
