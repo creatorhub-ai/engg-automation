@@ -24,7 +24,7 @@ function validateEmail(email) {
   return !!email && emailRegex.test(email);
 }
 
-// Generic international phone check: + followed by 8–15 digits after removing spaces/dashes
+// Generic international phone check
 function validatePhone(phone) {
   if (!phone) return false;
   const normalized = String(phone).replace(/\s|-/g, '');
@@ -33,7 +33,7 @@ function validatePhone(phone) {
   return /^\d{8,15}$/.test(digits);
 }
 
-// New component to resend failed emails for selected batch
+// Resend component
 function ResendFailedEmails({ batchNo }) {
   const [message, setMessage] = useState("");
 
@@ -67,19 +67,19 @@ function ResendFailedEmails({ batchNo }) {
 }
 
 export default function HomeDashboard({ user }) {
-  // --- Upload Learners ---
+  // Upload Learners
   const [learnersFile, setLearnersFile] = useState(null);
   const [uploadMsg, setUploadMsg] = useState("");
-  const [learnerRows, setLearnerRows] = useState([]);      // parsed rows with errors/duplicate flags
+  const [learnerRows, setLearnerRows] = useState([]);
   const [showLearnerPreview, setShowLearnerPreview] = useState(false);
 
-  // --- Upload Course Planner ---
+  // Upload Course Planner
   const [plannerFile, setPlannerFile] = useState(null);
   const [plannerMsg, setPlannerMsg] = useState("");
   const [plannerRows, setPlannerRows] = useState([]);
   const [showPlannerPreview, setShowPlannerPreview] = useState(false);
 
-  // --- Schedule Emails ---
+  // Schedule Emails
   const [batches, setBatches] = useState([]);
   const [selectedBatch, setSelectedBatch] = useState("");
   const [mode, setMode] = useState("Online");
@@ -90,7 +90,7 @@ export default function HomeDashboard({ user }) {
   const [classRoom, setClassRoom] = useState("");
   const [mockInterviewOffset, setMockInterviewOffset] = useState("7");
 
-  // Fetch batches on mount
+  // Fetch batches
   useEffect(() => {
     fetch(`${API_BASE}/api/batches`)
       .then(res => res.json())
@@ -98,7 +98,7 @@ export default function HomeDashboard({ user }) {
       .catch(() => setMessage("❌ Failed to fetch batches"));
   }, []);
 
-  // --- Handler: Upload Learners with validation (no auto-preview) ---
+  // Upload Learners
   const handleUploadLearners = () => {
     setUploadMsg("");
     if (!learnersFile) {
@@ -129,7 +129,6 @@ export default function HomeDashboard({ user }) {
           return { ...row, __errors: errors, __duplicate: null };
         });
 
-        // store rows, but keep preview closed until button click
         setLearnerRows(parsed);
 
         const validRows = parsed.filter(r => !r.__errors || r.__errors.length === 0);
@@ -144,7 +143,6 @@ export default function HomeDashboard({ user }) {
           const data = res.data || {};
           setUploadMsg(data.message || "✅ Uploaded successfully");
 
-          // handle duplicates from backend
           const alreadyInDb = data.alreadyInDb || [];
           const inFileDuplicates = data.inFileDuplicates || [];
 
@@ -170,56 +168,7 @@ export default function HomeDashboard({ user }) {
     });
   };
 
-  // --- Handler: Upload Course Planner (unchanged) ---
-  const handleUploadPlanner = () => {
-    if (!plannerFile) return alert("Please choose CSV file");
-
-    Papa.parse(plannerFile, {
-      header: true,
-      skipEmptyLines: true,
-      complete: async (results) => {
-        const json = results.data.map((r, index) => ({
-          classroom_name: r.classroom_name || r.classroom || "",
-          batch_no: r.batch_no || r.Batch || r.batch || "",
-          domain: r.domain || "",
-          mode: r.mode || "",
-          week_no: r.week_no || r.week || "",
-          date: r.date || r.Date || "",
-          start_time: r.start_time || r["start time"] || r.StartTime || "",
-          end_time: r.end_time || "",
-          module_name: r.module_name || "",
-          topic_name: r.topic_name || "",
-          trainer_name: r.trainer_name || "",
-          trainer_email: r.trainer_email || "",
-          topic_status: r.topic_status || "",
-          remarks: r.remarks || "",
-          batch_type: r.batch_type || "",
-          actual_date: r.actual_date || "",
-          date_difference: r.date_difference || "",
-          date_changed_by: r.date_changed_by || "",
-          date_changed_at: r.date_changed_at || "",
-          __rowIndex: index + 2,
-        }));
-
-        setPlannerRows(json);          // keep for preview; table only shows when View clicked
-
-        try {
-          const res = await axios.post(`${API_BASE}/upload-course-planner`, { courses: json });
-          const data = res.data || {};
-          if (data.alreadyPresent) {
-            setPlannerMsg(`⚠️ Planner for ${data.batch_no} is already in database`);
-          } else {
-            setPlannerMsg(data.message || "✅ Uploaded successfully");
-          }
-        } catch (err) {
-          setPlannerMsg("❌ Upload failed: " + (err.response?.data?.error || err.message));
-        }
-      },
-      error: (err) => setPlannerMsg("CSV parse error: " + err.message),
-    });
-  };
-
-  //=== Populate the input values ===
+  // Single handlePlannerFileChange: parse + auto-fill fields
   const handlePlannerFileChange = (e) => {
     const file = e.target.files[0];
     setPlannerFile(file);
@@ -235,7 +184,6 @@ export default function HomeDashboard({ user }) {
       complete: (results) => {
         if (!results.data || results.data.length === 0) return;
 
-        // store for preview
         const parsed = results.data.map((r, index) => ({
           classroom_name: r.classroom_name || r.classroom || "",
           batch_no: r.batch_no || r.Batch || r.batch || "",
@@ -246,6 +194,7 @@ export default function HomeDashboard({ user }) {
           start_time: r.start_time || r["start time"] || r.StartTime || "",
           end_time: r.end_time || "",
           module_name: r.module_name || "",
+          module_topic: r.module_topic || "",
           topic_name: r.topic_name || "",
           trainer_name: r.trainer_name || "",
           trainer_email: r.trainer_email || "",
@@ -258,21 +207,86 @@ export default function HomeDashboard({ user }) {
           date_changed_at: r.date_changed_at || "",
           __rowIndex: index + 2,
         }));
+
         setPlannerRows(parsed);
 
-        // pick first meaningful row to auto-fill controls
         const first =
           parsed.find((r) => (r.batch_no || "").trim() !== "") || parsed[0];
 
         if (first.batch_no) setSelectedBatch(first.batch_no);
-        if (first.mode) setMode(first.mode);                    // "Online"/"Offline"
+        if (first.mode) {
+          setMode(first.mode);
+          if (first.mode.toLowerCase() === "offline" && first.batch_type) {
+            setBatchType(first.batch_type);
+          }
+        }
         if (first.classroom_name) setClassRoom(first.classroom_name);
       },
     });
   };
 
+  // Upload Course Planner using parsed rows
+  const handleUploadPlanner = () => {
+    if (!plannerFile) {
+      alert("Please choose CSV file");
+      return;
+    }
 
-  // --- Handler: Schedule Emails (unchanged) ---
+    if (plannerRows.length === 0) {
+      // Fallback: parse again quickly
+      Papa.parse(plannerFile, {
+        header: true,
+        skipEmptyLines: true,
+        complete: (results) => {
+          const json = results.data.map((r, index) => ({
+            classroom_name: r.classroom_name || r.classroom || "",
+            batch_no: r.batch_no || r.Batch || r.batch || "",
+            domain: r.domain || "",
+            mode: r.mode || "",
+            week_no: r.week_no || r.week || "",
+            date: r.date || r.Date || "",
+            start_time: r.start_time || r["start time"] || r.StartTime || "",
+            end_time: r.end_time || "",
+            module_name: r.module_name || "",
+            module_topic: r.module_topic || "",
+            topic_name: r.topic_name || "",
+            trainer_name: r.trainer_name || "",
+            trainer_email: r.trainer_email || "",
+            topic_status: r.topic_status || "",
+            remarks: r.remarks || "",
+            batch_type: r.batch_type || "",
+            actual_date: r.actual_date || "",
+            date_difference: r.date_difference || "",
+            date_changed_by: r.date_changed_by || "",
+            date_changed_at: r.date_changed_at || "",
+            __rowIndex: index + 2,
+          }));
+          setPlannerRows(json);
+          postPlanner(json);
+        },
+        error: (err) => setPlannerMsg("CSV parse error: " + err.message),
+      });
+    } else {
+      postPlanner(plannerRows);
+    }
+  };
+
+  const postPlanner = async (rows) => {
+    try {
+      const payload = rows.map(({ __rowIndex, ...rest }) => rest);
+      const res = await axios.post(`${API_BASE}/upload-course-planner`, { courses: payload });
+      const data = res.data || {};
+      if (data.alreadyPresent) {
+        setPlannerMsg(`⚠️ Planner for ${data.batch_no} is already in database`);
+      } else {
+        setPlannerMsg(data.message || "✅ Uploaded successfully");
+      }
+    } catch (err) {
+      setPlannerMsg("❌ Upload failed: " + (err.response?.data?.error || err.message));
+    }
+  };
+
+  // Schedule Emails (unchanged)
   const handleSchedule = async () => {
     if (!selectedBatch || !mode) {
       setMessage("⚠️ Please select batch and mode");
