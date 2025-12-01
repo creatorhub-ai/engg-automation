@@ -33,6 +33,9 @@ import {
   KeyboardArrowUp as ExpandLessIcon,
 } from "@mui/icons-material";
 
+const API_BASE =
+  process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
+
 export default function MailStatusDashboard({ user }) {
   const [batches, setBatches] = useState([]);
   const [selectedBatch, setSelectedBatch] = useState("");
@@ -67,10 +70,16 @@ export default function MailStatusDashboard({ user }) {
 
   // Fetch distinct batches on mount
   useEffect(() => {
-    fetch("/api/batches")
-      .then((res) => res.json())
+    fetch(`${API_BASE}/api/batches`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
       .then((data) => setBatches(data || []))
-      .catch(() => setBatches([]));
+      .catch((err) => {
+        console.error("Failed to load batches:", err);
+        setBatches([]);
+      });
   }, []);
 
   // Fetch templates filtered by mode for Reply section
@@ -80,13 +89,17 @@ export default function MailStatusDashboard({ user }) {
       setReplyTemplate("");
       return;
     }
-    fetch(`/api/templates?mode=${replyMode}`)
-      .then((res) => res.json())
+    fetch(`${API_BASE}/api/templates?mode=${encodeURIComponent(replyMode)}`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
       .then((data) => {
         setTemplates(data || []);
         setReplyTemplate("");
       })
-      .catch(() => {
+      .catch((err) => {
+        console.error("Failed to load templates:", err);
         setTemplates([]);
         setReplyTemplate("");
       });
@@ -103,22 +116,26 @@ export default function MailStatusDashboard({ user }) {
 
     const params = new URLSearchParams();
     if (selectedBatch.trim()) params.append("batch_no", selectedBatch.trim());
-    if (recipientEmail.trim()) params.append("recipient_email", recipientEmail.trim());
+    if (recipientEmail.trim())
+      params.append("recipient_email", recipientEmail.trim());
 
-    fetch(`/api/mail-dashboard/list?${params.toString()}`)
-      .then((res) => res.json())
+    fetch(`${API_BASE}/api/mail-dashboard/list?${params.toString()}`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
       .then((data) => {
         setRows(data || []);
-        if (data && data.length === 0) {
+        if (!data || data.length === 0) {
           setMessage("No mails found.");
           setGroupedData([]);
         } else {
           setMessage("");
-          // Group data by template name
           groupDataByTemplate(data);
         }
       })
-      .catch(() => {
+      .catch((err) => {
+        console.error("Failed to fetch mail status data:", err);
         setMessage("Failed to fetch mail status data.");
         setGroupedData([]);
       });
@@ -127,7 +144,7 @@ export default function MailStatusDashboard({ user }) {
   // Group data by template name
   const groupDataByTemplate = (data) => {
     const grouped = {};
-    
+
     data.forEach((row) => {
       const templateName = row.template_name || "Unknown Template";
       if (!grouped[templateName]) {
@@ -140,15 +157,16 @@ export default function MailStatusDashboard({ user }) {
           scheduledCount: 0,
         };
       }
-      
+
       grouped[templateName].emails.push(row);
       grouped[templateName].totalCount += 1;
-      
+
       if (row.status === "sent") grouped[templateName].sentCount += 1;
       else if (row.status === "failed") grouped[templateName].failedCount += 1;
-      else if (row.status === "scheduled") grouped[templateName].scheduledCount += 1;
+      else if (row.status === "scheduled")
+        grouped[templateName].scheduledCount += 1;
     });
-    
+
     setGroupedData(Object.values(grouped));
   };
 
@@ -174,7 +192,7 @@ export default function MailStatusDashboard({ user }) {
     }
 
     try {
-      const res = await fetch("/api/mail/update-email", {
+      const res = await fetch(`${API_BASE}/api/mail/update-email`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -185,7 +203,6 @@ export default function MailStatusDashboard({ user }) {
 
       const data = await res.json();
       if (data.success) {
-        // Update local state
         const updatedRows = rows.map((row) =>
           row.id === emailId || row.mail_id === emailId
             ? { ...row, recipient_email: editedEmailValue.trim() }
@@ -210,9 +227,8 @@ export default function MailStatusDashboard({ user }) {
       return;
     }
 
-    // Get the correct ID field
     const mailId = row.id || row.mail_id || row.email_id;
-    
+
     if (!mailId) {
       alert("Error: Mail ID not found");
       console.error("Row data:", row);
@@ -220,20 +236,24 @@ export default function MailStatusDashboard({ user }) {
     }
 
     try {
-      const res = await fetch(`/api/mail/content?mail_id=${mailId}`);
+      const res = await fetch(
+        `${API_BASE}/api/mail/content?mail_id=${encodeURIComponent(mailId)}`
+      );
       const data = await res.json();
 
       if (data.success) {
         setSelectedEmailContent({
           ...data.email,
-          id: mailId, // Ensure ID is set
+          id: mailId,
         });
         setEditedEmailSubject(data.email.subject || "");
         setEditedEmailBody(data.email.body || "");
         setEmailModalOpen(true);
         setResendMessage("");
       } else {
-        alert("Failed to fetch email content: " + (data.error || "Unknown error"));
+        alert(
+          "Failed to fetch email content: " + (data.error || "Unknown error")
+        );
       }
     } catch (err) {
       alert("Error fetching email: " + err.message);
@@ -251,7 +271,7 @@ export default function MailStatusDashboard({ user }) {
     setResendMessage("");
 
     try {
-      const res = await fetch("/api/mail/resend", {
+      const res = await fetch(`${API_BASE}/api/mail/resend`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -271,7 +291,9 @@ export default function MailStatusDashboard({ user }) {
           setEmailModalOpen(false);
         }, 2000);
       } else {
-        setResendMessage("❌ Failed to resend: " + (data.error || "Unknown error"));
+        setResendMessage(
+          "❌ Failed to resend: " + (data.error || "Unknown error")
+        );
       }
     } catch (err) {
       setResendingEmail(false);
@@ -300,7 +322,7 @@ export default function MailStatusDashboard({ user }) {
     }
 
     setSending(true);
-    fetch("/api/mail/reply", {
+    fetch(`${API_BASE}/api/mail/reply`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -323,14 +345,16 @@ export default function MailStatusDashboard({ user }) {
           setSendMessage(data.error || "Failed to send emails.");
         }
       })
-      .catch(() => {
+      .catch((err) => {
+        console.error("Failed to send emails:", err);
         setSending(false);
         setSendMessage("Failed to send emails.");
       });
   };
 
-  // Role-based title and welcome
-  const roleTitle = user?.role ? user.role.charAt(0).toUpperCase() + user.role.slice(1) : "Dashboard";
+  const roleTitle = user?.role
+    ? user.role.charAt(0).toUpperCase() + user.role.slice(1)
+    : "Dashboard";
   const welcomeName = user?.name || "User";
 
   return (
@@ -361,7 +385,8 @@ export default function MailStatusDashboard({ user }) {
               <MenuItem value=""></MenuItem>
               {batches.map((batch) => (
                 <MenuItem key={batch.batch_no} value={batch.batch_no}>
-                  {batch.batch_no} {batch.start_date ? `(${batch.start_date})` : ""}
+                  {batch.batch_no}{" "}
+                  {batch.start_date ? `(${batch.start_date})` : ""}
                 </MenuItem>
               ))}
             </Select>
@@ -380,11 +405,21 @@ export default function MailStatusDashboard({ user }) {
           <TableHead>
             <TableRow sx={{ bgcolor: "#f5f5f5" }}>
               <TableCell width="40px"></TableCell>
-              <TableCell><strong>Template Name</strong></TableCell>
-              <TableCell align="center"><strong>Total</strong></TableCell>
-              <TableCell align="center"><strong>Sent</strong></TableCell>
-              <TableCell align="center"><strong>Failed</strong></TableCell>
-              <TableCell align="center"><strong>Scheduled</strong></TableCell>
+              <TableCell>
+                <strong>Template Name</strong>
+              </TableCell>
+              <TableCell align="center">
+                <strong>Total</strong>
+              </TableCell>
+              <TableCell align="center">
+                <strong>Sent</strong>
+              </TableCell>
+              <TableCell align="center">
+                <strong>Failed</strong>
+              </TableCell>
+              <TableCell align="center">
+                <strong>Scheduled</strong>
+              </TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -408,30 +443,54 @@ export default function MailStatusDashboard({ user }) {
                   >
                     <TableCell>
                       <IconButton size="small">
-                        {expandedTemplates[group.templateName] ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                        {expandedTemplates[group.templateName] ? (
+                          <ExpandLessIcon />
+                        ) : (
+                          <ExpandMoreIcon />
+                        )}
                       </IconButton>
                     </TableCell>
                     <TableCell>
                       <strong>{group.templateName}</strong>
                     </TableCell>
                     <TableCell align="center">
-                      <Chip label={group.totalCount} size="small" color="default" />
+                      <Chip
+                        label={group.totalCount}
+                        size="small"
+                        color="default"
+                      />
                     </TableCell>
                     <TableCell align="center">
-                      <Chip label={group.sentCount} size="small" color="success" />
+                      <Chip
+                        label={group.sentCount}
+                        size="small"
+                        color="success"
+                      />
                     </TableCell>
                     <TableCell align="center">
-                      <Chip label={group.failedCount} size="small" color="error" />
+                      <Chip
+                        label={group.failedCount}
+                        size="small"
+                        color="error"
+                      />
                     </TableCell>
                     <TableCell align="center">
-                      <Chip label={group.scheduledCount} size="small" color="warning" />
+                      <Chip
+                        label={group.scheduledCount}
+                        size="small"
+                        color="warning"
+                      />
                     </TableCell>
                   </TableRow>
 
                   {/* Expanded Email Details */}
                   <TableRow>
                     <TableCell colSpan={6} sx={{ p: 0, border: 0 }}>
-                      <Collapse in={expandedTemplates[group.templateName]} timeout="auto" unmountOnExit>
+                      <Collapse
+                        in={expandedTemplates[group.templateName]}
+                        timeout="auto"
+                        unmountOnExit
+                      >
                         <Box sx={{ bgcolor: "#f9f9f9", p: 2 }}>
                           <Table size="small">
                             <TableHead>
@@ -443,40 +502,64 @@ export default function MailStatusDashboard({ user }) {
                             </TableHead>
                             <TableBody>
                               {group.emails.map((email, idx) => {
-                                const emailId = email.id || email.mail_id || email.email_id;
+                                const emailId =
+                                  email.id || email.mail_id || email.email_id;
                                 const isEditing = editingEmail === emailId;
-                                
+
                                 let statusColor = "inherit";
-                                if (email.status === "sent") statusColor = "#11b511";
-                                else if (email.status === "failed") statusColor = "#df1c1c";
-                                else if (email.status === "scheduled") statusColor = "#ffab40";
+                                if (email.status === "sent")
+                                  statusColor = "#11b511";
+                                else if (email.status === "failed")
+                                  statusColor = "#df1c1c";
+                                else if (email.status === "scheduled")
+                                  statusColor = "#ffab40";
 
                                 return (
                                   <TableRow key={idx}>
                                     <TableCell>{email.batch_no}</TableCell>
                                     <TableCell>
                                       {isEditing ? (
-                                        <Box display="flex" gap={1} alignItems="center">
+                                        <Box
+                                          display="flex"
+                                          gap={1}
+                                          alignItems="center"
+                                        >
                                           <TextField
                                             size="small"
                                             value={editedEmailValue}
-                                            onChange={(e) => setEditedEmailValue(e.target.value)}
+                                            onChange={(e) =>
+                                              setEditedEmailValue(
+                                                e.target.value
+                                              )
+                                            }
                                             fullWidth
                                           />
                                           <Button
                                             size="small"
                                             variant="contained"
-                                            onClick={() => handleSaveEmail(emailId)}
+                                            onClick={() =>
+                                              handleSaveEmail(emailId)
+                                            }
                                           >
                                             Save
                                           </Button>
-                                          <Button size="small" onClick={() => setEditingEmail(null)}>
+                                          <Button
+                                            size="small"
+                                            onClick={() =>
+                                              setEditingEmail(null)
+                                            }
+                                          >
                                             Cancel
                                           </Button>
                                         </Box>
                                       ) : (
                                         <Box
-                                          onClick={() => handleEmailClick(emailId, email.recipient_email)}
+                                          onClick={() =>
+                                            handleEmailClick(
+                                              emailId,
+                                              email.recipient_email
+                                            )
+                                          }
                                           sx={{
                                             cursor: "pointer",
                                             color: "#1976d2",
@@ -502,11 +585,24 @@ export default function MailStatusDashboard({ user }) {
                                             : email.status === "scheduled"
                                             ? "#ffe9cc"
                                             : undefined,
-                                        cursor: email.status === "sent" ? "pointer" : "default",
-                                        textDecoration: email.status === "sent" ? "underline" : "none",
-                                        "&:hover": email.status === "sent" ? { opacity: 0.8 } : {},
+                                        cursor:
+                                          email.status === "sent"
+                                            ? "pointer"
+                                            : "default",
+                                        textDecoration:
+                                          email.status === "sent"
+                                            ? "underline"
+                                            : "none",
+                                        "&:hover":
+                                          email.status === "sent"
+                                            ? { opacity: 0.8 }
+                                            : {},
                                       }}
-                                      title={email.status === "sent" ? "Click to view/edit email" : ""}
+                                      title={
+                                        email.status === "sent"
+                                          ? "Click to view/edit email"
+                                          : ""
+                                      }
                                     >
                                       {email.status}
                                     </TableCell>
@@ -530,7 +626,11 @@ export default function MailStatusDashboard({ user }) {
             {message && (
               <Alert
                 severity={
-                  groupedData.length === 0 ? "warning" : message.startsWith("✅") ? "success" : "info"
+                  groupedData.length === 0
+                    ? "warning"
+                    : message.startsWith("✅")
+                    ? "success"
+                    : "info"
                 }
                 variant="outlined"
               >
@@ -542,9 +642,18 @@ export default function MailStatusDashboard({ user }) {
       </Paper>
 
       {/* Email Content Modal */}
-      <Dialog open={emailModalOpen} onClose={() => setEmailModalOpen(false)} maxWidth="md" fullWidth>
+      <Dialog
+        open={emailModalOpen}
+        onClose={() => setEmailModalOpen(false)}
+        maxWidth="md"
+        fullWidth
+      >
         <DialogTitle>
-          <Box display="flex" justifyContent="space-between" alignItems="center">
+          <Box
+            display="flex"
+            justifyContent="space-between"
+            alignItems="center"
+          >
             <Typography variant="h6">📧 View/Edit Email</Typography>
             <IconButton onClick={() => setEmailModalOpen(false)}>
               <CloseIcon />
@@ -573,7 +682,12 @@ export default function MailStatusDashboard({ user }) {
             onChange={(e) => setEditedEmailBody(e.target.value)}
           />
           {resendMessage && (
-            <Alert severity={resendMessage.startsWith("✅") ? "success" : "error"} sx={{ mt: 2 }}>
+            <Alert
+              severity={
+                resendMessage.startsWith("✅") ? "success" : "error"
+              }
+              sx={{ mt: 2 }}
+            >
               {resendMessage}
             </Alert>
           )}
@@ -598,7 +712,13 @@ export default function MailStatusDashboard({ user }) {
           ✉️ Reply to Mail
         </Typography>
         <Divider sx={{ mb: 2 }} light />
-        <Box display="flex" gap={2} flexWrap="wrap" mb={3} alignItems="center">
+        <Box
+          display="flex"
+          gap={2}
+          flexWrap="wrap"
+          mb={3}
+          alignItems="center"
+        >
           <FormControl sx={{ minWidth: 220 }}>
             <InputLabel>Batch No</InputLabel>
             <Select
@@ -610,7 +730,8 @@ export default function MailStatusDashboard({ user }) {
               <MenuItem value=""></MenuItem>
               {batches.map((batch) => (
                 <MenuItem key={batch.batch_no} value={batch.batch_no}>
-                  {batch.batch_no} {batch.start_date ? `(${batch.start_date})` : ""}
+                  {batch.batch_no}{" "}
+                  {batch.start_date ? `(${batch.start_date})` : ""}
                 </MenuItem>
               ))}
             </Select>
@@ -672,7 +793,12 @@ export default function MailStatusDashboard({ user }) {
 
         {sendMessage && (
           <Box mt={2}>
-            <Alert severity={sendMessage.includes("successfully") ? "success" : "error"} variant="outlined">
+            <Alert
+              severity={
+                sendMessage.includes("successfully") ? "success" : "error"
+              }
+              variant="outlined"
+            >
               {sendMessage}
             </Alert>
           </Box>

@@ -18,6 +18,8 @@ import {
   Fade
 } from "@mui/material";
 
+const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
+
 function InternalCommunication({ user }) {
   // Section 1: Internal Communication states
   const [roles, setRoles] = useState([]);
@@ -41,7 +43,7 @@ function InternalCommunication({ user }) {
   const [feedbackMessage, setFeedbackMessage] = useState("");
 
   useEffect(() => {
-    fetch("http://localhost:5000/api/batches")
+    fetch(`${API_BASE}/api/batches`)
       .then((res) => res.json())
       .then((data) => {
         if (data) setBatches(data);
@@ -62,7 +64,9 @@ function InternalCommunication({ user }) {
     setBatchNo(selected.trim());
     const batchObj = batches.find((b) => b.batch_no === selected);
     if (batchObj && batchObj.start_date) {
-      const isoDate = dayjs(batchObj.start_date, "DD-MMM-YYYY").format("YYYY-MM-DD");
+      const isoDate = dayjs(batchObj.start_date, "DD-MMM-YYYY").format(
+        "YYYY-MM-DD"
+      );
       setBatchStartDate(isoDate);
     } else {
       setBatchStartDate("");
@@ -86,7 +90,7 @@ function InternalCommunication({ user }) {
     if (roles.includes("Trainer")) body.domain = domain;
 
     try {
-      const res = await fetch("http://localhost:5000/api/internal/schedule", {
+      const res = await fetch(`${API_BASE}/api/internal/schedule`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -102,6 +106,7 @@ function InternalCommunication({ user }) {
     }
   };
 
+  // Fetch max date for course closure
   useEffect(() => {
     const fetchMaxDate = async () => {
       if (!closureBatch) {
@@ -110,7 +115,9 @@ function InternalCommunication({ user }) {
         return;
       }
       try {
-        const res = await fetch(`http://localhost:5000/api/course_planner_data/max-date/${closureBatch}`);
+        const res = await fetch(
+          `${API_BASE}/api/course_planner_data/max-date/${closureBatch}`
+        );
         if (res.ok) {
           const data = await res.json();
           if (data?.max_date) {
@@ -135,7 +142,11 @@ function InternalCommunication({ user }) {
   const handleClosureDateChange = (e) => {
     const newDate = e.target.value;
     if (batchMaxDate && dayjs(newDate).isBefore(dayjs(batchMaxDate), "day")) {
-      alert(`End date must be on or after batch last date: ${dayjs(batchMaxDate).format("YYYY-MM-DD")}`);
+      alert(
+        `End date must be on or after batch last date: ${dayjs(
+          batchMaxDate
+        ).format("YYYY-MM-DD")}`
+      );
       return;
     }
     setClosureDate(newDate);
@@ -147,11 +158,15 @@ function InternalCommunication({ user }) {
       return;
     }
     if (batchMaxDate && dayjs(closureDate).isBefore(dayjs(batchMaxDate), "day")) {
-      setClosureMessage(`❌ End date must be on or after batch last date: ${dayjs(batchMaxDate).format("YYYY-MM-DD")}`);
+      setClosureMessage(
+        `❌ End date must be on or after batch last date: ${dayjs(
+          batchMaxDate
+        ).format("YYYY-MM-DD")}`
+      );
       return;
     }
     try {
-      const res = await fetch("http://localhost:5000/api/course-closure", {
+      const res = await fetch(`${API_BASE}/api/course-closure`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ batch_no: closureBatch, end_date: closureDate }),
@@ -172,7 +187,7 @@ function InternalCommunication({ user }) {
     "IT Admin",
     "Learning Coordinator",
     "Trainer",
-    "Management"
+    "Management",
   ];
 
   const handleFeedbackRoleChange = (e) => {
@@ -200,7 +215,7 @@ function InternalCommunication({ user }) {
       const sheetName = workbook.SheetNames[0];
       const worksheet = workbook.Sheets[sheetName];
       let jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
-      jsonData = jsonData.map(row => {
+      jsonData = jsonData.map((row) => {
         const { Name, Email, Phone, ...rest } = row;
         return rest;
       });
@@ -208,7 +223,7 @@ function InternalCommunication({ user }) {
       workbook.Sheets[sheetName] = newWorksheet;
       const wbout = XLSX.write(workbook, {
         bookType: file.name.endsWith(".csv") ? "csv" : "xlsx",
-        type: "array"
+        type: "array",
       });
       const newFileBlob = new Blob([wbout], { type: file.type });
       const newFile = new File([newFileBlob], file.name, { type: file.type });
@@ -222,15 +237,24 @@ function InternalCommunication({ user }) {
     }
   };
 
-  const handleFeedbackBatchNo = (e) => setFeedbackBatchNo(e.target.value.trim());
+  const handleFeedbackBatchNo = (e) =>
+    setFeedbackBatchNo(e.target.value.trim());
 
   const handleSendFeedbackEmail = async () => {
-    if (!feedbackBatchNo || feedbackRoles.length === 0 || !feedbackType || !feedbackFile) {
-      setFeedbackMessage("⚠️ Please fill all feedback sharing fields and upload a file.");
+    if (
+      !feedbackBatchNo ||
+      feedbackRoles.length === 0 ||
+      !feedbackType ||
+      !feedbackFile
+    ) {
+      setFeedbackMessage(
+        "⚠️ Please fill all feedback sharing fields and upload a file."
+      );
       return;
     }
-    // For frontend, simply send whatever roles are selected here.
-    const rolesList = feedbackRoles.map(r => r.trim()).filter((v, i, arr) => arr.indexOf(v) === i);
+    const rolesList = feedbackRoles
+      .map((r) => r.trim())
+      .filter((v, i, arr) => arr.indexOf(v) === i);
 
     const formData = new FormData();
     formData.append("batchNo", feedbackBatchNo);
@@ -239,19 +263,23 @@ function InternalCommunication({ user }) {
     formData.append("file", feedbackFile);
 
     try {
-      const res = await fetch("http://localhost:5000/api/internal/feedback-share", {
+      const res = await fetch(`${API_BASE}/api/internal/feedback-share`, {
         method: "POST",
         body: formData,
       });
       const result = await res.json();
-      setFeedbackMessage(res.ok ? "✅ Feedback mail sent!" : "❌ " + result.error);
+      setFeedbackMessage(
+        res.ok ? "✅ Feedback mail sent!" : "❌ " + (result.error || "Unknown error")
+      );
     } catch (err) {
       setFeedbackMessage("❌ Error: " + err.message);
     }
   };
 
   // --- Role-based title ---
-  const roleTitle = user?.role ? user.role.charAt(0).toUpperCase() + user.role.slice(1) : "Dashboard";
+  const roleTitle = user?.role
+    ? user.role.charAt(0).toUpperCase() + user.role.slice(1)
+    : "Dashboard";
   const welcomeName = user?.name ? user.name : "User";
 
   return (
@@ -270,24 +298,30 @@ function InternalCommunication({ user }) {
             📩 Internal Communication
           </Typography>
           <FormGroup row>
-            {["IT Admin", "Learning Coordinator", "Trainer", "Management"].map((role) => (
-              <FormControlLabel
-                key={role}
-                control={
-                  <Checkbox
-                    checked={roles.includes(role)}
-                    value={role}
-                    onChange={handleRoleChange}
-                  />
-                }
-                label={role}
-              />
-            ))}
+            {["IT Admin", "Learning Coordinator", "Trainer", "Management"].map(
+              (role) => (
+                <FormControlLabel
+                  key={role}
+                  control={
+                    <Checkbox
+                      checked={roles.includes(role)}
+                      value={role}
+                      onChange={handleRoleChange}
+                    />
+                  }
+                  label={role}
+                />
+              )
+            )}
           </FormGroup>
           {roles.includes("Trainer") && (
             <FormControl sx={{ mt: 2, minWidth: 180 }}>
               <InputLabel>Domain</InputLabel>
-              <Select value={domain} onChange={(e) => setDomain(e.target.value)} label="Domain">
+              <Select
+                value={domain}
+                onChange={(e) => setDomain(e.target.value)}
+                label="Domain"
+              >
                 <MenuItem value="">--select--</MenuItem>
                 <MenuItem value="PD">PD</MenuItem>
                 <MenuItem value="DV">DV</MenuItem>
@@ -307,8 +341,13 @@ function InternalCommunication({ user }) {
             </Select>
           </FormControl>
           {batchStartDate && (
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-              📅 <strong>Start Date:</strong> {dayjs(batchStartDate).format("DD-MMM-YYYY")}
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              sx={{ mt: 1 }}
+            >
+              📅 <strong>Start Date:</strong>{" "}
+              {dayjs(batchStartDate).format("DD-MMM-YYYY")}
             </Typography>
           )}
           <Button variant="contained" sx={{ mt: 2 }} onClick={handleSchedule}>
@@ -316,7 +355,15 @@ function InternalCommunication({ user }) {
           </Button>
           {message && (
             <Fade in={!!message}>
-              <Box mt={2}><Alert severity={message.startsWith("✅") ? "success" : "warning"}>{message}</Alert></Box>
+              <Box mt={2}>
+                <Alert
+                  severity={
+                    message.startsWith("✅") ? "success" : "warning"
+                  }
+                >
+                  {message}
+                </Alert>
+              </Box>
             </Fade>
           )}
         </Box>
@@ -354,16 +401,35 @@ function InternalCommunication({ user }) {
             fullWidth
           />
           {batchMaxDate && (
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-              Last date of batch: {dayjs(batchMaxDate).format("DD-MMM-YYYY")}
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              sx={{ mt: 1 }}
+            >
+              Last date of batch:{" "}
+              {dayjs(batchMaxDate).format("DD-MMM-YYYY")}
             </Typography>
           )}
-          <Button variant="contained" sx={{ mt: 2 }} onClick={handleClosureAnnounce}>
+          <Button
+            variant="contained"
+            sx={{ mt: 2 }}
+            onClick={handleClosureAnnounce}
+          >
             📤 Send Emails
           </Button>
           {closureMessage && (
             <Fade in={!!closureMessage}>
-              <Box mt={2}><Alert severity={closureMessage.startsWith("✅") ? "success" : "warning"}>{closureMessage}</Alert></Box>
+              <Box mt={2}>
+                <Alert
+                  severity={
+                    closureMessage.startsWith("✅")
+                      ? "success"
+                      : "warning"
+                  }
+                >
+                  {closureMessage}
+                </Alert>
+              </Box>
             </Fade>
           )}
         </Box>
@@ -378,7 +444,11 @@ function InternalCommunication({ user }) {
 
           <FormControl sx={{ mt: 2, minWidth: 200 }}>
             <InputLabel>Batch No</InputLabel>
-            <Select value={feedbackBatchNo} onChange={handleFeedbackBatchNo} label="Batch No">
+            <Select
+              value={feedbackBatchNo}
+              onChange={handleFeedbackBatchNo}
+              label="Batch No"
+            >
               <MenuItem value="">--select--</MenuItem>
               {batches.map((b) => (
                 <MenuItem key={b.batch_no} value={b.batch_no}>
@@ -409,10 +479,12 @@ function InternalCommunication({ user }) {
             <Select
               value={feedbackType}
               label="Feedback Type"
-              onChange={e => setFeedbackType(e.target.value)}
+              onChange={(e) => setFeedbackType(e.target.value)}
             >
               <MenuItem value="">--select--</MenuItem>
-              <MenuItem value="Intermediate Feedback">Intermediate Feedback</MenuItem>
+              <MenuItem value="Intermediate Feedback">
+                Intermediate Feedback
+              </MenuItem>
               <MenuItem value="Final Feedback">Final Feedback</MenuItem>
             </Select>
           </FormControl>
@@ -420,25 +492,43 @@ function InternalCommunication({ user }) {
           <Box sx={{ mt: 2 }}>
             <Button variant="outlined" component="label">
               Upload CSV/XLSX
-              <input type="file" accept=".csv,.xlsx" hidden onChange={handleFeedbackFile} />
+              <input
+                type="file"
+                accept=".csv,.xlsx"
+                hidden
+                onChange={handleFeedbackFile}
+              />
             </Button>
-            {feedbackFile && <Typography variant="body2" sx={{ ml: 2 }}>{feedbackFile.name}</Typography>}
+            {feedbackFile && (
+              <Typography variant="body2" sx={{ ml: 2 }}>
+                {feedbackFile.name}
+              </Typography>
+            )}
           </Box>
 
-          <Button variant="contained" sx={{ mt: 2 }} onClick={handleSendFeedbackEmail}>
+          <Button
+            variant="contained"
+            sx={{ mt: 2 }}
+            onClick={handleSendFeedbackEmail}
+          >
             📤 Send Email
           </Button>
 
           {feedbackMessage && (
             <Fade in={!!feedbackMessage}>
               <Box mt={2}>
-                <Alert severity={feedbackMessage.startsWith("✅") ? "success" : "warning"}>
+                <Alert
+                  severity={
+                    feedbackMessage.startsWith("✅")
+                      ? "success"
+                      : "warning"
+                  }
+                >
                   {feedbackMessage}
                 </Alert>
               </Box>
             </Fade>
           )}
-
         </Box>
       </Paper>
     </Box>

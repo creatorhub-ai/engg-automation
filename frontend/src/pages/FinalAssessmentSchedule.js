@@ -20,6 +20,8 @@ import {
   InputLabel,
 } from "@mui/material";
 
+const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
+
 export default function FinalAssessmentSchedule({ user }) {
   const [batches, setBatches] = useState([]);
   const [selectedBatch, setSelectedBatch] = useState("");
@@ -29,25 +31,30 @@ export default function FinalAssessmentSchedule({ user }) {
   const [learnerClosureDate, setLearnerClosureDate] = useState("");
   const [learnerClosureMessage, setLearnerClosureMessage] = useState("");
 
+  // load batches
   useEffect(() => {
-    fetch("http://localhost:5000/api/batches")
-      .then((res) => res.json())
-      .then((data) => setBatches(data))
+    fetch(`${API_BASE}/api/batches`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data) => setBatches(Array.isArray(data) ? data : []))
       .catch((err) => setMessage("Failed to load batches: " + err.message));
   }, []);
 
+  // load topics for selected batch
   useEffect(() => {
     if (!selectedBatch) {
       setTopics([]);
       return;
     }
-    fetch(`http://localhost:5000/api/final-assessments/${selectedBatch}`)
+    fetch(`${API_BASE}/api/final-assessments/${selectedBatch}`)
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP error ${res.status}`);
         return res.json();
       })
       .then((data) => {
-        const normalized = data.map((t) => ({
+        const normalized = (Array.isArray(data) ? data : []).map((t) => ({
           ...t,
           date: t.date ? new Date(t.date).toISOString().slice(0, 10) : "",
         }));
@@ -71,7 +78,7 @@ export default function FinalAssessmentSchedule({ user }) {
     try {
       for (const topic of topics) {
         const res = await fetch(
-          `http://localhost:5000/api/final-assessments/${topic.id}`,
+          `${API_BASE}/api/final-assessments/${topic.id}`,
           {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
@@ -79,7 +86,7 @@ export default function FinalAssessmentSchedule({ user }) {
           }
         );
         if (!res.ok) {
-          const errData = await res.json();
+          const errData = await res.json().catch(() => ({}));
           throw new Error(errData.error || "Failed to update");
         }
       }
@@ -95,32 +102,30 @@ export default function FinalAssessmentSchedule({ user }) {
       return;
     }
     try {
-      const res = await fetch(
-        `http://localhost:5000/api/send-final-assessment-email`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ batch_no: selectedBatch }),
-        }
-      );
-      const result = await res.json();
-      if (res.ok) setMessage(result.message || "✅ Email sent successfully");
+      const res = await fetch(`${API_BASE}/api/send-final-assessment-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ batch_no: selectedBatch }),
+      });
+      const result = await res.json().catch(() => ({}));
+      if (res.ok)
+        setMessage(result.message || "✅ Email sent successfully");
       else
         setMessage(
           "❌ Email sending failed: " + (result.error || "Unknown error")
         );
 
+      // schedule access-card reminder based on earliest date
       const validDates = topics
         .map((t) => t.date)
         .filter((d) => !!d)
         .sort();
-
       if (validDates.length === 0) return;
 
       const earliestDate = validDates[0];
 
       const scheduleRes = await fetch(
-        "http://localhost:5000/api/schedule-access-card-email",
+        `${API_BASE}/api/schedule-access-card-email`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -130,21 +135,18 @@ export default function FinalAssessmentSchedule({ user }) {
           }),
         }
       );
-      const scheduleResult = await scheduleRes.json();
+      const scheduleResult = await scheduleRes.json().catch(() => ({}));
 
       if (scheduleRes.ok) {
-        setMessage(
-          (prev) =>
-            prev +
-            "\n" +
-            (scheduleResult.message || "✅ Access card reminder scheduled")
+        setMessage((prev) =>
+          (prev ? prev + "\n" : "") +
+          (scheduleResult.message || "✅ Access card reminder scheduled")
         );
       } else {
-        setMessage(
-          (prev) =>
-            prev +
-            "\n❌ Access card reminder scheduling failed: " +
-            (scheduleResult.error || "Unknown error")
+        setMessage((prev) =>
+          (prev ? prev + "\n" : "") +
+          "❌ Access card reminder scheduling failed: " +
+          (scheduleResult.error || "Unknown error")
         );
       }
     } catch (err) {
@@ -159,7 +161,7 @@ export default function FinalAssessmentSchedule({ user }) {
     }
     try {
       const res = await fetch(
-        "http://localhost:5000/api/course-closure-to-learners",
+        `${API_BASE}/api/course-closure-to-learners`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -173,7 +175,9 @@ export default function FinalAssessmentSchedule({ user }) {
       if (contentType && contentType.includes("application/json")) {
         const result = await res.json();
         if (res.ok) {
-          setLearnerClosureMessage(result.message || "✅ Emails sent successfully.");
+          setLearnerClosureMessage(
+            result.message || "✅ Emails sent successfully."
+          );
         } else {
           setLearnerClosureMessage(
             "❌ Failed: " + (result.error || "Unknown error")
@@ -181,6 +185,7 @@ export default function FinalAssessmentSchedule({ user }) {
         }
       } else {
         const text = await res.text();
+        console.error("Non-JSON response:", text);
         setLearnerClosureMessage("❌ Server error or invalid response.");
       }
     } catch (err) {
@@ -188,8 +193,9 @@ export default function FinalAssessmentSchedule({ user }) {
     }
   };
 
-  // Role-based title and welcome
-  const roleTitle = user?.role ? user.role.charAt(0).toUpperCase() + user.role.slice(1) : "Dashboard";
+  const roleTitle = user?.role
+    ? user.role.charAt(0).toUpperCase() + user.role.slice(1)
+    : "Dashboard";
   const welcomeName = user?.name || "User";
 
   return (
@@ -236,7 +242,13 @@ export default function FinalAssessmentSchedule({ user }) {
         {learnerClosureMessage && (
           <Fade in={!!learnerClosureMessage}>
             <Box mt={2}>
-              <Alert severity={learnerClosureMessage.startsWith("✅") ? "success" : "warning"}>
+              <Alert
+                severity={
+                  learnerClosureMessage.startsWith("✅")
+                    ? "success"
+                    : "warning"
+                }
+              >
                 {learnerClosureMessage}
               </Alert>
             </Box>
@@ -251,7 +263,11 @@ export default function FinalAssessmentSchedule({ user }) {
         </Typography>
         <FormControl fullWidth sx={{ mb: 2 }}>
           <InputLabel>Batch No</InputLabel>
-          <Select label="Batch No" value={selectedBatch} onChange={handleBatchChange}>
+          <Select
+            label="Batch No"
+            value={selectedBatch}
+            onChange={handleBatchChange}
+          >
             <MenuItem value="">--select--</MenuItem>
             {batches.map((b) => (
               <MenuItem key={b.batch_no} value={b.batch_no}>
@@ -260,6 +276,7 @@ export default function FinalAssessmentSchedule({ user }) {
             ))}
           </Select>
         </FormControl>
+
         {topics.length > 0 && (
           <>
             <TableContainer component={Box} sx={{ mt: 2 }}>
@@ -273,26 +290,34 @@ export default function FinalAssessmentSchedule({ user }) {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {topics.map(({ id, topic_name, date, start_time, end_time }) => (
-                    <TableRow key={id}>
-                      <TableCell>{topic_name}</TableCell>
-                      <TableCell>
-                        <TextField
-                          type="date"
-                          size="small"
-                          value={date}
-                          onChange={(e) => handleDateChange(topic_name, e.target.value)}
-                        />
-                      </TableCell>
-                      <TableCell>{start_time || "-"}</TableCell>
-                      <TableCell>{end_time || "-"}</TableCell>
-                    </TableRow>
-                  ))}
+                  {topics.map(
+                    ({ id, topic_name, date, start_time, end_time }) => (
+                      <TableRow key={id}>
+                        <TableCell>{topic_name}</TableCell>
+                        <TableCell>
+                          <TextField
+                            type="date"
+                            size="small"
+                            value={date}
+                            onChange={(e) =>
+                              handleDateChange(topic_name, e.target.value)
+                            }
+                          />
+                        </TableCell>
+                        <TableCell>{start_time || "-"}</TableCell>
+                        <TableCell>{end_time || "-"}</TableCell>
+                      </TableRow>
+                    )
+                  )}
                 </TableBody>
               </Table>
             </TableContainer>
             <Box mt={2}>
-              <Button variant="contained" color="primary" onClick={saveDateChanges}>
+              <Button
+                variant="contained"
+                color="primary"
+                onClick={saveDateChanges}
+              >
                 💾 Save Date Changes
               </Button>
               <Button
@@ -306,10 +331,15 @@ export default function FinalAssessmentSchedule({ user }) {
             </Box>
           </>
         )}
+
         {message && (
           <Fade in={!!message}>
             <Box mt={2}>
-              <Alert severity={message.startsWith("✅") ? "success" : "warning"}>
+              <Alert
+                severity={
+                  message.startsWith("✅") ? "success" : "warning"
+                }
+              >
                 {message}
               </Alert>
             </Box>
