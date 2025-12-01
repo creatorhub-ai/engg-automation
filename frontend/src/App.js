@@ -20,6 +20,7 @@ import ClassroomMatrixDashboard from "./pages/ClassroomMatrixDashboard";
 import ClassroomScheduler from "./pages/ClassroomScheduler";
 import AttendanceDashboard from "./pages/AttendanceDashboard"; // <-- imported new attendance dashboard
 import MarkSheet from "./pages/MarkSheet";
+import ReportsDashboard from "./pages/ReportsDashboard";
 
 const roleMenus = {
   admin: [
@@ -31,13 +32,14 @@ const roleMenus = {
     { text: "Soft Skill Announcement", path: "/soft-skill-announcement" },
     { text: "Mail Status Check", path: "/mail-status" },
     { text: "Attendance Mailer", path: "/attendance-mailer" },
-    { text: "Report", path: "/date-change-report" },
+    { text: "Reports", path: "/reports" },
     { text: "Users Management", path: "/users" },
     { text: "Course Progress", path: "/course-progress" },
     { text: "Classroom Planner", path: "/schedule" },
     { text: "Classroom Matrix", path: "/matrix" },
     { text: "Attendance", path: "/attendance" }, // <-- added attendance menu
     { text: "Mark Entry", path: "/marks-entry" }, 
+    
   ],
   manager: [
     { text: "Home", path: "/home" },
@@ -48,7 +50,7 @@ const roleMenus = {
     { text: "Soft Skill Announcement", path: "/soft-skill-announcement" },
     { text: "Mail Status Check", path: "/mail-status" },
     { text: "Attendance Mailer", path: "/attendance-mailer" },
-    { text: "Report", path: "/date-change-report" },
+    { text: "Reports", path: "/reports" },
     { text: "Users Management", path: "/users" },
     { text: "Course Progress", path: "/course-progress" },
     { text: "Classroom Planner", path: "/schedule" },
@@ -113,8 +115,8 @@ function getComponentForPath(path, login) {
       return <AttendanceMailer user={login} />;
     case "/course-progress":
       return <CourseProgress user={login} />;
-    case "/date-change-report":
-      return <DateChangeReport user={login} />;
+    case "/reports":
+      return <ReportsDashboard user={login} />;
     case "/users":
       return <UsersDashboard user={login} />;
     case "/tutors":

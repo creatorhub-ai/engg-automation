@@ -38,6 +38,8 @@ dayjs.tz.setDefault("Asia/Kolkata");
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+const marksWindowsRouter = require("./routes/marksWindows");
+
 // ============================
 // 🔥 IMPORTANT: NO TRAILING /
 // ============================
@@ -320,6 +322,74 @@ async function checkLicenseAvailability(supabase, domain, students) {
   else return { available: false, missing: students - availableCount };
 }
 
+// === Marks Window Helpers ===
+async function getWindowStatus({ batchNo, assessmentType, weekNo }) {
+  // Supabase RPC or direct query to marks_entry_windows
+  const { data, error } = await supabase
+    .from("marks_entry_windows")
+    .select("*")
+    .eq("batch_no", batchNo)
+    .eq("assessment_type", assessmentType)
+    .or(`week_no.eq.${weekNo},week_no.is.null`)
+    .order("week_no", { ascending: true, nullsFirst: true })
+    .limit(1);
+
+  const now = new Date();
+
+  if (error || !data || data.length === 0) {
+    return {
+      exists: false,
+      is_open: false,
+      portal_open_at: null,
+      portal_close_at: null,
+      is_extended: false,
+      extended_until: null,
+      now,
+    };
+  }
+
+  const w = data[0];
+  const portalOpenAt = new Date(w.portal_open_at);
+  const baseCloseAt = new Date(w.portal_close_at);
+  const extendedUntil = w.extended_until ? new Date(w.extended_until) : null;
+
+  const effectiveCloseAt =
+    w.is_extended && extendedUntil && extendedUntil > baseCloseAt
+      ? extendedUntil
+      : baseCloseAt;
+
+  const isOpen = now >= portalOpenAt && now <= effectiveCloseAt;
+
+  return {
+    exists: true,
+    is_open: isOpen,
+    portal_open_at: portalOpenAt,
+    portal_close_at: baseCloseAt,
+    is_extended: w.is_extended,
+    extended_until: extendedUntil,
+    now,
+  };
+}
+
+// example helper
+async function getDistinctTrainersForBatch(batchNo) {
+  const { data, error } = await supabase
+    .from("course_planner_data")
+    .select("trainer_email")
+    .eq("batch_no", batchNo);
+
+  if (error || !data) return [];
+
+  const emails = Array.from(
+    new Set(
+      data
+        .map((r) => r.trainer_email)
+        .filter((e) => !!e)
+    )
+  );
+  return emails;
+}
+
 // API to schedule batch with classroom suggestion and license check
 app.post('/api/scheduleBatch', async (req, res) => {
   try {
@@ -470,6 +540,310 @@ app.post("/api/send-attendance-emails", upload.single("file"), async (req, res) 
     res.status(500).json({ error: err.message });
   }
 });
+
+// 1) GET /api/marks/window-status
+app.get("/api/marks/window-status", async (req, res) => {
+  try {
+    const { batch_no, assessment_type, week_no } = req.query;
+    if (!batch_no || !assessment_type) {
+      return res
+        .status(400)
+        .json({ error: "batch_no and assessment_type are required" });
+    }
+
+    const status = await getWindowStatus({
+      batchNo: batch_no,
+      assessmentType: assessment_type,
+      weekNo: week_no ? Number(week_no) : null,
+    });
+
+    // Check if this trainer already has a pending request
+    let hasPendingRequest = false;
+    if (req.user?.email) {
+      const { data, error } = await supabase
+        .from("marks_entry_extension_requests")
+        .select("id")
+        .eq("batch_no", batch_no)
+        .eq("assessment_type", assessment_type)
+        .or(
+          week_no
+            ? `week_no.eq.${week_no}`
+            : "week_no.is.null"
+        )
+        .eq("trainer_email", req.user.email)
+        .eq("status", "pending")
+        .limit(1);
+
+      if (!error && data && data.length > 0) {
+        hasPendingRequest = true;
+      }
+    }
+
+    return res.json({ ...status, has_pending_request: hasPendingRequest });
+  } catch (err) {
+    console.error("window-status error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// 2) POST /api/marks/:assessmentType
+app.post("/api/marks/:assessmentType", async (req, res) => {
+  const { assessmentType } = req.params;
+  const {
+    learner_id,
+    batch_no,
+    week_no,
+    assessment_date,
+    out_off,
+    points,
+    percentage,
+  } = req.body;
+
+  if (!learner_id || !batch_no || !week_no || !assessment_date || !out_off) {
+    return res.status(400).json({
+      error:
+        "Required fields missing (learner_id, batch_no, week_no, assessment_date, out_off)",
+    });
+  }
+
+  try {
+    const status = await getWindowStatus({
+      batchNo: batch_no,
+      assessmentType,
+      weekNo: week_no,
+    });
+
+    if (!status.exists || !status.is_open) {
+      return res
+        .status(403)
+        .json({ error: "Marks entry portal is closed for this assessment" });
+    }
+
+    // choose your real marks table here
+    // example mapping:
+    const tableMap = {
+      "weekly-assessment": "weekly_assessment_marks",
+      "intermediate-assessment": "intermediate_assessment_marks",
+      "module-level-assessment": "module_level_assessment_marks",
+      "weekly-quiz": "weekly_quiz_marks",
+    };
+    const tableName = tableMap[assessmentType];
+    if (!tableName) {
+      return res.status(400).json({ error: "Invalid assessmentType" });
+    }
+
+    const { error } = await supabase
+      .from(tableName)
+      .upsert(
+        {
+          learner_id,
+          batch_no,
+          week_no,
+          assessment_date,
+          out_off,
+          points,
+          percentage,
+        },
+        { onConflict: "learner_id,batch_no,week_no" }
+      );
+
+    if (error) {
+      console.error("save marks error:", error);
+      return res.status(500).json({ error: "Failed to save marks" });
+    }
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("save marks error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// 3) POST /api/marks/extension-request
+app.post("/api/marks/extension-request", async (req, res) => {
+  try {
+    const { batch_no, assessment_type, week_no, reason } = req.body;
+    const trainerEmail = req.user?.email;
+
+    if (!trainerEmail) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    if (!batch_no || !assessment_type || !week_no) {
+      return res
+        .status(400)
+        .json({ error: "batch_no, assessment_type, week_no are required" });
+    }
+
+    const status = await getWindowStatus({
+      batchNo: batch_no,
+      assessmentType: assessment_type,
+      weekNo: week_no,
+    });
+    if (status.is_open) {
+      return res.json({
+        success: false,
+        error: "Portal is already open for this assessment",
+      });
+    }
+
+    const { data: existing, error: existErr } = await supabase
+      .from("marks_entry_extension_requests")
+      .select("id")
+      .eq("batch_no", batch_no)
+      .eq("assessment_type", assessment_type)
+      .eq("week_no", week_no)
+      .eq("trainer_email", trainerEmail)
+      .eq("status", "pending")
+      .limit(1);
+
+    if (!existErr && existing && existing.length > 0) {
+      return res.json({
+        success: false,
+        error: "You already have a pending request for this assessment",
+      });
+    }
+
+    const { data, error } = await supabase
+      .from("marks_entry_extension_requests")
+      .insert({
+        batch_no,
+        assessment_type,
+        week_no,
+        trainer_email: trainerEmail,
+        reason: reason || null,
+      })
+      .select("id")
+      .single();
+
+    if (error) {
+      console.error("extension-request insert error:", error);
+      return res.status(500).json({ error: "Failed to create request" });
+    }
+
+    // Optional: enqueue mail to manager in marks_reminder_jobs here
+
+    return res.json({ success: true, request_id: data.id });
+  } catch (err) {
+    console.error("extension-request error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// 4) GET /api/marks/extension-requests
+app.get("/api/marks/extension-requests", async (req, res) => {
+  try {
+    const status = req.query.status || "pending";
+
+    const { data, error } = await supabase
+      .from("marks_entry_extension_requests")
+      .select("*")
+      .eq("status", status)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("list extension-requests error:", error);
+      return res.status(500).json({ error: "Failed to fetch requests" });
+    }
+
+    return res.json(data || []);
+  } catch (err) {
+    console.error("list extension-requests error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// 5) POST /api/marks/extension-requests/:id/approve
+app.post("/api/marks/extension-requests/:id/approve", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const managerEmail = req.user?.email;
+
+    const { data: reqRow, error: fetchErr } = await supabase
+      .from("marks_entry_extension_requests")
+      .select("*")
+      .eq("id", id)
+      .eq("status", "pending")
+      .single();
+
+    if (fetchErr || !reqRow) {
+      return res
+        .status(404)
+        .json({ error: "Request not found or already decided" });
+    }
+
+    const nowPlus24 = dayjs().add(24, "hour").toISOString();
+
+    const { error: winErr } = await supabase
+      .from("marks_entry_windows")
+      .update({
+        is_extended: true,
+        extended_until: supabase.rpc
+          ? undefined
+          : nowPlus24, // simple set; the GREATEST logic can be approximated
+        updated_at: new Date().toISOString(),
+      })
+      .eq("batch_no", reqRow.batch_no)
+      .eq("assessment_type", reqRow.assessment_type)
+      .or(
+        reqRow.week_no
+          ? `week_no.eq.${reqRow.week_no}`
+          : "week_no.is.null"
+      );
+
+    if (winErr) {
+      console.error("update window error:", winErr);
+      return res.status(500).json({ error: "Failed to extend window" });
+    }
+
+    const { error: updReqErr } = await supabase
+      .from("marks_entry_extension_requests")
+      .update({
+        status: "approved",
+        decided_at: new Date().toISOString(),
+        decided_by: managerEmail || null,
+      })
+      .eq("id", id);
+
+    if (updReqErr) {
+      console.error("update request error:", updReqErr);
+      return res.status(500).json({ error: "Failed to update request" });
+    }
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("approve extension error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// 6) POST /api/marks/extension-requests/:id/reject
+app.post("/api/marks/extension-requests/:id/reject", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const managerEmail = req.user?.email;
+
+    const { error } = await supabase
+      .from("marks_entry_extension_requests")
+      .update({
+        status: "rejected",
+        decided_at: new Date().toISOString(),
+        decided_by: managerEmail || null,
+      })
+      .eq("id", id)
+      .eq("status", "pending");
+
+    if (error) {
+      console.error("reject extension error:", error);
+      return res.status(500).json({ error: "Failed to update request" });
+    }
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("reject extension error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 
 
 // === Form Service via Apps Script WebApp ===
@@ -669,6 +1043,10 @@ app.post("/upload-course-planner", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+app.use("/api/marks", marksWindowsRouter);
+
+app.use("/api/marks", require("./routes/marksSave"));
 
 // Assuming you already have supabase client initialised above
 app.get("/api/course-planner-meta/:batchNo", async (req, res) => {
