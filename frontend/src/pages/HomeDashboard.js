@@ -76,6 +76,8 @@ export default function HomeDashboard({ user }) {
   // --- Upload Course Planner ---
   const [plannerFile, setPlannerFile] = useState(null);
   const [plannerMsg, setPlannerMsg] = useState("");
+  const [plannerRows, setPlannerRows] = useState([]);
+  const [showPlannerPreview, setShowPlannerPreview] = useState(false);
 
   // --- Schedule Emails ---
   const [batches, setBatches] = useState([]);
@@ -170,36 +172,50 @@ export default function HomeDashboard({ user }) {
 
   // --- Handler: Upload Course Planner (unchanged) ---
   const handleUploadPlanner = () => {
-    if (!plannerFile) return alert('Please choose CSV file');
+    if (!plannerFile) return alert("Please choose CSV file");
+
     Papa.parse(plannerFile, {
       header: true,
       skipEmptyLines: true,
       complete: async (results) => {
-        const json = results.data.map(r => ({
-          batch_no: r.batch_no || r.Batch || r.batch || '',
-          domain: r.domain || '',
-          mode: r.mode || '',
-          week_no: r.week_no || r.week || '',
-          date: r.date || r.Date || '',
-          start_time: r.start_time || r['start time'] || r.StartTime || '',
-          end_time: r.end_time || '',
-          module_name: r.module_name || '',
-          module_topic: r.module_topic || '',
-          topic_name: r.topic_name || '',
-          trainer_name: r.trainer_name || '',
-          trainer_email: r.trainer_email || '',
-          topic_status: r.topic_status || '',
-          remarks: r.remarks || '',
-          batch_type: r.batch_type || ''
+        const json = results.data.map((r, index) => ({
+          classroom_name: r.classroom_name || r.classroom || "",
+          batch_no: r.batch_no || r.Batch || r.batch || "",
+          domain: r.domain || "",
+          mode: r.mode || "",
+          week_no: r.week_no || r.week || "",
+          date: r.date || r.Date || "",
+          start_time: r.start_time || r["start time"] || r.StartTime || "",
+          end_time: r.end_time || "",
+          module_name: r.module_name || "",
+          topic_name: r.topic_name || "",
+          trainer_name: r.trainer_name || "",
+          trainer_email: r.trainer_email || "",
+          topic_status: r.topic_status || "",
+          remarks: r.remarks || "",
+          batch_type: r.batch_type || "",
+          actual_date: r.actual_date || "",
+          date_difference: r.date_difference || "",
+          date_changed_by: r.date_changed_by || "",
+          date_changed_at: r.date_changed_at || "",
+          __rowIndex: index + 2,
         }));
+
+        setPlannerRows(json);          // keep for preview; table only shows when View clicked
+
         try {
           const res = await axios.post(`${API_BASE}/upload-course-planner`, { courses: json });
-          setPlannerMsg(res.data.message);
+          const data = res.data || {};
+          if (data.alreadyPresent) {
+            setPlannerMsg(`⚠️ Planner for ${data.batch_no} is already in database`);
+          } else {
+            setPlannerMsg(data.message || "✅ Uploaded successfully");
+          }
         } catch (err) {
-          setPlannerMsg('Upload failed: ' + (err.response?.data?.error || err.message));
+          setPlannerMsg("❌ Upload failed: " + (err.response?.data?.error || err.message));
         }
       },
-      error: (err) => setPlannerMsg('CSV parse error: ' + err.message)
+      error: (err) => setPlannerMsg("CSV parse error: " + err.message),
     });
   };
 
@@ -207,6 +223,10 @@ export default function HomeDashboard({ user }) {
   const handlePlannerFileChange = (e) => {
     const file = e.target.files[0];
     setPlannerFile(file);
+    setPlannerMsg("");
+    setPlannerRows([]);
+    setShowPlannerPreview(false);
+
     if (!file) return;
 
     Papa.parse(file, {
@@ -215,16 +235,38 @@ export default function HomeDashboard({ user }) {
       complete: (results) => {
         if (!results.data || results.data.length === 0) return;
 
-        // take first non-empty row
-        const first = results.data.find(r => (r.batch_no || r.Batch || r.batch || "").trim() !== "") || results.data[0];
+        // store for preview
+        const parsed = results.data.map((r, index) => ({
+          classroom_name: r.classroom_name || r.classroom || "",
+          batch_no: r.batch_no || r.Batch || r.batch || "",
+          domain: r.domain || "",
+          mode: r.mode || "",
+          week_no: r.week_no || r.week || "",
+          date: r.date || r.Date || "",
+          start_time: r.start_time || r["start time"] || r.StartTime || "",
+          end_time: r.end_time || "",
+          module_name: r.module_name || "",
+          topic_name: r.topic_name || "",
+          trainer_name: r.trainer_name || "",
+          trainer_email: r.trainer_email || "",
+          topic_status: r.topic_status || "",
+          remarks: r.remarks || "",
+          batch_type: r.batch_type || "",
+          actual_date: r.actual_date || "",
+          date_difference: r.date_difference || "",
+          date_changed_by: r.date_changed_by || "",
+          date_changed_at: r.date_changed_at || "",
+          __rowIndex: index + 2,
+        }));
+        setPlannerRows(parsed);
 
-        const csvBatch = (first.batch_no || first.Batch || first.batch || "").trim();
-        const csvMode = (first.mode || "").trim();
-        const csvClassroom = (first.classroom_name || first.classroom || "").trim();
+        // pick first meaningful row to auto-fill controls
+        const first =
+          parsed.find((r) => (r.batch_no || "").trim() !== "") || parsed[0];
 
-        if (csvBatch) setSelectedBatch(csvBatch);
-        if (csvMode) setMode(csvMode);                 // must be "Online" or "Offline"
-        if (csvClassroom) setClassRoom(csvClassroom);  // must match your dropdown options
+        if (first.batch_no) setSelectedBatch(first.batch_no);
+        if (first.mode) setMode(first.mode);                    // "Online"/"Offline"
+        if (first.classroom_name) setClassRoom(first.classroom_name);
       },
     });
   };
@@ -445,18 +487,109 @@ export default function HomeDashboard({ user }) {
               sx={{ mb: 2 }}
               fullWidth
             />
-            <Button variant="contained" onClick={handleUploadPlanner}>
-              Upload
-            </Button>
+            <Box display="flex" gap={2}>
+              <Button variant="contained" onClick={handleUploadPlanner}>
+                Upload
+              </Button>
+              <Button
+                variant="outlined"
+                onClick={() => setShowPlannerPreview(true)}
+                disabled={plannerRows.length === 0}
+              >
+                View Uploaded List
+              </Button>
+            </Box>
             <Fade in={!!plannerMsg}>
               <Box mt={2}>
                 {plannerMsg && (
-                  <Alert severity={plannerMsg.startsWith("✅") ? "success" : "warning"}>
+                  <Alert
+                    severity={
+                      plannerMsg.startsWith("✅")
+                        ? "success"
+                        : plannerMsg.startsWith("⚠️")
+                        ? "warning"
+                        : "error"
+                    }
+                  >
                     {plannerMsg}
                   </Alert>
                 )}
               </Box>
             </Fade>
+
+            {showPlannerPreview && plannerRows.length > 0 && (
+              <Box mt={3} sx={{ maxHeight: 300, overflow: "auto" }}>
+                <Typography variant="subtitle1" gutterBottom>
+                  Uploaded Course Planner Preview
+                </Typography>
+                <Box component="table" sx={{ width: "100%", borderCollapse: "collapse" }}>
+                  <Box component="thead" sx={{ bgcolor: "#f5f5f5" }}>
+                    <Box component="tr">
+                      {[
+                        "Row",
+                        "Classroom",
+                        "Batch No",
+                        "Mode",
+                        "Week",
+                        "Date",
+                        "Start",
+                        "End",
+                        "Module",
+                        "Topic",
+                        "Trainer",
+                      ].map((h) => (
+                        <Box
+                          key={h}
+                          component="th"
+                          sx={{ border: "1px solid #ddd", p: 1, fontSize: 13 }}
+                        >
+                          {h}
+                        </Box>
+                      ))}
+                    </Box>
+                  </Box>
+                  <Box component="tbody">
+                    {plannerRows.map((row, idx) => (
+                      <Box key={idx} component="tr">
+                        <Box component="td" sx={{ border: "1px solid #eee", p: 1, fontSize: 13 }}>
+                          {row.__rowIndex}
+                        </Box>
+                        <Box component="td" sx={{ border: "1px solid #eee", p: 1, fontSize: 13 }}>
+                          {row.classroom_name}
+                        </Box>
+                        <Box component="td" sx={{ border: "1px solid #eee", p: 1, fontSize: 13 }}>
+                          {row.batch_no}
+                        </Box>
+                        <Box component="td" sx={{ border: "1px solid #eee", p: 1, fontSize: 13 }}>
+                          {row.mode}
+                        </Box>
+                        <Box component="td" sx={{ border: "1px solid #eee", p: 1, fontSize: 13 }}>
+                          {row.week_no}
+                        </Box>
+                        <Box component="td" sx={{ border: "1px solid #eee", p: 1, fontSize: 13 }}>
+                          {row.date}
+                        </Box>
+                        <Box component="td" sx={{ border: "1px solid #eee", p: 1, fontSize: 13 }}>
+                          {row.start_time}
+                        </Box>
+                        <Box component="td" sx={{ border: "1px solid #eee", p: 1, fontSize: 13 }}>
+                          {row.end_time}
+                        </Box>
+                        <Box component="td" sx={{ border: "1px solid #eee", p: 1, fontSize: 13 }}>
+                          {row.module_name}
+                        </Box>
+                        <Box component="td" sx={{ border: "1px solid #eee", p: 1, fontSize: 13 }}>
+                          {row.topic_name}
+                        </Box>
+                        <Box component="td" sx={{ border: "1px solid #eee", p: 1, fontSize: 13 }}>
+                          {row.trainer_name}
+                        </Box>
+                      </Box>
+                    ))}
+                  </Box>
+                </Box>
+              </Box>
+            )}
           </Paper>
         </Box>
 

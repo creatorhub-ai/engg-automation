@@ -593,39 +593,83 @@ app.post("/upload-learners", async (req, res) => {
 
 // === Upload Course Planner ===
 app.post("/upload-course-planner", async (req, res) => {
- try {
-  const { courses } = req.body;
-  if (!Array.isArray(courses) || courses.length === 0)
-    return res.status(400).json({ error: "No course planner rows provided" });
+  try {
+    const { courses } = req.body;
 
-  // Normalize all expected columns, handle missing batch_type as null.
-  const rows = courses.map(c => ({
-    batch_no: c.batch_no || "",
-    domain: c.domain || null,
-    mode: c.mode || null,
-    week_no: c.week_no || null,
-    date: c.date || null,
-    start_time: c.start_time || null,
-    end_time: c.end_time || null,
-    module_name: c.module_name || null,
-    module_topic: c.module_topic || null,
-    topic_name: c.topic_name || null,
-    trainer_name: c.trainer_name || null,
-    trainer_email: c.trainer_email || null,
-    topic_status: c.topic_status || null,
-    remarks: c.remarks || null,
-    batch_type: c.batch_type || null // May be missing in CSV!
-  }));
+    if (!Array.isArray(courses) || courses.length === 0) {
+      return res
+        .status(400)
+        .json({ error: "No course planner rows provided" });
+    }
 
-  const { error } = await supabase.from("course_planner_data").insert(rows);
-  if (error) throw error;
+    // Take batch_no from first row (all rows in file should belong to same batch)
+    const batchNo = (courses[0].batch_no || "").trim();
+    if (!batchNo) {
+      return res.status(400).json({ error: "batch_no missing in file" });
+    }
 
-  res.json({ message: `Inserted ${rows.length} course planner rows` });
- } catch (err) {
-  console.error("❌ Upload course planner error:", err.message);
-  res.status(500).json({ error: err.message });
- }
+    // 1) Check if planner already exists for this batch_no in course_planner_data
+    const { data: existing, error: selError } = await supabase
+      .from("course_planner_data")
+      .select("id")
+      .eq("batch_no", batchNo)
+      .limit(1);
+
+    if (selError) throw selError;
+
+    if (existing && existing.length > 0) {
+      // Do NOT insert, just tell frontend it is already present
+      return res.status(200).json({
+        message: `Course planner for ${batchNo} is already in database`,
+        alreadyPresent: true,
+        batch_no: batchNo,
+        insertedCount: 0,
+      });
+    }
+
+    // 2) Normalize all expected columns for insert
+    const rows = courses.map((c) => ({
+      classroom_name: (c.classroom_name || c.classroom || "").trim(),
+      batch_no: (c.batch_no || "").trim(),
+      domain: (c.domain || null),
+      mode: (c.mode || null),
+      week_no: (c.week_no || null),
+      date: (c.date || null),
+      start_time: (c.start_time || null),
+      end_time: (c.end_time || null),
+      module_name: (c.module_name || null),
+      module_topic: (c.module_topic || null),
+      topic_name: (c.topic_name || null),
+      trainer_name: (c.trainer_name || null),
+      trainer_email: (c.trainer_email || null),
+      topic_status: (c.topic_status || null),
+      remarks: (c.remarks || null),
+      batch_type: (c.batch_type || null),
+      actual_date: (c.actual_date || null),
+      date_difference: (c.date_difference || null),
+      date_changed_by: (c.date_changed_by || null),
+      date_changed_at: (c.date_changed_at || null),
+    }));
+
+    // 3) Insert into Supabase table
+    const { error: insError } = await supabase
+      .from("course_planner_data")
+      .insert(rows);
+
+    if (insError) throw insError;
+
+    return res.json({
+      message: `Inserted ${rows.length} course planner rows for ${batchNo}`,
+      alreadyPresent: false,
+      batch_no: batchNo,
+      insertedCount: rows.length,
+    });
+  } catch (err) {
+    console.error("❌ Upload course planner error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
+
 
 // === Get Batch List ===
 app.get("/api/batches", async (req, res) => {
