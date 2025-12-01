@@ -18,6 +18,22 @@ import axios from 'axios';
 
 const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 
+// --- validation helpers ---
+const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function validateEmail(email) {
+  return !!email && emailRegex.test(email);
+}
+
+// Generic international phone check: + followed by 8–15 digits after removing spaces/dashes
+function validatePhone(phone) {
+  if (!phone) return false;
+  const normalized = String(phone).replace(/\s|-/g, '');
+  if (!normalized.startsWith('+')) return false;
+  const digits = normalized.slice(1);
+  return /^\d{8,15}$/.test(digits);
+}
+
 // New component to resend failed emails for selected batch
 function ResendFailedEmails({ batchNo }) {
   const [message, setMessage] = useState("");
@@ -42,7 +58,11 @@ function ResendFailedEmails({ batchNo }) {
       <Button variant="outlined" disabled={!batchNo} onClick={handleResend}>
         Resend Failed Emails
       </Button>
-      {message && <Typography mt={1} color={message.startsWith("✅") ? "green" : "error.main"}>{message}</Typography>}
+      {message && (
+        <Typography mt={1} color={message.startsWith("✅") ? "green" : "error.main"}>
+          {message}
+        </Typography>
+      )}
     </Box>
   );
 }
@@ -51,6 +71,8 @@ export default function HomeDashboard({ user }) {
   // --- Upload Learners ---
   const [learnersFile, setLearnersFile] = useState(null);
   const [uploadMsg, setUploadMsg] = useState("");
+  const [learnerRows, setLearnerRows] = useState([]);      // parsed rows with errors/duplicate flags
+  const [showLearnerPreview, setShowLearnerPreview] = useState(false);
 
   // --- Upload Course Planner ---
   const [plannerFile, setPlannerFile] = useState(null);
@@ -75,24 +97,69 @@ export default function HomeDashboard({ user }) {
       .catch(() => setMessage("❌ Failed to fetch batches"));
   }, []);
 
-  // --- Handler: Upload Learners ---
+  // --- Handler: Upload Learners with validation + preview ---
   const handleUploadLearners = () => {
-    if (!learnersFile) return alert('Please choose CSV file');
+    setUploadMsg("");
+    if (!learnersFile) {
+      alert('Please choose CSV file');
+      return;
+    }
     Papa.parse(learnersFile, {
       header: true,
       skipEmptyLines: true,
       complete: async (results) => {
-        const json = results.data.map(r => ({
-          name: r.name || r.Name || r['Learner Name'] || '',
-          email: r.email || r.Email || '',
-          phone: r.phone || r.Phone || '',
-          batch_no: r.batch_no || r.Batch || r.batch || ''
-        }));
+        const parsed = results.data.map((r, index) => {
+          const row = {
+            name: r.name || r.Name || r['Learner Name'] || '',
+            email: r.email || r.Email || '',
+            phone: r.phone || r.Phone || '',
+            batch_no: r.batch_no || r.Batch || r.batch || '',
+            status: r.status || r.Status || '',
+            __rowIndex: index + 2,  // row number (assuming header is row 1)
+          };
+
+          const errors = [];
+          if (!row.name) errors.push("Name required");
+          if (!row.batch_no) errors.push("Batch no required");
+          if (!validateEmail(row.email)) errors.push("Invalid email");
+          if (!validatePhone(row.phone)) errors.push("Invalid phone");
+
+          return { ...row, __errors: errors, __duplicate: null };
+        });
+
+        setLearnerRows(parsed);
+        setShowLearnerPreview(true);
+
+        const validRows = parsed.filter(r => !r.__errors || r.__errors.length === 0);
+
+        if (validRows.length === 0) {
+          setUploadMsg("❌ All rows have validation errors; fix and reupload");
+          return;
+        }
+
         try {
-          const res = await axios.post(`${API_BASE}/upload-learners`, { learners: json });
-          setUploadMsg(res.data.message);
+          const res = await axios.post(`${API_BASE}/upload-learners`, { learners: validRows });
+          const data = res.data || {};
+          setUploadMsg(data.message || "✅ Uploaded successfully");
+
+          // optional: mark duplicates from server
+          const alreadyInDb = data.alreadyInDb || []; // backend should return this
+          if (alreadyInDb.length) {
+            const key = (l) =>
+              `${(l.name || '').trim().toLowerCase()}|${(l.email || '').trim().toLowerCase()}|${(l.batch_no || '').trim()}`;
+
+            const duplicateMap = new Set(alreadyInDb.map(key));
+
+            setLearnerRows(prev =>
+              prev.map(r =>
+                duplicateMap.has(key(r))
+                  ? { ...r, __duplicate: "Already in database" }
+                  : r
+              )
+            );
+          }
         } catch (err) {
-          setUploadMsg('Upload failed: ' + (err.response?.data?.error || err.message));
+          setUploadMsg('❌ Upload failed: ' + (err.response?.data?.error || err.message));
         }
       },
       error: (err) => setUploadMsg('CSV parse error: ' + err.message)
@@ -158,7 +225,11 @@ export default function HomeDashboard({ user }) {
       if (!res.ok) {
         setMessage(`❌ Failed: ${data.error || "Unknown error"}`);
       } else {
-        setMessage(`✅ Scheduled ${data.scheduled} emails and ${data.mock_interview_reminders_scheduled || 0} mock interview reminders for ${data.batch_no} (Start: ${data.start_date})`);
+        setMessage(
+          `✅ Scheduled ${data.scheduled} emails and ${
+            data.mock_interview_reminders_scheduled || 0
+          } mock interview reminders for ${data.batch_no} (Start: ${data.start_date})`
+        );
       }
     } catch (err) {
       setMessage(`❌ Network error: ${err.message}`);
@@ -239,14 +310,101 @@ export default function HomeDashboard({ user }) {
               sx={{ mb: 2 }}
               fullWidth
             />
-            <Button variant="contained" onClick={handleUploadLearners}>
-              Upload
-            </Button>
+            <Box display="flex" gap={2}>
+              <Button variant="contained" onClick={handleUploadLearners}>
+                Upload
+              </Button>
+              <Button
+                variant="outlined"
+                onClick={() => setShowLearnerPreview(true)}
+                disabled={learnerRows.length === 0}
+              >
+                View Uploaded List
+              </Button>
+            </Box>
             <Fade in={!!uploadMsg}>
               <Box mt={2}>
-                {uploadMsg && <Alert severity={uploadMsg.startsWith("✅") ? "success" : "warning"}>{uploadMsg}</Alert>}
+                {uploadMsg && (
+                  <Alert severity={uploadMsg.startsWith("✅") ? "success" : "warning"}>
+                    {uploadMsg}
+                  </Alert>
+                )}
               </Box>
             </Fade>
+
+            {/* Preview table */}
+            {showLearnerPreview && learnerRows.length > 0 && (
+              <Box mt={3} sx={{ maxHeight: 300, overflow: "auto" }}>
+                <Typography variant="subtitle1" gutterBottom>
+                  Uploaded Learners Preview
+                </Typography>
+                <Box component="table" sx={{ width: "100%", borderCollapse: "collapse" }}>
+                  <Box component="thead" sx={{ bgcolor: "#f5f5f5" }}>
+                    <Box component="tr">
+                      {["Row", "Name", "Email", "Phone", "Batch No", "Status", "Errors", "Duplicate"].map(h => (
+                        <Box
+                          component="th"
+                          key={h}
+                          sx={{ border: "1px solid #ddd", p: 1, fontSize: 13 }}
+                        >
+                          {h}
+                        </Box>
+                      ))}
+                    </Box>
+                  </Box>
+                  <Box component="tbody">
+                    {learnerRows.map((row, idx) => {
+                      const hasErrors = row.__errors && row.__errors.length > 0;
+                      const isDup = !!row.__duplicate;
+                      return (
+                        <Box
+                          key={idx}
+                          component="tr"
+                          sx={{
+                            bgcolor: hasErrors
+                              ? "#ffebee"
+                              : isDup
+                              ? "#fff3e0"
+                              : "inherit",
+                          }}
+                        >
+                          <Box component="td" sx={{ border: "1px solid #eee", p: 1, fontSize: 13 }}>
+                            {row.__rowIndex}
+                          </Box>
+                          <Box component="td" sx={{ border: "1px solid #eee", p: 1, fontSize: 13 }}>
+                            {row.name}
+                          </Box>
+                          <Box component="td" sx={{ border: "1px solid #eee", p: 1, fontSize: 13 }}>
+                            {row.email}
+                          </Box>
+                          <Box component="td" sx={{ border: "1px solid #eee", p: 1, fontSize: 13 }}>
+                            {row.phone}
+                          </Box>
+                          <Box component="td" sx={{ border: "1px solid #eee", p: 1, fontSize: 13 }}>
+                            {row.batch_no}
+                          </Box>
+                          <Box component="td" sx={{ border: "1px solid #eee", p: 1, fontSize: 13 }}>
+                            {row.status}
+                          </Box>
+                          <Box
+                            component="td"
+                            sx={{ border: "1px solid #eee", p: 1, fontSize: 13, color: "error.main" }}
+                          >
+                            {row.__errors?.join(", ")}
+                          </Box>
+                          <Box
+                            component="td"
+                            sx={{ border: "1px solid #eee", p: 1, fontSize: 13, color: "warning.main" }}
+                          >
+                            {row.__duplicate || ""}
+                          </Box>
+                        </Box>
+                      );
+                    })}
+                  </Box>
+                </Box>
+              </Box>
+            )}
           </Paper>
 
           {/* ---- Upload Course Planner ---- */}
@@ -266,7 +424,11 @@ export default function HomeDashboard({ user }) {
             </Button>
             <Fade in={!!plannerMsg}>
               <Box mt={2}>
-                {plannerMsg && <Alert severity={plannerMsg.startsWith("✅") ? "success" : "warning"}>{plannerMsg}</Alert>}
+                {plannerMsg && (
+                  <Alert severity={plannerMsg.startsWith("✅") ? "success" : "warning"}>
+                    {plannerMsg}
+                  </Alert>
+                )}
               </Box>
             </Fade>
           </Paper>
@@ -349,10 +511,20 @@ export default function HomeDashboard({ user }) {
 
           {/* Buttons */}
           <Box mt={2} display="flex" gap={2} flexWrap="wrap">
-            <Button variant="contained" onClick={handleSchedule} disabled={loading} sx={{ flexGrow: 1, minWidth: 170 }}>
+            <Button
+              variant="contained"
+              onClick={handleSchedule}
+              disabled={loading}
+              sx={{ flexGrow: 1, minWidth: 170 }}
+            >
               {loading ? "Scheduling..." : "Schedule Emails"}
             </Button>
-            <Button variant="outlined" onClick={handleUpdateOffsets} disabled={loading || !offsetValue} sx={{ flexGrow: 1, minWidth: 170 }}>
+            <Button
+              variant="outlined"
+              onClick={handleUpdateOffsets}
+              disabled={loading || !offsetValue}
+              sx={{ flexGrow: 1, minWidth: 170 }}
+            >
               {loading ? "Updating Offsets..." : "Update Template Offsets"}
             </Button>
           </Box>
@@ -361,7 +533,11 @@ export default function HomeDashboard({ user }) {
 
           <Fade in={!!message}>
             <Box mt={2}>
-              {message && <Alert severity={message.startsWith("✅") ? "success" : "warning"}>{message}</Alert>}
+              {message && (
+                <Alert severity={message.startsWith("✅") ? "success" : "warning"}>
+                  {message}
+                </Alert>
+              )}
             </Box>
           </Fade>
         </Paper>
