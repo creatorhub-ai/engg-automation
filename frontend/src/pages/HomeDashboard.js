@@ -99,11 +99,11 @@ export default function HomeDashboard({ user }) {
   // --- Handler: Upload Learners with validation (no auto-preview) ---
   const handleUploadLearners = () => {
     setUploadMsg("");
-    // do not auto-open preview; user will click View button
     if (!learnersFile) {
       alert('Please choose CSV file');
       return;
     }
+
     Papa.parse(learnersFile, {
       header: true,
       skipEmptyLines: true,
@@ -142,21 +142,24 @@ export default function HomeDashboard({ user }) {
           const data = res.data || {};
           setUploadMsg(data.message || "✅ Uploaded successfully");
 
+          // handle duplicates from backend
           const alreadyInDb = data.alreadyInDb || [];
-          if (alreadyInDb.length) {
-            const key = (l) =>
-              `${(l.name || '').trim().toLowerCase()}|${(l.email || '').trim().toLowerCase()}|${(l.batch_no || '').trim()}`;
+          const inFileDuplicates = data.inFileDuplicates || [];
 
-            const duplicateMap = new Set(alreadyInDb.map(key));
+          const key = (l) =>
+            `${(l.name || '').trim().toLowerCase()}|${(l.email || '').trim().toLowerCase()}|${(l.batch_no || '').trim()}`;
 
-            setLearnerRows(prev =>
-              prev.map(r =>
-                duplicateMap.has(key(r))
-                  ? { ...r, __duplicate: "Already in database" }
-                  : r
-              )
-            );
-          }
+          const alreadySet = new Set(alreadyInDb.map(key));
+          const inFileSet = new Set(inFileDuplicates.map(key));
+
+          setLearnerRows(prev =>
+            prev.map(r => {
+              const k = key(r);
+              if (alreadySet.has(k)) return { ...r, __duplicate: "Already in database" };
+              if (inFileSet.has(k)) return { ...r, __duplicate: "Duplicate in file" };
+              return r;
+            })
+          );
         } catch (err) {
           setUploadMsg('❌ Upload failed: ' + (err.response?.data?.error || err.message));
         }
@@ -165,7 +168,7 @@ export default function HomeDashboard({ user }) {
     });
   };
 
-  // --- Handler: Upload Course Planner (unchanged functional logic) ---
+  // --- Handler: Upload Course Planner (unchanged) ---
   const handleUploadPlanner = () => {
     if (!plannerFile) return alert('Please choose CSV file');
     Papa.parse(plannerFile, {

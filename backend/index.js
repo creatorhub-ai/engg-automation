@@ -489,25 +489,107 @@ async function createBatchForm(batch_no, start_date) {
 app.post("/upload-learners", async (req, res) => {
   try {
     const { learners } = req.body;
-    if (!Array.isArray(learners) || learners.length === 0)
+    if (!Array.isArray(learners) || learners.length === 0) {
       return res.status(400).json({ error: "No learners provided" });
+    }
 
-    const rows = learners.map(l => ({
+    // Helper to build a composite key
+    const buildKey = (l) =>
+      `${(l.name || "").trim().toLowerCase()}|${(l.email || "").trim().toLowerCase()}|${(l.batch_no || "").trim()}`;
+
+    // 1) Normalize and map incoming rows
+    const normalized = learners.map((l) => ({
       name: (l.name || "").trim(),
       email: (l.email || "").trim(),
       phone: (l.phone || "").trim(),
       batch_no: (l.batch_no || "").trim(),
+      status: (l.status || "").trim(),
     }));
 
-    const { error } = await supabase.from("learners_data").insert(rows);
-    if (error) throw error;
+    // 2) Detect in-file duplicates
+    const seen = new Set();
+    const unique = [];
+    const inFileDuplicates = [];
 
-    res.json({ message: `Inserted ${rows.length} learners` });
+    for (const l of normalized) {
+      const k = buildKey(l);
+      if (!l.name || !l.email || !l.batch_no) {
+        // allow frontend validation to handle missing fields; still pass through as unique
+        unique.push(l);
+        continue;
+      }
+      if (seen.has(k)) {
+        inFileDuplicates.push(l);
+      } else {
+        seen.add(k);
+        unique.push(l);
+      }
+    }
+
+    if (unique.length === 0) {
+      return res.json({
+        message: "No rows to insert",
+        alreadyInDb: [],
+        inFileDuplicates,
+      });
+    }
+
+    // 3) Query Supabase to find already existing learners (same name+email+batch_no)
+    // Supabase does not support a multi-column IN directly in one call,
+    // so do a single select and filter in Node.
+    const { data: existingData, error: existingError } = await supabase
+      .from("learners_data")
+      .select("name, email, batch_no");
+
+    if (existingError) throw existingError;
+
+    const existingKeys = new Set(
+      (existingData || []).map((row) => buildKey(row))
+    );
+
+    const newRows = [];
+    const alreadyInDb = [];
+
+    for (const l of unique) {
+      const k = buildKey(l);
+      if (!l.name || !l.email || !l.batch_no) {
+        // if key is incomplete, treat as new row (backend will still insert it)
+        newRows.push(l);
+        continue;
+      }
+      if (existingKeys.has(k)) {
+        alreadyInDb.push(l);
+      } else {
+        newRows.push(l);
+      }
+    }
+
+    // 4) Insert only newRows
+    let insertedCount = 0;
+    if (newRows.length > 0) {
+      const { error: insertError } = await supabase
+        .from("learners_data")
+        .insert(newRows);
+
+      if (insertError) {
+        // If you have a UNIQUE constraint on (name,email,batch_no),
+        // Supabase may still throw on conflicts; you can ignore conflict codes if needed.
+        throw insertError;
+      }
+      insertedCount = newRows.length;
+    }
+
+    return res.json({
+      message: `Inserted ${insertedCount} learners. ${alreadyInDb.length} already present.`,
+      alreadyInDb,      // for React: mark "Already in database"
+      inFileDuplicates, // for React: mark "Duplicate in file"
+    });
   } catch (err) {
     console.error("❌ Upload learners error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
+
 
 // === Upload Course Planner ===
 app.post("/upload-course-planner", async (req, res) => {
