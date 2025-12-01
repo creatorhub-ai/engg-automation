@@ -13,7 +13,6 @@ import {
 
 const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 
-// same validation helpers as in HomeDashboard
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function validateEmail(email) {
@@ -31,13 +30,14 @@ function validatePhone(phone) {
 export default function UploadLearners() {
   const [file, setFile] = useState(null);
   const [message, setMessage] = useState("");
-  const [rows, setRows] = useState([]);              // parsed rows
+  const [rows, setRows] = useState([]);
   const [showPreview, setShowPreview] = useState(false);
 
   const onChange = (e) => setFile(e.target.files[0]);
 
   const handleUpload = () => {
     setMessage("");
+    // do not auto-open preview
     if (!file) {
       setMessage("❌ Please choose CSV file");
       return;
@@ -67,7 +67,6 @@ export default function UploadLearners() {
         });
 
         setRows(parsed);
-        setShowPreview(true);
 
         const validRows = parsed.filter(r => !r.__errors || r.__errors.length === 0);
 

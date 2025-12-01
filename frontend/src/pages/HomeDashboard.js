@@ -9,7 +9,6 @@ import {
   Select,
   InputLabel,
   FormControl,
-  CircularProgress,
   Alert,
   Fade
 } from '@mui/material';
@@ -89,7 +88,7 @@ export default function HomeDashboard({ user }) {
   const [classRoom, setClassRoom] = useState("");
   const [mockInterviewOffset, setMockInterviewOffset] = useState("7");
 
-  // Fetch batches on mount for ScheduleEmails dropdowns etc.
+  // Fetch batches on mount
   useEffect(() => {
     fetch(`${API_BASE}/api/batches`)
       .then(res => res.json())
@@ -97,9 +96,10 @@ export default function HomeDashboard({ user }) {
       .catch(() => setMessage("❌ Failed to fetch batches"));
   }, []);
 
-  // --- Handler: Upload Learners with validation + preview ---
+  // --- Handler: Upload Learners with validation (no auto-preview) ---
   const handleUploadLearners = () => {
     setUploadMsg("");
+    // do not auto-open preview; user will click View button
     if (!learnersFile) {
       alert('Please choose CSV file');
       return;
@@ -115,7 +115,7 @@ export default function HomeDashboard({ user }) {
             phone: r.phone || r.Phone || '',
             batch_no: r.batch_no || r.Batch || r.batch || '',
             status: r.status || r.Status || '',
-            __rowIndex: index + 2,  // row number (assuming header is row 1)
+            __rowIndex: index + 2,
           };
 
           const errors = [];
@@ -127,8 +127,8 @@ export default function HomeDashboard({ user }) {
           return { ...row, __errors: errors, __duplicate: null };
         });
 
+        // store rows, but keep preview closed until button click
         setLearnerRows(parsed);
-        setShowLearnerPreview(true);
 
         const validRows = parsed.filter(r => !r.__errors || r.__errors.length === 0);
 
@@ -142,8 +142,7 @@ export default function HomeDashboard({ user }) {
           const data = res.data || {};
           setUploadMsg(data.message || "✅ Uploaded successfully");
 
-          // optional: mark duplicates from server
-          const alreadyInDb = data.alreadyInDb || []; // backend should return this
+          const alreadyInDb = data.alreadyInDb || [];
           if (alreadyInDb.length) {
             const key = (l) =>
               `${(l.name || '').trim().toLowerCase()}|${(l.email || '').trim().toLowerCase()}|${(l.batch_no || '').trim()}`;
@@ -166,7 +165,7 @@ export default function HomeDashboard({ user }) {
     });
   };
 
-  // --- Handler: Upload Course Planner ---
+  // --- Handler: Upload Course Planner (unchanged functional logic) ---
   const handleUploadPlanner = () => {
     if (!plannerFile) return alert('Please choose CSV file');
     Papa.parse(plannerFile, {
@@ -201,7 +200,7 @@ export default function HomeDashboard({ user }) {
     });
   };
 
-  // --- Handler: Schedule Emails ---
+  // --- Handler: Schedule Emails (unchanged) ---
   const handleSchedule = async () => {
     if (!selectedBatch || !mode) {
       setMessage("⚠️ Please select batch and mode");
@@ -238,7 +237,6 @@ export default function HomeDashboard({ user }) {
     }
   };
 
-  // New function to update offsets in email_templates
   const handleUpdateOffsets = async () => {
     if (!selectedBatch || !mode || (mode === "Offline" && !batchType)) {
       setMessage("⚠️ Select batch, mode, and batch type (if offline) before updating offsets");
@@ -274,10 +272,8 @@ export default function HomeDashboard({ user }) {
     }
   };
 
-  // --- Get display role title (capitalizing first letter of each word) ---
   function getRoleTitle(role) {
     if (!role) return "Dashboard";
-    // Split by space, capitalize each word, rejoin
     return role
       .split(' ')
       .map(word => word.charAt(0).toUpperCase() + word.slice(1))
@@ -332,7 +328,7 @@ export default function HomeDashboard({ user }) {
               </Box>
             </Fade>
 
-            {/* Preview table */}
+            {/* Preview table ONLY when button clicked */}
             {showLearnerPreview && learnerRows.length > 0 && (
               <Box mt={3} sx={{ maxHeight: 300, overflow: "auto" }}>
                 <Typography variant="subtitle1" gutterBottom>
