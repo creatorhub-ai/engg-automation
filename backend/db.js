@@ -1,9 +1,7 @@
 // db.js
-import { Pool } from "pg";
+import pkg from "pg";
+const { Pool } = pkg;
 
-const pool = new Pool({
+export const pool = new Pool({
   connectionString: process.env.SUPABASE_URL,
-  // or host, user, password, database, etc.
 });
-
-export default { pool };

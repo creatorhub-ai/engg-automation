@@ -27,6 +27,7 @@ import PDFDocument from "pdfkit";
 import stream from "stream";
 import PDFTable from "pdfkit-table";
 import ExcelJS from "exceljs";
+import { getWindowStatus } from "./marksWindowService.js";
 
 dotenv.config();
 
@@ -37,8 +38,6 @@ dayjs.tz.setDefault("Asia/Kolkata");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-
-const marksWindowsRouter = require("./routes/marksWindows");
 
 // ============================
 // 🔥 IMPORTANT: NO TRAILING /

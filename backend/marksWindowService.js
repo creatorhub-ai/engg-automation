@@ -1,7 +1,7 @@
 // marksWindowService.js
-const { pool } = require("./db");
+import { pool } from "./db.js";
 
-async function getWindowStatus({ batchNo, assessmentType, weekNo, nowUtc }) {
+export async function getWindowStatus({ batchNo, assessmentType, weekNo, nowUtc }) {
   const now = nowUtc || new Date();
 
   const { rows } = await pool.query(
@@ -30,9 +30,11 @@ async function getWindowStatus({ batchNo, assessmentType, weekNo, nowUtc }) {
   const w = rows[0];
   const portalOpenAt = w.portal_open_at;
   const baseCloseAt = w.portal_close_at;
+  const extendedUntil = w.extended_until;
+
   const effectiveCloseAt =
-    w.is_extended && w.extended_until && w.extended_until > baseCloseAt
-      ? w.extended_until
+    w.is_extended && extendedUntil && extendedUntil > baseCloseAt
+      ? extendedUntil
       : baseCloseAt;
 
   const isOpen = now >= portalOpenAt && now <= effectiveCloseAt;
@@ -43,9 +45,7 @@ async function getWindowStatus({ batchNo, assessmentType, weekNo, nowUtc }) {
     portal_open_at: portalOpenAt,
     portal_close_at: baseCloseAt,
     is_extended: w.is_extended,
-    extended_until: w.extended_until,
+    extended_until: extendedUntil,
     now,
   };
 }
-
-module.exports = { getWindowStatus };

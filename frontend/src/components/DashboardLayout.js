@@ -64,7 +64,7 @@ const MENUS_BY_ROLE = {
     { id: 7, name: "Mail Status Check", path: "/mail-status" },
     { id: 8, name: "Attendance Mailer", path: "/attendance-mailer" },
     { id: 9, name: "Course Progress", path: "/course-progress" },
-    { id: 10, name: "Report", path: "/date-change-report" },
+    { id: 10, name: "Report", path: "/reports" },
     { id: 11, name: "User Dashboard", path: "/users" },
     { id: 12, name: "Classroom Planner", path: "/schedule" },
     { id: 13, name: "Classroom Planner", path: "/Matrix" },
