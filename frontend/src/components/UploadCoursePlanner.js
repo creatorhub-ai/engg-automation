@@ -26,6 +26,7 @@ export default function UploadCoursePlanner() {
       skipEmptyLines: true,
       complete: async (results) => {
         const json = results.data.map((r) => ({
+          classroom_name: r.classroom_name || r.classroom || "",
           batch_no: r.batch_no || r.Batch || r.batch || "",
           domain: r.domain || "",
           mode: r.mode || "",
@@ -34,14 +35,18 @@ export default function UploadCoursePlanner() {
           start_time: r.start_time || r["start time"] || r.StartTime || "",
           end_time: r.end_time || "",
           module_name: r.module_name || "",
-          module_topic: r.module_topic || "",
           topic_name: r.topic_name || "",
           trainer_name: r.trainer_name || "",
           trainer_email: r.trainer_email || "",
           topic_status: r.topic_status || "",
           remarks: r.remarks || "",
           batch_type: r.batch_type || "",
+          actual_date: r.actual_date || "",
+          date_difference: r.date_difference || "",
+          date_changed_by: r.date_changed_by || "",
+          date_changed_at: r.date_changed_at || "",
         }));
+
         try {
           const res = await axios.post(`${API_BASE}/upload-course-planner`, { courses: json });
           setMessage(res.data.message || "✅ Uploaded successfully");

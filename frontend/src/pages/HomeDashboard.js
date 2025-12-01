@@ -203,6 +203,33 @@ export default function HomeDashboard({ user }) {
     });
   };
 
+  //=== Populate the input values ===
+  const handlePlannerFileChange = (e) => {
+    const file = e.target.files[0];
+    setPlannerFile(file);
+    if (!file) return;
+
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (results) => {
+        if (!results.data || results.data.length === 0) return;
+
+        // take first non-empty row
+        const first = results.data.find(r => (r.batch_no || r.Batch || r.batch || "").trim() !== "") || results.data[0];
+
+        const csvBatch = (first.batch_no || first.Batch || first.batch || "").trim();
+        const csvMode = (first.mode || "").trim();
+        const csvClassroom = (first.classroom_name || first.classroom || "").trim();
+
+        if (csvBatch) setSelectedBatch(csvBatch);
+        if (csvMode) setMode(csvMode);                 // must be "Online" or "Offline"
+        if (csvClassroom) setClassRoom(csvClassroom);  // must match your dropdown options
+      },
+    });
+  };
+
+
   // --- Handler: Schedule Emails (unchanged) ---
   const handleSchedule = async () => {
     if (!selectedBatch || !mode) {
@@ -414,7 +441,7 @@ export default function HomeDashboard({ user }) {
             <TextField
               type="file"
               inputProps={{ accept: ".csv" }}
-              onChange={e => setPlannerFile(e.target.files[0])}
+              onChange={handlePlannerFileChange}
               sx={{ mb: 2 }}
               fullWidth
             />
