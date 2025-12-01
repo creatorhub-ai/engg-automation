@@ -670,6 +670,40 @@ app.post("/upload-course-planner", async (req, res) => {
   }
 });
 
+// Assuming you already have supabase client initialised above
+app.get("/api/course-planner-meta/:batchNo", async (req, res) => {
+  try {
+    const batchNo = (req.params.batchNo || "").trim();
+    if (!batchNo) {
+      return res.status(400).json({ error: "batch_no is required" });
+    }
+
+    const { data, error } = await supabase
+      .from("course_planner_data")
+      .select("batch_no, mode, batch_type, classroom_name")
+      .eq("batch_no", batchNo)
+      .limit(1);
+
+    if (error) throw error;
+
+    if (!data || data.length === 0) {
+      return res.status(404).json({ error: `No course planner found for ${batchNo}` });
+    }
+
+    const row = data[0];
+
+    return res.json({
+      batch_no: row.batch_no,
+      mode: row.mode || null,
+      batch_type: row.batch_type || null,
+      classroom_name: row.classroom_name || null,
+    });
+  } catch (err) {
+    console.error("❌ course-planner-meta error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 // === Get Batch List ===
 app.get("/api/batches", async (req, res) => {
