@@ -65,7 +65,7 @@ function TrainerUnavailabilityForm({ user }) {
       setStart("");
       setEnd("");
       setReason("");
-    } catch (error) {
+    } catch {
       setErr("Failed to submit unavailability");
     }
   }
@@ -291,8 +291,9 @@ function TrainerDashboard({ user, token }) {
   const [pendingStatusChanges, setPendingStatusChanges] = useState({});
   const [tab, setTab] = useState(0);
 
-  // NEW: to enforce week-level locking
-  const [firstEditableWeek, setFirstEditableWeek] = useState(null);
+  // NEW: full topic list for batch and computed firstIncompleteWeek
+  const [allBatchTopics, setAllBatchTopics] = useState([]);
+  const [firstIncompleteWeek, setFirstIncompleteWeek] = useState(null);
 
   // Load batches
   useEffect(() => {
@@ -312,64 +313,81 @@ function TrainerDashboard({ user, token }) {
     })();
   }, [token]);
 
-  // Load weeks on batch change + get firstEditableWeek from backend
+  // Load weeks + ALL topics for the batch when batch changes
   useEffect(() => {
     if (!selectedBatch) {
       setWeeks([]);
       setSelectedWeek("");
       setTopics([]);
-      setFirstEditableWeek(null);
+      setAllBatchTopics([]);
+      setFirstIncompleteWeek(null);
       return;
     }
     (async () => {
       try {
         const headers = token ? { Authorization: `Bearer ${token}` } : {};
-        const res = await axios.get(`${API_BASE}/api/weeks/${selectedBatch}`, {
-          headers,
-        });
-        if (res.data && Array.isArray(res.data) && res.data.length > 0) {
-          const sortedWeeks = [...res.data].sort(
+        // weeks
+        const resWeeks = await axios.get(
+          `${API_BASE}/api/weeks/${selectedBatch}`,
+          { headers }
+        );
+        if (resWeeks.data && Array.isArray(resWeeks.data) && resWeeks.data.length > 0) {
+          const sortedWeeks = [...resWeeks.data].sort(
             (a, b) => Number(a) - Number(b)
           );
           setWeeks(sortedWeeks);
           setSelectedWeek(sortedWeeks[0]);
-
-          // Ask backend for first editable week index for this batch
-          try {
-            const res2 = await axios.get(
-              `${API_BASE}/api/first-editable-week/${selectedBatch}`,
-              { headers }
-            );
-            // expected shape: { first_editable_week: number | null }
-            const serverVal = res2.data?.first_editable_week;
-            if (serverVal == null) {
-              // if backend says null => allow all (or no specific rule)
-              setFirstEditableWeek(null);
-            } else {
-              setFirstEditableWeek(Number(serverVal));
-            }
-          } catch {
-            // if API not available, allow all weeks
-            setFirstEditableWeek(null);
-          }
         } else {
           setWeeks([]);
           setSelectedWeek("");
           setTopics([]);
           setMessage("No weeks found for selected batch");
-          setFirstEditableWeek(null);
+        }
+
+        // ALL topics for this batch across all weeks
+        const resAllTopics = await axios.get(
+          `${API_BASE}/api/topics/${selectedBatch}`,
+          { headers }
+        );
+        const all = Array.isArray(resAllTopics.data) ? resAllTopics.data : [];
+        setAllBatchTopics(all);
+
+        // compute first incomplete week: smallest week_no where any topic is not Completed
+        if (all.length > 0) {
+          const weekStatus = {};
+          all.forEach((t) => {
+            const w = Number(t.week_no);
+            if (!weekStatus[w]) {
+              weekStatus[w] = { hasNotCompleted: false };
+            }
+            if (t.topic_status !== "Completed") {
+              weekStatus[w].hasNotCompleted = true;
+            }
+          });
+          const candidateWeeks = Object.keys(weekStatus)
+            .map((w) => Number(w))
+            .filter((w) => weekStatus[w].hasNotCompleted);
+          if (candidateWeeks.length > 0) {
+            setFirstIncompleteWeek(Math.min(...candidateWeeks));
+          } else {
+            // everything is completed; you may allow all or none
+            setFirstIncompleteWeek(null); // null => allow all
+          }
+        } else {
+          setFirstIncompleteWeek(null);
         }
       } catch {
         setWeeks([]);
         setSelectedWeek("");
         setTopics([]);
-        setMessage("Error loading weeks");
-        setFirstEditableWeek(null);
+        setAllBatchTopics([]);
+        setMessage("Error loading weeks/topics");
+        setFirstIncompleteWeek(null);
       }
     })();
   }, [selectedBatch, token]);
 
-  // Load topics based on batch and week
+  // Load topics for selectedWeek only (for display)
   useEffect(() => {
     if (!selectedBatch || !selectedWeek) {
       setTopics([]);
@@ -386,7 +404,6 @@ function TrainerDashboard({ user, token }) {
           }
         );
         if (res.data && Array.isArray(res.data)) {
-          // Sort topics by date ascending, then by module for stability
           const sortedTopics = [...res.data].sort((a, b) => {
             const dA = new Date(a.date);
             const dB = new Date(b.date);
@@ -420,22 +437,21 @@ function TrainerDashboard({ user, token }) {
     })();
   }, [selectedBatch, selectedWeek, token]);
 
-  // Utility: current display status
+  // Helpers
   const getStatusForTopic = (topicId, confirmedStatus) =>
     pendingStatusChanges[topicId] ?? confirmedStatus;
 
-  // Freeze only when confirmed Completed
   const isActionFrozen = (topic) => topic.topic_status === "Completed";
 
-  // NEW: can edit given this week number?
+  // week-level rule: only firstIncompleteWeek is editable; later weeks blocked
   const canEditWeek = (weekNo) => {
     const w = Number(weekNo);
-    if (!w || firstEditableWeek == null) return true; // if server doesn't enforce, allow
-    // Only weeks <= firstEditableWeek can be edited
-    return w <= firstEditableWeek;
+    if (!w) return false;
+    if (firstIncompleteWeek == null) return true; // if we couldn't compute, allow all
+    return w === firstIncompleteWeek;
   };
 
-  // Group topics by date + sort dates ascending
+  // group topics by date
   const topicsByDate = topics.reduce((acc, t) => {
     const key = t.date || "No Date";
     if (!acc[key]) acc[key] = [];
@@ -488,23 +504,40 @@ function TrainerDashboard({ user, token }) {
         });
         setMessage("✅ Status updated");
 
-        // Optional: refresh firstEditableWeek after a status change
-        try {
-          const res2 = await axios.get(
-            `${API_BASE}/api/first-editable-week/${selectedBatch}`,
-            { headers }
+        // also update allBatchTopics + recompute firstIncompleteWeek
+        setAllBatchTopics((prev) =>
+          prev.map((t) =>
+            t.id === topicId ? { ...t, topic_status: newStatus } : t
+          )
+        );
+        setFirstIncompleteWeek((prev) => {
+          // recompute from updated allBatchTopics in next microtask
+          const all = allBatchTopics.map((t) =>
+            t.id === topicId ? { ...t, topic_status: newStatus } : t
           );
-          const serverVal = res2.data?.first_editable_week;
-          setFirstEditableWeek(
-            serverVal == null ? null : Number(serverVal)
-          );
-        } catch {
-          // ignore if fails
-        }
+          if (all.length === 0) return null;
+          const weekStatus = {};
+          all.forEach((t) => {
+            const w = Number(t.week_no);
+            if (!weekStatus[w]) {
+              weekStatus[w] = { hasNotCompleted: false };
+            }
+            if (t.topic_status !== "Completed") {
+              weekStatus[w].hasNotCompleted = true;
+            }
+          });
+          const candidateWeeks = Object.keys(weekStatus)
+            .map((w) => Number(w))
+            .filter((w) => weekStatus[w].hasNotCompleted);
+          if (candidateWeeks.length > 0) {
+            return Math.min(...candidateWeeks);
+          }
+          return null;
+        });
       } else {
         throw new Error(res.data?.error || "Update failed");
       }
-    } catch (err) {
+    } catch {
       setMessage("❌ Error updating status");
       setTopics((prev) =>
         prev.map((t) =>
@@ -699,7 +732,6 @@ function TrainerDashboard({ user, token }) {
             </Grid>
           </Grid>
 
-          {/* Group by date with week-level edit lock */}
           {sortedDates.map((dateKey) => {
             const dateTopics = topicsByDate[dateKey] || [];
             const weekNoForBlock =
@@ -908,7 +940,7 @@ function TrainerDashboard({ user, token }) {
                               <Tooltip
                                 title={
                                   !weekEditable
-                                    ? "Complete previous weeks before editing this week"
+                                    ? "Complete all topics of the current editable week before moving to the next week"
                                     : frozen
                                     ? "This topic is completed and cannot be changed"
                                     : "Change Status"
