@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/exhaustive-deps */
 // src/components/MarksExtensionReport.js
 import React, { useEffect, useState } from "react";
 import {
@@ -57,7 +58,6 @@ export default function MarksExtensionReport({ user, token }) {
     } else {
       setRows([]);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBatch, statusFilter]);
 
   async function loadRequests() {
@@ -184,8 +184,7 @@ export default function MarksExtensionReport({ user, token }) {
                 <TableRow key={r.id}>
                   <TableCell>{r.batch_no}</TableCell>
                   <TableCell>
-                    {ASSESSMENT_LABELS[r.assessment_type] ||
-                      r.assessment_type}
+                    {ASSESSMENT_LABELS[r.assessment_type] || r.assessment_type}
                   </TableCell>
                   <TableCell>{r.week_no ?? "-"}</TableCell>
                   <TableCell>{r.trainer_email}</TableCell>
