@@ -31,6 +31,7 @@ import { getWindowStatus } from "./marksWindowService.js";
 import marksWindowsRouter from "./routes/marksWindows.js";
 import marksSaveRouter from "./routes/marksSave.js";
 import { pool } from "./db.js";
+import announceRouter from "./routes/announce.js";
 
 dotenv.config();
 
@@ -69,6 +70,7 @@ app.use(
 // Mount routers
 app.use("/api/marks", marksWindowsRouter);
 app.use("/api/marks", marksSaveRouter);
+app.use("/api/announcement", announceRouter);
 
 // =====================================================
 // ✅ Handle Preflight Requests (OPTIONS)

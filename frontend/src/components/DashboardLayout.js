@@ -33,6 +33,7 @@ const ICON_MAP = {
   "/matrix": <ScheduleIcon />,
   "/attendance": <PeopleIcon />,
   "/marks-entry": <AssessmentIcon />,
+  "/announcement": <AnnouncementIcon />,
 };
 
 // Define menus that match the routes in App.js
@@ -53,6 +54,7 @@ const MENUS_BY_ROLE = {
     { id: 13, name: "Classroom Planner", path: "/Matrix" },
     { id: 14, name: "Attendance", path: "/attendance" },
     { id: 15, name: "Mark Entry", path: "/marks-entry" },
+    { id: 16, name: "Announcement", path: "/announcement" },
   ],
   manager: [
     { id: 1, name: "Home", path: "/home" },

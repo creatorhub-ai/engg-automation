@@ -21,6 +21,7 @@ import ClassroomScheduler from "./pages/ClassroomScheduler";
 import AttendanceDashboard from "./pages/AttendanceDashboard"; // <-- imported new attendance dashboard
 import MarkSheet from "./pages/MarkSheet";
 import ReportsDashboard from "./pages/ReportsDashboard";
+import AnnouncementDashboard from "./pages/AnnouncementDashboard";
 
 const roleMenus = {
   admin: [
@@ -39,6 +40,7 @@ const roleMenus = {
     { text: "Classroom Matrix", path: "/matrix" },
     { text: "Attendance", path: "/attendance" }, // <-- added attendance menu
     { text: "Mark Entry", path: "/marks-entry" }, 
+    { text: "Mark Entry", path: "/announcement" }, 
     
   ],
   manager: [
@@ -129,6 +131,8 @@ function getComponentForPath(path, login) {
       return <ClassroomMatrixDashboard user={login} />;
     case "/marks-entry":
       return <MarkSheet user={login} />;
+    case "/announcement":
+      return <AnnouncementDashboard user={login} />;
     case "/attendance":
       return <AttendanceDashboard user={login} />; // <-- mapped attendance route to AttendanceDashboard component
     default:
