@@ -2,7 +2,6 @@
   "extends": ["react-app", "plugin:react-hooks/recommended"],
   "plugins": ["react-hooks"],
   "rules": {
-    // optionally override some rules here, or add:
     "react-hooks/exhaustive-deps": "warn"
   }
 }
