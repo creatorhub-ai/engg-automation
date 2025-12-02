@@ -50,6 +50,8 @@
     ]
   },
   "devDependencies": {
+    "eslint": "^8.0.0",
+    "eslint-config-react-app": "^7.0.1",
     "eslint-plugin-react-hooks": "^7.0.1"
   }
 }
