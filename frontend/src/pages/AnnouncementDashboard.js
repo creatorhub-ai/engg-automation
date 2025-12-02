@@ -27,8 +27,10 @@ export default function AnnouncementDashboard({ token }) {
   const [learners, setLearners] = useState([]);
 
   const [subject, setSubject] = useState("");
-  const [message, setMessage] = useState("");
-  const [messageType, setMessageType] = useState("text"); // text, multiline, link, image, file
+  const [message, setMessage] = useState(""); // For text content or URL
+  const [messageType, setMessageType] = useState("text"); // text, multiline, paragraph, link, image, file
+
+  const [file, setFile] = useState(null); // for image / file upload
 
   const [loadingLearners, setLoadingLearners] = useState(false);
   const [sending, setSending] = useState(false);
@@ -69,33 +71,80 @@ export default function AnnouncementDashboard({ token }) {
     loadLearners();
   }, [selectedDomain, selectedBatch, token]);
 
+  // Handle file input change
+  const onFileChange = (e) => {
+    const uploadedFile = e.target.files[0];
+    if(uploadedFile) {
+      setFile(uploadedFile);
+    }
+  };
+
+  // Upload file to server or third-party service
+  async function uploadFile(fileToUpload) {
+    // Replace this with your actual file upload endpoint logic
+    const formData = new FormData();
+    formData.append("file", fileToUpload);
+
+    try {
+      // Example: upload to your backend upload API
+      const headers = token ? { Authorization: `Bearer ${token}`, "Content-Type": "multipart/form-data" } : { "Content-Type": "multipart/form-data" };
+      const res = await axios.post(`${API_BASE}/api/upload`, formData, { headers });
+      // Expect server to respond with { url: "uploaded file url" }
+      if(res.data && res.data.url) {
+        return res.data.url;
+      }
+      throw new Error("Upload failed: no URL returned");
+    } catch (err) {
+      throw err;
+    }
+  }
+
   const onSend = async () => {
     setError("");
     setSuccessMsg("");
-    if (!subject.trim() || !message.trim()) {
-      setError("Subject and message cannot be empty");
+    if (!subject.trim()) {
+      setError("Subject cannot be empty");
       return;
     }
     if(!selectedDomain && !selectedBatch) {
       setError("Select either a domain or batch");
       return;
     }
+    // For image/file types, allow either file upload or message URL/text
+    if((messageType === "image" || messageType === "file") && !file && !message.trim()) {
+      setError("Please upload a file/image or enter its URL");
+      return;
+    }
+    if(messageType !== "image" && messageType !== "file" && !message.trim()) {
+      setError("Message cannot be empty");
+      return;
+    }
+
     setSending(true);
     try {
+      let finalMessage = message;
+
+      // If file uploaded, upload it and replace message with returned url
+      if(file) {
+        finalMessage = await uploadFile(file);
+      }
+
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
       const payload = {
         subject,
-        message,
+        message: finalMessage,
         messageType,
         domain: selectedDomain || null,
         batch_no: selectedBatch || null,
       };
+
       const res = await axios.post(`${API_BASE}/api/announcement/send`, payload, { headers });
 
       if(res.data.success) {
         setSuccessMsg(`Announcement sent successfully to ${res.data.sentTo} learners.`);
         setMessage("");
         setSubject("");
+        setFile(null);
       } else {
         setError("Failed to send announcement");
       }
@@ -166,19 +215,23 @@ export default function AnnouncementDashboard({ token }) {
         <RadioGroup
           row
           value={messageType}
-          onChange={e => setMessageType(e.target.value)}
+          onChange={e => {
+            setMessageType(e.target.value);
+            setFile(null);
+            setMessage("");
+          }}
         >
           <FormControlLabel value="text" control={<Radio />} label="Single Line Text" />
           <FormControlLabel value="multiline" control={<Radio />} label="Multiline Text" />
           <FormControlLabel value="paragraph" control={<Radio />} label="Paragraph" />
           <FormControlLabel value="link" control={<Radio />} label="Link (URL)" />
-          <FormControlLabel value="image" control={<Radio />} label="Image URL" />
-          <FormControlLabel value="file" control={<Radio />} label="File URL" />
+          <FormControlLabel value="image" control={<Radio />} label="Image Upload or URL" />
+          <FormControlLabel value="file" control={<Radio />} label="File Upload or URL" />
         </RadioGroup>
       </FormControl>
 
       <FormControl fullWidth sx={{ mb: 2 }}>
-        {messageType === "text" && (
+        {(messageType === "text") && (
           <TextField
             label="Message"
             value={message}
@@ -192,18 +245,39 @@ export default function AnnouncementDashboard({ token }) {
             label="Message"
             value={message}
             onChange={e => setMessage(e.target.value)}
-            required
             multiline
             rows={messageType === "paragraph" ? 6 : 3}
+            required
           />
         )}
-        {(messageType === "link" || messageType === "image" || messageType === "file") && (
+        {(messageType === "link") && (
           <TextField
-            label="URL"
+            label="Link URL"
             value={message}
             onChange={e => setMessage(e.target.value)}
             required
           />
+        )}
+        {(messageType === "image" || messageType === "file") && (
+          <>
+            <Button variant="outlined" component="label" sx={{ mb: 1 }}>
+              Upload File
+              <input
+                type="file"
+                accept={messageType === "image" ? "image/*" : "*"}
+                hidden
+                onChange={onFileChange}
+              />
+            </Button>
+            {file && <Typography variant="body2">{file.name}</Typography>}
+            <TextField
+              label={`${messageType === "image" ? "Image" : "File"} URL (or leave blank to use uploaded file)`}
+              value={message}
+              onChange={e => setMessage(e.target.value)}
+              size="small"
+              fullWidth
+            />
+          </>
         )}
       </FormControl>
 
