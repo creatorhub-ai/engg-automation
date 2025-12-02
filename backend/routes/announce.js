@@ -1,6 +1,6 @@
 import express from "express";
-import { pool } from "./db.js"; // or your Postgres client
-import { sendRawEmail } from "./emailSender.js";
+import { pool } from "../db.js"; // or your Postgres client
+import { sendRawEmail } from "../emailSender.js";
 
 const announceRouter = express.Router();
 
