@@ -1,4 +1,3 @@
-/* eslint-disable react-hooks/exhaustive-deps */
 // src/components/MarksExtensionReport.js
 import React, { useEffect, useState } from "react";
 import {
