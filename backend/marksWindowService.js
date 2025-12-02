@@ -1,4 +1,4 @@
-// marksWindowService.js
+// backend/marksWindowService.js
 import { pool } from "./db.js";
 
 export async function getWindowStatus({ batchNo, assessmentType, weekNo, nowUtc }) {

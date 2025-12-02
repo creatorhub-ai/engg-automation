@@ -1,7 +1,7 @@
-// routes/marksSave.js
-const express = require("express");
-const { pool } = require("../db");
-const { getWindowStatus } = require("../marksWindowService");
+// backend/routes/marksSave.js
+import express from "express";
+import { pool } from "../db.js";
+import { getWindowStatus } from "../marksWindowService.js";
 const router = express.Router();
 
 router.post("/:assessmentType", async (req, res) => {
@@ -55,4 +55,4 @@ router.post("/:assessmentType", async (req, res) => {
   }
 });
 
-module.exports = router;
+export default router;

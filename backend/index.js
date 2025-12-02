@@ -28,6 +28,9 @@ import stream from "stream";
 import PDFTable from "pdfkit-table";
 import ExcelJS from "exceljs";
 import { getWindowStatus } from "./marksWindowService.js";
+import marksWindowsRouter from "./routes/marksWindows.js";
+import marksSaveRouter from "./routes/marksSave.js";
+import { pool } from "./db.js";
 
 dotenv.config();
 
@@ -62,6 +65,10 @@ app.use(
     ],
   })
 );
+
+// Mount routers
+app.use("/api/marks", marksWindowsRouter);
+app.use("/api/marks", marksSaveRouter);
 
 // =====================================================
 // ✅ Handle Preflight Requests (OPTIONS)
@@ -319,55 +326,6 @@ async function checkLicenseAvailability(supabase, domain, students) {
   const availableCount = licenses.reduce((sum, lic) => sum + lic.count, 0);
   if (availableCount >= students) return { available: true, missing: 0 };
   else return { available: false, missing: students - availableCount };
-}
-
-// === Marks Window Helpers ===
-async function getWindowStatus({ batchNo, assessmentType, weekNo }) {
-  // Supabase RPC or direct query to marks_entry_windows
-  const { data, error } = await supabase
-    .from("marks_entry_windows")
-    .select("*")
-    .eq("batch_no", batchNo)
-    .eq("assessment_type", assessmentType)
-    .or(`week_no.eq.${weekNo},week_no.is.null`)
-    .order("week_no", { ascending: true, nullsFirst: true })
-    .limit(1);
-
-  const now = new Date();
-
-  if (error || !data || data.length === 0) {
-    return {
-      exists: false,
-      is_open: false,
-      portal_open_at: null,
-      portal_close_at: null,
-      is_extended: false,
-      extended_until: null,
-      now,
-    };
-  }
-
-  const w = data[0];
-  const portalOpenAt = new Date(w.portal_open_at);
-  const baseCloseAt = new Date(w.portal_close_at);
-  const extendedUntil = w.extended_until ? new Date(w.extended_until) : null;
-
-  const effectiveCloseAt =
-    w.is_extended && extendedUntil && extendedUntil > baseCloseAt
-      ? extendedUntil
-      : baseCloseAt;
-
-  const isOpen = now >= portalOpenAt && now <= effectiveCloseAt;
-
-  return {
-    exists: true,
-    is_open: isOpen,
-    portal_open_at: portalOpenAt,
-    portal_close_at: baseCloseAt,
-    is_extended: w.is_extended,
-    extended_until: extendedUntil,
-    now,
-  };
 }
 
 // example helper
@@ -1043,9 +1001,6 @@ app.post("/upload-course-planner", async (req, res) => {
   }
 });
 
-app.use("/api/marks", marksWindowsRouter);
-
-app.use("/api/marks", require("./routes/marksSave"));
 
 // Assuming you already have supabase client initialised above
 app.get("/api/course-planner-meta/:batchNo", async (req, res) => {
