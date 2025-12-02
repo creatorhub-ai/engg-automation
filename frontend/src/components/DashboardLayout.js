@@ -70,11 +70,16 @@ const MENUS_BY_ROLE = {
     { id: 11, name: "User Dashboard", path: "/users" },
     { id: 12, name: "Classroom Planner", path: "/schedule" },
     { id: 13, name: "Classroom Planner", path: "/Matrix" },
+    { id: 14, name: "Attendance", path: "/attendance" },
+    { id: 15, name: "Mark Entry", path: "/marks-entry" },
+    { id: 16, name: "Announcement", path: "/announcement" },
   ],
   trainer: [
     { id: 1, name: "Trainer Dashboard", path: "/dashboard" },
     { id: 2, name: "Mock Interview Schedule", path: "/mock-interview-schedule" },
     { id: 3, name: "Soft Skill Announcement", path: "/soft-skill-announcement" },
+    { id: 4, name: "Attendance", path: "/attendance" },
+    { id: 5, name: "Mark Entry", path: "/marks-entry" },
   ],
   coordinator: [
     { id: 1, name: "Home", path: "/home" },

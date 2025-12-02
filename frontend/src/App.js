@@ -40,7 +40,7 @@ const roleMenus = {
     { text: "Classroom Matrix", path: "/matrix" },
     { text: "Attendance", path: "/attendance" }, // <-- added attendance menu
     { text: "Mark Entry", path: "/marks-entry" }, 
-    { text: "Mark Entry", path: "/announcement" }, 
+    { text: "Announcement", path: "/announcement" }, 
     
   ],
   manager: [
@@ -57,12 +57,16 @@ const roleMenus = {
     { text: "Course Progress", path: "/course-progress" },
     { text: "Classroom Planner", path: "/schedule" },
     { text: "Classroom Matrix", path: "/matrix" },
-    // Attendance menu not added here for manager as per your old setup; add if needed
+    { text: "Attendance", path: "/attendance" }, // <-- added attendance menu
+    { text: "Mark Entry", path: "/marks-entry" }, 
+    { text: "Announcement", path: "/announcement" }, 
   ],
   trainer: [
     { text: "Trainer Dashboard", path: "/dashboard" },
     { text: "Mock Interview Schedule", path: "/mock-interview-schedule" },
     { text: "Soft Skill Announcement", path: "/soft-skill-announcement" },
+    { text: "Attendance", path: "/attendance" }, // <-- added attendance menu
+    { text: "Mark Entry", path: "/marks-entry" },
   ],
   coordinator: [
     { text: "Home", path: "/home" },
