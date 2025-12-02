@@ -329,21 +329,19 @@ async function checkLicenseAvailability(supabase, domain, students) {
 }
 
 // example helper
-async function getDistinctTrainersForBatch(batchNo) {
+export async function getDistinctTrainersForBatch(batchNo) {
   const { data, error } = await supabase
     .from("course_planner_data")
     .select("trainer_email")
-    .eq("batch_no", batchNo);
+    .eq("batch_no", batchNo)
+    .neq("trainer_email", null);
 
-  if (error || !data) return [];
+  if (error) {
+    console.error("Error fetching trainers for batch", batchNo, error);
+    return [];
+  }
 
-  const emails = Array.from(
-    new Set(
-      data
-        .map((r) => r.trainer_email)
-        .filter((e) => !!e)
-    )
-  );
+  const emails = [...new Set(data.map((row) => row.trainer_email))];
   return emails;
 }
 
@@ -620,17 +618,14 @@ app.post("/api/marks/:assessmentType", async (req, res) => {
 app.post("/api/marks/extension-request", async (req, res) => {
   try {
     const { batch_no, assessment_type, week_no, reason } = req.body;
-    const trainerEmail = req.user?.email;
 
-    if (!trainerEmail) {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
     if (!batch_no || !assessment_type || !week_no) {
       return res
         .status(400)
         .json({ error: "batch_no, assessment_type, week_no are required" });
     }
 
+    // Check if portal is still open — no need to request if open
     const status = await getWindowStatus({
       batchNo: batch_no,
       assessmentType: assessment_type,
@@ -643,22 +638,29 @@ app.post("/api/marks/extension-request", async (req, res) => {
       });
     }
 
+    // Prevent duplicate pending requests from any trainer email who wants to request for same batch/week (optional)
     const { data: existing, error: existErr } = await supabase
       .from("marks_entry_extension_requests")
       .select("id")
       .eq("batch_no", batch_no)
       .eq("assessment_type", assessment_type)
       .eq("week_no", week_no)
-      .eq("trainer_email", trainerEmail)
       .eq("status", "pending")
       .limit(1);
 
     if (!existErr && existing && existing.length > 0) {
       return res.json({
         success: false,
-        error: "You already have a pending request for this assessment",
+        error: "There is already a pending extension request for this assessment",
       });
     }
+
+    // Use trainer emails from course_planner_data, requires passing trainer_email in request now or store who requested
+    
+    // For demo, we can require trainer_email in body or set it to null
+    // Recommend passing trainer_email from frontend as the logged-in user email (optional)
+    // Or omit and store NULL (then embedding auth is better)
+    const trainerEmail = req.body.trainer_email || null;
 
     const { data, error } = await supabase
       .from("marks_entry_extension_requests")
@@ -677,7 +679,28 @@ app.post("/api/marks/extension-request", async (req, res) => {
       return res.status(500).json({ error: "Failed to create request" });
     }
 
-    // Optional: enqueue mail to manager in marks_reminder_jobs here
+    // Get distinct trainer emails for batch to notify
+    const notifyEmails = await getDistinctTrainersForBatch(batch_no);
+
+    const subject = `Extension request for batch ${batch_no}`;
+    const htmlBody = `
+      <p>An extension request has been made.</p>
+      <ul>
+        <li><b>Batch:</b> ${batch_no}</li>
+        <li><b>Assessment Type:</b> ${assessment_type}</li>
+        <li><b>Week No:</b> ${week_no}</li>
+        <li><b>Reason:</b> ${reason || "N/A"}</li>
+      </ul>
+      <p>Please review the request and approve or reject it.</p>`;
+
+    // Send emails asynchronously but don't wait to respond to client
+    notifyEmails.forEach((email) => {
+      sendRawEmail({
+        to: email,
+        subject,
+        html: htmlBody,
+      }).catch((e) => console.error("Failed to send mail to", email, e));
+    });
 
     return res.json({ success: true, request_id: data.id });
   } catch (err) {

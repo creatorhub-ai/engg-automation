@@ -1,3 +1,4 @@
+// backend/emailSender.js
 import nodemailer from "nodemailer";
 import dns from "dns";
 import dotenv from "dotenv";
