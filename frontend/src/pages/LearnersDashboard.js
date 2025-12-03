@@ -54,6 +54,19 @@ export default function LearnersDashboard({ user, token }) {
   const isManagerOrAdmin = ["manager", "admin"].includes(
     (user?.role || "").toLowerCase()
   );
+  
+  const dropdownSlotProps = {
+    paper: {
+      sx: {
+        maxHeight: 400,   // taller dropdown
+      },
+    },
+    listbox: {
+      sx: {
+        maxHeight: 380,
+      },
+    },
+  };
 
   useEffect(() => {
     async function loadLearnersData() {
@@ -317,7 +330,7 @@ export default function LearnersDashboard({ user, token }) {
               options={allLearners.map((l) => l.email || "")}
               value={searchEmail}
               disablePortal
-              ListboxProps={listBoxStyle}
+              slotProps={dropdownSlotProps}
               onChange={(e, value) => setSearchEmail(value || "")}
               onInputChange={(e, value) => setSearchEmail(value)}
               renderInput={(params) => (
@@ -346,7 +359,7 @@ export default function LearnersDashboard({ user, token }) {
               options={allLearners.map((l) => l.name || "")}
               value={searchName}
               disablePortal
-              ListboxProps={listBoxStyle}
+              slotProps={dropdownSlotProps}
               onChange={(e, value) => setSearchName(value || "")}
               onInputChange={(e, value) => setSearchName(value)}
               renderInput={(params) => (
