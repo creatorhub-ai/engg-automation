@@ -16,6 +16,7 @@ import {
   Alert,
   CircularProgress,
   MenuItem,
+  Autocomplete,
 } from "@mui/material";
 import RestartAltIcon from "@mui/icons-material/RestartAlt";
 import SearchIcon from "@mui/icons-material/Search";
@@ -47,42 +48,79 @@ export default function LearnersDashboard({ user, token }) {
     batch_no: "",
   });
 
-  // Load all learners once for suggestions & search
+  // Load all learners using existing endpoints + get distinct batches
   useEffect(() => {
-    async function loadLearnersBasics() {
+    async function loadLearnersData() {
       setLoading(true);
       try {
         const headers = token ? { Authorization: `Bearer ${token}` } : {};
-        // Backend: implement GET /api/learners/all-basics from learners_data
-        const res = await axios.get(
-          `${API_BASE}/api/learners/all-basics`,
-          { headers }
-        );
-        const data = Array.isArray(res.data) ? res.data : [];
-        setAllLearners(data);
+        
+        // Method 1: Try existing learners endpoint first
+        let learnersData = [];
+        try {
+          // Use existing /api/learners/email endpoint pattern or general learners
+          const res = await axios.get(`${API_BASE}/api/learners`, { headers });
+          learnersData = Array.isArray(res.data) ? res.data : [];
+        } catch (e) {
+          console.log("No general learners endpoint, trying batch approach");
+        }
 
+        // Method 2: If empty, load via batches (fallback)
+        if (learnersData.length === 0) {
+          // Get batches first
+          const batchesRes = await axios.get(`${API_BASE}/api/batches`, { headers });
+          const batches = batchesRes.data || [];
+          
+          // Load learners for first few batches to populate suggestions
+          for (let i = 0; i < Math.min(5, batches.length); i++) {
+            try {
+              const batchLearnersRes = await axios.get(
+                `${API_BASE}/api/getlearners?batchno=${batches[i]}`,
+                { headers }
+              );
+              learnersData = [...learnersData, ...(batchLearnersRes.data || [])];
+            } catch (e) {
+              console.log(`No learners for batch ${batches[i]}`);
+            }
+          }
+        }
+
+        // Deduplicate learners
+        const uniqueLearners = learnersData.filter(
+          (learner, index, self) =>
+            index ===
+            self.findIndex(
+              (l) => l.email === learner.email && l.batch_no === learner.batch_no
+            )
+        );
+
+        setAllLearners(uniqueLearners);
+
+        // Extract distinct batches
         const batches = [
           ...new Set(
-            data
+            uniqueLearners
               .map((l) => l.batch_no)
               .filter((b) => b && b.trim() !== "")
           ),
-        ];
+        ].sort();
         setDistinctBatches(batches);
+
+        console.log(`Loaded ${uniqueLearners.length} learners, ${batches.length} batches`);
       } catch (err) {
-        console.error("Error loading learners basics:", err);
+        console.error("Error loading learners data:", err);
         setAllLearners([]);
         setDistinctBatches([]);
-        setMessage("Failed to load learners list for search");
+        setMessage("Failed to load learners list - using manual search");
       } finally {
         setLoading(false);
       }
     }
 
-    loadLearnersBasics();
+    loadLearnersData();
   }, [token]);
 
-  // Exact match search using loaded learners (email > name > batch_no)
+  // Improved search with better matching
   function handleSearch() {
     if (!searchEmail && !searchName && !searchBatch) {
       setMessage("Please enter email, name, or batch number");
@@ -91,31 +129,33 @@ export default function LearnersDashboard({ user, token }) {
     }
 
     let found = null;
+    const searchEmailTrim = searchEmail.trim().toLowerCase();
+    const searchNameTrim = searchName.trim().toLowerCase();
+    const searchBatchTrim = searchBatch.trim();
 
-    if (searchEmail) {
-      const emailLower = searchEmail.trim().toLowerCase();
-      found =
-        allLearners.find(
-          (l) => (l.email || "").toLowerCase() === emailLower
-        ) || null;
-    } else if (searchName) {
-      const nameLower = searchName.trim().toLowerCase();
-      found =
-        allLearners.find(
-          (l) => (l.name || "").toLowerCase() === nameLower
-        ) || null;
-    } else if (searchBatch) {
-      const batchStr = searchBatch.trim();
-      found =
-        allLearners.find((l) => String(l.batch_no) === batchStr) || null;
+    // Priority 1: Exact email match
+    if (searchEmailTrim) {
+      found = allLearners.find(
+        (l) => (l.email || "").toLowerCase() === searchEmailTrim
+      );
+    }
+    // Priority 2: Exact name match
+    else if (searchNameTrim) {
+      found = allLearners.find(
+        (l) => (l.name || "").toLowerCase() === searchNameTrim
+      );
+    }
+    // Priority 3: Exact batch_no match (first learner in batch)
+    else if (searchBatchTrim) {
+      found = allLearners.find((l) => String(l.batch_no).trim() === searchBatchTrim);
     }
 
     if (found) {
       setLearnerData(found);
-      setMessage("✅ Learner found");
+      setMessage(`✅ Learner found: ${found.name}`);
     } else {
       setLearnerData(null);
-      setMessage("Learner not found");
+      setMessage("❌ Learner not found - check spelling or try another field");
     }
   }
 
@@ -140,13 +180,12 @@ export default function LearnersDashboard({ user, token }) {
       if (res.data.success) {
         setMessage("✅ Learner added successfully");
         setOpenAddDialog(false);
-        // Update local arrays so search/suggestions include new learner
-        setAllLearners((prev) => [...prev, newLearner]);
-        setDistinctBatches((prev) =>
-          prev.includes(newLearner.batch_no)
-            ? prev
-            : [...prev, newLearner.batch_no]
-        );
+        // Add to local state
+        const learnerToAdd = { ...newLearner, id: Date.now() }; // temp id
+        setAllLearners((prev) => [...prev, learnerToAdd]);
+        if (!distinctBatches.includes(newLearner.batch_no)) {
+          setDistinctBatches((prev) => [...prev, newLearner.batch_no]);
+        }
         setNewLearner({
           name: "",
           email: "",
@@ -157,7 +196,7 @@ export default function LearnersDashboard({ user, token }) {
         setMessage("❌ Failed to add learner: " + (res.data.error || ""));
       }
     } catch (error) {
-      setMessage("❌ Error adding learner");
+      setMessage("❌ Error adding learner: " + error.response?.data?.error);
       console.error(error);
     } finally {
       setLoading(false);
@@ -213,16 +252,10 @@ export default function LearnersDashboard({ user, token }) {
         sx={{
           p: 3,
           borderRadius: 3,
-          background:
-            "linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%)",
+          background: "linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%)",
         }}
       >
-        <Box
-          display="flex"
-          justifyContent="space-between"
-          alignItems="center"
-          mb={3}
-        >
+        <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
           <Box display="flex" alignItems="center" gap={2}>
             <MenuBookIcon sx={{ fontSize: 40, color: "#e8744f" }} />
             <Typography variant="h4" fontWeight="bold" color="#333">
@@ -234,8 +267,7 @@ export default function LearnersDashboard({ user, token }) {
             startIcon={<PersonAddIcon />}
             onClick={() => setOpenAddDialog(true)}
             sx={{
-              background:
-                "linear-gradient(135deg, #fa709a 0%, #fee140 100%)",
+              background: "linear-gradient(135deg, #fa709a 0%, #fee140 100%)",
               px: 3,
               py: 1.5,
               borderRadius: 2,
@@ -245,8 +277,7 @@ export default function LearnersDashboard({ user, token }) {
               color: "#333",
               boxShadow: "0 4px 15px rgba(250, 112, 154, 0.4)",
               "&:hover": {
-                background:
-                  "linear-gradient(135deg, #fee140 0%, #fa709a 100%)",
+                background: "linear-gradient(135deg, #fee140 0%, #fa709a 100%)",
                 transform: "translateY(-2px)",
                 boxShadow: "0 6px 20px rgba(250, 112, 154, 0.6)",
               },
@@ -260,90 +291,84 @@ export default function LearnersDashboard({ user, token }) {
         {/* Search Section */}
         <Grid container spacing={2} mb={3}>
           <Grid item xs={12} sm={4}>
-            <TextField
-              fullWidth
-              label="Search by Email"
-              placeholder="Enter learner email"
+            <Autocomplete
+              freeSolo
+              options={allLearners.map((l) => l.email || "")}
               value={searchEmail}
-              onChange={(e) => setSearchEmail(e.target.value)}
-              onKeyPress={(e) => e.key === "Enter" && handleSearch()}
-              inputProps={{ list: "email-options" }}
-              sx={{
-                bgcolor: "white",
-                borderRadius: 2,
-                "& .MuiOutlinedInput-root": {
-                  "&:hover fieldset": {
-                    borderColor: "#fa709a",
-                  },
-                  "&.Mui-focused fieldset": {
-                    borderColor: "#fa709a",
-                  },
-                },
-              }}
+              onChange={(e, value) => setSearchEmail(value || "")}
+              onInputChange={(e, value) => setSearchEmail(value)}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  fullWidth
+                  label="Search by Email"
+                  placeholder="Type email for suggestions"
+                  onKeyPress={(e) => e.key === "Enter" && handleSearch()}
+                  sx={{
+                    bgcolor: "white",
+                    borderRadius: 2,
+                    "& .MuiOutlinedInput-root": {
+                      "&:hover fieldset": { borderColor: "#fa709a" },
+                      "&.Mui-focused fieldset": { borderColor: "#fa709a" },
+                    },
+                  }}
+                />
+              )}
             />
-            <datalist id="email-options">
-              {allLearners.map((l) => (
-                <option key={l.email} value={l.email} />
-              ))}
-            </datalist>
           </Grid>
 
           <Grid item xs={12} sm={4}>
-            <TextField
-              fullWidth
-              label="Search by Name"
-              placeholder="Enter learner name"
+            <Autocomplete
+              freeSolo
+              options={allLearners.map((l) => l.name || "")}
               value={searchName}
-              onChange={(e) => setSearchName(e.target.value)}
-              onKeyPress={(e) => e.key === "Enter" && handleSearch()}
-              inputProps={{ list: "name-options" }}
-              sx={{
-                bgcolor: "white",
-                borderRadius: 2,
-                "& .MuiOutlinedInput-root": {
-                  "&:hover fieldset": {
-                    borderColor: "#fa709a",
-                  },
-                  "&.Mui-focused fieldset": {
-                    borderColor: "#fa709a",
-                  },
-                },
-              }}
+              onChange={(e, value) => setSearchName(value || "")}
+              onInputChange={(e, value) => setSearchName(value)}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  fullWidth
+                  label="Search by Name"
+                  placeholder="Type name for suggestions"
+                  onKeyPress={(e) => e.key === "Enter" && handleSearch()}
+                  sx={{
+                    bgcolor: "white",
+                    borderRadius: 2,
+                    "& .MuiOutlinedInput-root": {
+                      "&:hover fieldset": { borderColor: "#fa709a" },
+                      "&.Mui-focused fieldset": { borderColor: "#fa709a" },
+                    },
+                  }}
+                />
+              )}
             />
-            <datalist id="name-options">
-              {allLearners.map((l) => (
-                <option key={`${l.email}-${l.batch_no}`} value={l.name} />
-              ))}
-            </datalist>
           </Grid>
 
           <Grid item xs={12} sm={4}>
-            <TextField
-              fullWidth
-              label="Search by Batch No"
-              placeholder="Enter or select batch no"
+            <Autocomplete
+              freeSolo
+              options={distinctBatches}
               value={searchBatch}
-              onChange={(e) => setSearchBatch(e.target.value)}
-              onKeyPress={(e) => e.key === "Enter" && handleSearch()}
-              inputProps={{ list: "batch-options" }}
-              sx={{
-                bgcolor: "white",
-                borderRadius: 2,
-                "& .MuiOutlinedInput-root": {
-                  "&:hover fieldset": {
-                    borderColor: "#fa709a",
-                  },
-                  "&.Mui-focused fieldset": {
-                    borderColor: "#fa709a",
-                  },
-                },
-              }}
+              onChange={(e, value) => setSearchBatch(value || "")}
+              onInputChange={(e, value) => setSearchBatch(value)}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  fullWidth
+                  label="Search by Batch No"
+                  placeholder="Type or select batch"
+                  onKeyPress={(e) => e.key === "Enter" && handleSearch()}
+                  sx={{
+                    bgcolor: "white",
+                    borderRadius: 2,
+                    "& .MuiOutlinedInput-root": {
+                      "&:hover fieldset": { borderColor: "#fa709a" },
+                      "&.Mui-focused fieldset": { borderColor: "#fa709a" },
+                    },
+                  }}
+                />
+              )}
             />
-            <datalist id="batch-options">
-              {distinctBatches.map((b) => (
-                <option key={b} value={b} />
-              ))}
-            </datalist>
           </Grid>
 
           <Grid item xs={12} sm={6} md={3}>
@@ -355,13 +380,11 @@ export default function LearnersDashboard({ user, token }) {
               disabled={loading}
               sx={{
                 height: "56px",
-                background:
-                  "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
                 fontWeight: "bold",
                 borderRadius: 2,
                 "&:hover": {
-                  background:
-                    "linear-gradient(135deg, #764ba2 0%, #667eea 100%)",
+                  background: "linear-gradient(135deg, #764ba2 0%, #667eea 100%)",
                 },
               }}
             >
@@ -395,6 +418,11 @@ export default function LearnersDashboard({ user, token }) {
           </Grid>
         </Grid>
 
+        {/* Debug info */}
+        <Typography variant="caption" sx={{ mb: 2, display: 'block', color: 'gray' }}>
+          Loaded: {allLearners.length} learners, {distinctBatches.length} batches
+        </Typography>
+
         {message && (
           <Alert
             severity={
@@ -410,23 +438,18 @@ export default function LearnersDashboard({ user, token }) {
           </Alert>
         )}
 
-        {/* Learner Details Card */}
+        {/* Rest of the component remains the same */}
         {learnerData && (
           <Card
             sx={{
-              background:
-                "linear-gradient(135deg, #fa709a 0%, #fee140 100%)",
+              background: "linear-gradient(135deg, #fa709a 0%, #fee140 100%)",
               color: "#333",
               borderRadius: 3,
               boxShadow: "0 8px 20px rgba(250, 112, 154, 0.3)",
             }}
           >
             <CardContent>
-              <Typography
-                variant="h6"
-                gutterBottom
-                fontWeight="bold"
-              >
+              <Typography variant="h6" gutterBottom fontWeight="bold">
                 👨‍🎓 Learner Details
               </Typography>
               <Grid container spacing={3}>
@@ -451,7 +474,7 @@ export default function LearnersDashboard({ user, token }) {
                     Phone
                   </Typography>
                   <Typography variant="h6" fontWeight="bold">
-                    {learnerData.phone}
+                    {learnerData.phone || "N/A"}
                   </Typography>
                 </Grid>
                 <Grid item xs={12} sm={6}>
@@ -490,107 +513,99 @@ export default function LearnersDashboard({ user, token }) {
           </Card>
         )}
 
-        {(searchEmail || searchName || searchBatch) &&
-          !learnerData &&
-          !loading &&
-          message && (
-            <Alert severity="info" sx={{ borderRadius: 2 }}>
-              No learner found with the given input.
-            </Alert>
-          )}
-      </Paper>
-
-      {/* Add Learner Dialog */}
-      <Dialog
-        open={openAddDialog}
-        onClose={() => setOpenAddDialog(false)}
-        maxWidth="sm"
-        fullWidth
-        PaperProps={{ sx: { borderRadius: 3 } }}
-      >
-        <DialogTitle
-          sx={{
-            background:
-              "linear-gradient(135deg, #fa709a 0%, #fee140 100%)",
-            color: "#333",
-            fontWeight: "bold",
-          }}
+        {/* Add Learner Dialog - SAME AS BEFORE */}
+        <Dialog
+          open={openAddDialog}
+          onClose={() => setOpenAddDialog(false)}
+          maxWidth="sm"
+          fullWidth
+          PaperProps={{ sx: { borderRadius: 3 } }}
         >
-          <Box display="flex" alignItems="center" gap={1}>
-            <PersonAddIcon />
-            Add New Learner
-          </Box>
-        </DialogTitle>
-        <DialogContent>
-          <Box sx={{ pt: 2 }}>
-            <TextField
-              fullWidth
-              label="Name"
-              value={newLearner.name}
-              onChange={(e) =>
-                setNewLearner({ ...newLearner, name: e.target.value })
-              }
-              sx={{ mb: 2 }}
-            />
-            <TextField
-              fullWidth
-              label="Email"
-              type="email"
-              value={newLearner.email}
-              onChange={(e) =>
-                setNewLearner({ ...newLearner, email: e.target.value })
-              }
-              sx={{ mb: 2 }}
-            />
-            <TextField
-              fullWidth
-              label="Phone"
-              value={newLearner.phone}
-              onChange={(e) =>
-                setNewLearner({ ...newLearner, phone: e.target.value })
-              }
-              sx={{ mb: 2 }}
-            />
-            <TextField
-              fullWidth
-              label="Batch Number"
-              value={newLearner.batch_no}
-              onChange={(e) =>
-                setNewLearner({
-                  ...newLearner,
-                  batch_no: e.target.value,
-                })
-              }
-            />
-          </Box>
-        </DialogContent>
-        <DialogActions sx={{ p: 3 }}>
-          <Button
-            onClick={() => setOpenAddDialog(false)}
-            sx={{ color: "#666", "&:hover": { bgcolor: "#f5f5f5" } }}
-          >
-            Cancel
-          </Button>
-          <Button
-            onClick={handleAddLearner}
-            variant="contained"
-            disabled={loading}
+          <DialogTitle
             sx={{
-              background:
-                "linear-gradient(135deg, #fa709a 0%, #fee140 100%)",
+              background: "linear-gradient(135deg, #fa709a 0%, #fee140 100%)",
               color: "#333",
-              px: 3,
               fontWeight: "bold",
-              "&:hover": {
-                background:
-                  "linear-gradient(135deg, #fee140 0%, #fa709a 100%)",
-              },
             }}
           >
-            {loading ? "Adding..." : "Add Learner"}
-          </Button>
-        </DialogActions>
-      </Dialog>
+            <Box display="flex" alignItems="center" gap={1}>
+              <PersonAddIcon />
+              Add New Learner
+            </Box>
+          </DialogTitle>
+          <DialogContent>
+            <Box sx={{ pt: 2 }}>
+              <TextField
+                fullWidth
+                label="Name"
+                value={newLearner.name}
+                onChange={(e) =>
+                  setNewLearner({ ...newLearner, name: e.target.value })
+                }
+                sx={{ mb: 2 }}
+              />
+              <TextField
+                fullWidth
+                label="Email"
+                type="email"
+                value={newLearner.email}
+                onChange={(e) =>
+                  setNewLearner({ ...newLearner, email: e.target.value })
+                }
+                sx={{ mb: 2 }}
+              />
+              <Autocomplete
+                freeSolo
+                options={distinctBatches}
+                value={newLearner.batch_no}
+                onChange={(e, value) =>
+                  setNewLearner({ ...newLearner, batch_no: value || "" })
+                }
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    fullWidth
+                    label="Batch Number"
+                    sx={{ mb: 2 }}
+                  />
+                )}
+              />
+              <TextField
+                fullWidth
+                label="Phone"
+                value={newLearner.phone}
+                onChange={(e) =>
+                  setNewLearner({ ...newLearner, phone: e.target.value })
+                }
+              />
+            </Box>
+          </DialogContent>
+          <DialogActions sx={{ p: 3 }}>
+            <Button
+              onClick={() => setOpenAddDialog(false)}
+              sx={{ color: "#666", "&:hover": { bgcolor: "#f5f5f5" } }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleAddLearner}
+              variant="contained"
+              disabled={loading}
+              sx={{
+                background: "linear-gradient(135deg, #fa709a 0%, #fee140 100%)",
+                color: "#333",
+                px: 3,
+                fontWeight: "bold",
+                "&:hover": {
+                  background: "linear-gradient(135deg, #fee140 0%, #fa709a 100%)",
+                },
+              }}
+            >
+              {loading ? "Adding..." : "Add Learner"}
+            </Button>
+          </DialogActions>
+        </Dialog>
+      </Paper>
     </Box>
   );
 }
