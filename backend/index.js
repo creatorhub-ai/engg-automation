@@ -1606,15 +1606,15 @@ app.post('/api/announcement/send', async (req, res) => {
         .json({ success: false, error: 'batch_no or domain required' });
     }
 
-    // 1) Reuse existing /apigetlearners logic via Supabase, but copy it exactly
+    // 1) Fetch learners EXACTLY like /apigetlearners
     let learners = [];
 
     if (batch_no) {
       // This matches your working /apigetlearners route
       const { data, error } = await supabase
-        .from('learners_data') // ensure this is EXACT table name used in apigetlearners
-        .select('id, name, email, batch_no, status') // same columns as apigetlearners
-        .eq('batch_no', batch_no);
+        .from('learnersdata')              // SAME table as /apigetlearners [file:1]
+        .select('name, email, batchno, status')
+        .eq('batchno', batch_no);          // SAME column as /apigetlearners [file:1]
 
       if (error) {
         console.error('Announcement send – learners fetch error:', error);
@@ -1625,11 +1625,11 @@ app.post('/api/announcement/send', async (req, res) => {
       learners = data || [];
     }
 
-    // Optional: domain support – only if your table has a domain column
+    // Optional: domain support – only if learnersdata has a domain column
     if (!learners.length && domain) {
       const { data, error } = await supabase
-        .from('learners_data')
-        .select('id, name, email, batch_no, status, domain')
+        .from('learnersdata')
+        .select('name, email, batchno, status, domain')
         .eq('domain', domain);
 
       if (error) {
@@ -1647,8 +1647,10 @@ app.post('/api/announcement/send', async (req, res) => {
         .json({ success: false, error: 'No learners found for selection' });
     }
 
-    // 2) Send emails using sendRawEmail
+    // 2) Send emails using sendRawEmail and log failures
     let sentCount = 0;
+    const failures = [];
+
     for (const l of learners) {
       const to = l.email;
       const name = l.name || 'Learner';
@@ -1667,11 +1669,21 @@ app.post('/api/announcement/send', async (req, res) => {
         sentCount += 1;
       } catch (e) {
         console.error('Announcement send – failed for', to, e.message);
-        // keep going for other learners
+        failures.push({ to, error: e.message });
       }
     }
 
-    return res.json({ success: true, sentTo: sentCount });
+    const success = sentCount > 0 && failures.length === 0;
+
+    return res.json({
+      success,
+      sentTo: sentCount,
+      failed: failures.length,
+      error:
+        !success && failures.length
+          ? 'Some or all emails failed to send'
+          : undefined,
+    });
   } catch (e) {
     console.error('Announcement send – unexpected error:', e);
     return res
