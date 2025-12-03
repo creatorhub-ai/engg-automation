@@ -3,19 +3,19 @@ import {
   Box,
   Paper,
   Typography,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
-  List,
-  ListItemButton,
-  ListItemText,
+  Tabs,
+  Tab,
 } from "@mui/material";
-import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import DateChangeReport from "./DateChangeReport";
 import MarksExtensionReport from "./MarksExtensionReport";
+import AttendanceReport from "./AttendanceReport"; // <-- create this
 
 export default function ReportsDashboard({ user, token }) {
-  const [activeSub, setActiveSub] = useState("date-change");
+  const [activeTab, setActiveTab] = useState("date-change");
+
+  const handleTabChange = (event, newValue) => {
+    setActiveTab(newValue);
+  };
 
   return (
     <Box sx={{ maxWidth: 1700, mx: "auto", my: 3, px: 2 }}>
@@ -24,34 +24,40 @@ export default function ReportsDashboard({ user, token }) {
           Reports
         </Typography>
 
-        <Accordion defaultExpanded>
-          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-            <Typography variant="h6">Reports</Typography>
-          </AccordionSummary>
-          <AccordionDetails sx={{ p: 0 }}>
-            <List component="nav" dense>
-              <ListItemButton
-                selected={activeSub === "date-change"}
-                onClick={() => setActiveSub("date-change")}
-              >
-                <ListItemText primary="Date Change Report" />
-              </ListItemButton>
-              <ListItemButton
-                selected={activeSub === "marks-extension"}
-                onClick={() => setActiveSub("marks-extension")}
-              >
-                <ListItemText primary="Marks Extension Requests" />
-              </ListItemButton>
-            </List>
-          </AccordionDetails>
-        </Accordion>
+        {/* Top horizontal sub‑dashboards */}
+        <Tabs
+          value={activeTab}
+          onChange={handleTabChange}
+          indicatorColor="primary"
+          textColor="primary"
+          variant="scrollable"
+          scrollButtons="auto"
+          sx={{ borderBottom: 1, borderColor: "divider", mb: 2 }}
+        >
+          <Tab
+            label="Date Change Report"
+            value="date-change"
+          />
+          <Tab
+            label="Marks Extension Requests"
+            value="marks-extension"
+          />
+          <Tab
+            label="Attendance Report"
+            value="attendance-report"
+          />
+        </Tabs>
 
-        <Box sx={{ mt: 3 }}>
-          {activeSub === "date-change" && (
+        {/* Content area */}
+        <Box sx={{ mt: 1 }}>
+          {activeTab === "date-change" && (
             <DateChangeReport user={user} token={token} />
           )}
-          {activeSub === "marks-extension" && (
+          {activeTab === "marks-extension" && (
             <MarksExtensionReport user={user} token={token} />
+          )}
+          {activeTab === "attendance-report" && (
+            <AttendanceReport user={user} token={token} />
           )}
         </Box>
       </Paper>
