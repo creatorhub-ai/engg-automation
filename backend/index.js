@@ -1612,9 +1612,9 @@ app.post('/api/announcement/send', async (req, res) => {
     if (batch_no) {
       // This matches your working /apigetlearners route
       const { data, error } = await supabase
-        .from('learnersdata') // ensure this is EXACT table name used in apigetlearners
-        .select('id, name, email, batchno, status') // same columns as apigetlearners
-        .eq('batchno', batch_no);
+        .from('learners_data') // ensure this is EXACT table name used in apigetlearners
+        .select('id, name, email, batch_no, status') // same columns as apigetlearners
+        .eq('batch_no', batch_no);
 
       if (error) {
         console.error('Announcement send – learners fetch error:', error);
@@ -1628,8 +1628,8 @@ app.post('/api/announcement/send', async (req, res) => {
     // Optional: domain support – only if your table has a domain column
     if (!learners.length && domain) {
       const { data, error } = await supabase
-        .from('learnersdata')
-        .select('id, name, email, batchno, status, domain')
+        .from('learners_data')
+        .select('id, name, email, batch_no, status, domain')
         .eq('domain', domain);
 
       if (error) {
