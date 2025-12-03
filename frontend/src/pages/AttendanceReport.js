@@ -21,12 +21,13 @@ import {
 import jsPDF from "jspdf";
 import "jspdf-autotable";
 
-const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
+const API_BASE =
+  process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 
 export default function AttendanceReport({ user, token }) {
   const [batches, setBatches] = useState([]);
   const [batchNo, setBatchNo] = useState("");
-  const [rows, setRows] = useState([]); // {name,email,totalDays,presentDays,leaveDays,absentDays,attendancePercentage}
+  const [rows, setRows] = useState([]); // {name,email,total_days,present_days,leave_days,absent_days,attendance_percentage}
   const [courseStartDate, setCourseStartDate] = useState("");
   const [courseEndDate, setCourseEndDate] = useState("");
   const [loading, setLoading] = useState(false);
@@ -38,9 +39,12 @@ export default function AttendanceReport({ user, token }) {
   useEffect(() => {
     async function loadBatches() {
       try {
-        const res = await axios.get(`${API_BASE}/api/attendance/distinct_batches`, {
-          headers: authHeaders(),
-        });
+        const res = await axios.get(
+          `${API_BASE}/api/attendance/distinct_batches`,
+          {
+            headers: authHeaders(),
+          }
+        );
         setBatches(res.data || []);
       } catch (e) {
         console.error("Failed to load batches", e);
@@ -48,7 +52,7 @@ export default function AttendanceReport({ user, token }) {
       }
     }
     loadBatches();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []); // runs only once on mount
 
   // Load report when batch changes
   useEffect(() => {
@@ -78,10 +82,13 @@ export default function AttendanceReport({ user, token }) {
         //     }, ...
         //   ]
         // }
-        const res = await axios.get(`${API_BASE}/api/attendance/report_by_batch`, {
-          params: { batch_no: batchNo },
-          headers: authHeaders(),
-        });
+        const res = await axios.get(
+          `${API_BASE}/api/attendance/report_by_batch`,
+          {
+            params: { batch_no: batchNo },
+            headers: authHeaders(),
+          }
+        );
 
         const { start_date, end_date, data } = res.data || {};
         setCourseStartDate(start_date || "");
@@ -100,16 +107,17 @@ export default function AttendanceReport({ user, token }) {
     }
 
     loadReport();
-  }, [batchNo]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [batchNo]); // depends only on selected batch
 
   const handleDownloadPdf = () => {
     if (!rows || rows.length === 0) return;
 
     const doc = new jsPDF("landscape");
     const title = `Attendance Report - Batch ${batchNo}`;
-    const subtitle = courseStartDate && courseEndDate
-      ? `Course: ${courseStartDate} to ${courseEndDate}`
-      : "";
+    const subtitle =
+      courseStartDate && courseEndDate
+        ? `Course: ${courseStartDate} to ${courseEndDate}`
+        : "";
 
     doc.setFontSize(16);
     doc.text(title, 14, 18);
@@ -127,7 +135,7 @@ export default function AttendanceReport({ user, token }) {
         "Present",
         "Leave",
         "Absent",
-        "Attendance %"
+        "Attendance %",
       ],
     ];
 
@@ -149,7 +157,7 @@ export default function AttendanceReport({ user, token }) {
       body,
       startY: 34,
       styles: { fontSize: 8 },
-      headStyles: { fillColor: [25, 118, 210] }, // MUI primary-like
+      headStyles: { fillColor: [25, 118, 210] },
     });
 
     doc.save(`attendance_report_${batchNo}.pdf`);
@@ -168,7 +176,7 @@ export default function AttendanceReport({ user, token }) {
             <Select
               label="Select Batch"
               value={batchNo}
-              onChange={e => setBatchNo(e.target.value)}
+              onChange={(e) => setBatchNo(e.target.value)}
             >
               {batches.map((b, idx) => (
                 <MenuItem key={idx} value={b.batch_no || b}>
