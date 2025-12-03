@@ -1589,106 +1589,124 @@ app.post("/api/save_attendance_ui", async (req, res) => {
   }
 });
 
-// Simple Announcement API used by AnnouncementDashboard
-app.post('/api/announcement/send', async (req, res) => {
+// ===========================
+// FIXED ANNOUNCEMENT SEND API
+// ===========================
+app.post("/api/announcement/send", async (req, res) => {
   try {
     const { subject, message, messageType, batch_no, domain } = req.body;
 
     if (!subject || !message) {
-      return res
-        .status(400)
-        .json({ success: false, error: 'Missing subject or message' });
+      return res.status(400).json({
+        success: false,
+        error: "Subject and message are required",
+      });
     }
 
     if (!batch_no && !domain) {
-      return res
-        .status(400)
-        .json({ success: false, error: 'batch_no or domain required' });
+      return res.status(400).json({
+        success: false,
+        error: "Batch No or Domain is required",
+      });
     }
 
-    // 1) Fetch learners EXACTLY like /apigetlearners
     let learners = [];
 
+    // ====================
+    // FETCH LEARNERS BY BATCH
+    // ====================
     if (batch_no) {
-      // This matches your working /apigetlearners route
       const { data, error } = await supabase
-        .from('learners_data')              // SAME table as /apigetlearners [file:1]
-        .select('name, email, batch_no, status')
-        .eq('batch_no', batch_no);          // SAME column as /apigetlearners [file:1]
+        .from("learners_data")               // ✔ correct table
+        .select("name, email, phone, batch_no, status")  // ✔ correct columns
+        .eq("batch_no", batch_no);           // ✔ correct column
 
       if (error) {
-        console.error('Announcement send – learners fetch error:', error);
-        return res
-          .status(500)
-          .json({ success: false, error: 'Failed to fetch learners' });
+        console.error("Fetch learners by batch failed:", error);
+        return res.status(500).json({
+          success: false,
+          error: "Failed to fetch learners (batch query failed)",
+        });
       }
+
       learners = data || [];
     }
 
-    // Optional: domain support – only if learnersdata has a domain column
+    // ====================
+    // FETCH LEARNERS BY DOMAIN (OPTIONAL)
+    // Only if domain exists AND no batch results found
+    // ====================
     if (!learners.length && domain) {
       const { data, error } = await supabase
-        .from('learners_data')
-        .select('name, email, batch_no, status, domain')
-        .eq('domain', domain);
+        .from("learners_data")
+        .select("name, email, phone, batch_no, status")
+        .eq("domain", domain);               // ONLY if you have domain column
 
       if (error) {
-        console.error('Announcement send – domain learners fetch error:', error);
-        return res
-          .status(500)
-          .json({ success: false, error: 'Failed to fetch learners' });
+        console.error("Fetch learners by domain failed:", error);
+        return res.status(500).json({
+          success: false,
+          error: "Failed to fetch learners (domain query failed)",
+        });
       }
+
       learners = data || [];
     }
 
+    // =====================
+    // IF NO LEARNERS FOUND
+    // =====================
     if (!learners.length) {
-      return res
-        .status(404)
-        .json({ success: false, error: 'No learners found for selection' });
+      return res.status(404).json({
+        success: false,
+        error: "No learners found for this batch or domain",
+      });
     }
 
-    // 2) Send emails using sendRawEmail and log failures
+    console.log(`📨 Sending announcement to ${learners.length} learners...`);
+
     let sentCount = 0;
-    const failures = [];
+    let failed = [];
 
+    // =====================
+    // SEND EMAIL TO EACH LEARNER
+    // =====================
     for (const l of learners) {
-      const to = l.email;
-      const name = l.name || 'Learner';
+      const email = l.email;
+      const name = l.name || "Learner";
 
-      const bodyHtml =
-        messageType === 'link'
-          ? `<p>Dear ${name},</p><p>Please check this link: <a href="${message}">${message}</a></p>`
+      const htmlBody =
+        messageType === "link"
+          ? `<p>Dear ${name},</p><p><a href="${message}" target="_blank">${message}</a></p>`
           : `<p>Dear ${name},</p><p>${message}</p>`;
 
       try {
         await sendRawEmail({
-          to,
-          subject,
-          html: bodyHtml,
+          to: email,
+          subject: subject,
+          html: htmlBody,
         });
-        sentCount += 1;
-      } catch (e) {
-        console.error('Announcement send – failed for', to, e.message);
-        failures.push({ to, error: e.message });
+
+        sentCount++;
+      } catch (err) {
+        console.error("Email failed →", email, " Reason:", err.message);
+        failed.push({ email, error: err.message });
       }
     }
 
-    const success = sentCount > 0 && failures.length === 0;
-
     return res.json({
-      success,
+      success: failed.length === 0,
       sentTo: sentCount,
-      failed: failures.length,
-      error:
-        !success && failures.length
-          ? 'Some or all emails failed to send'
-          : undefined,
+      failed: failed.length,
+      failures: failed,
     });
+
   } catch (e) {
-    console.error('Announcement send – unexpected error:', e);
-    return res
-      .status(500)
-      .json({ success: false, error: 'Internal server error' });
+    console.error("Announcement send – unexpected error:", e);
+    return res.status(500).json({
+      success: false,
+      error: "Internal server error",
+    });
   }
 });
 
