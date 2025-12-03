@@ -7,8 +7,6 @@ import {
   Button,
   TextField,
   Grid,
-  Card,
-  CardContent,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -37,7 +35,6 @@ export default function LearnersDashboard({ user, token }) {
   const [searchName, setSearchName] = useState("");
   const [searchBatch, setSearchBatch] = useState("");
 
-  const [learnerData, setLearnerData] = useState(null);
   const [allLearners, setAllLearners] = useState([]);
   const [distinctBatches, setDistinctBatches] = useState([]);
   const [batchLearners, setBatchLearners] = useState([]);
@@ -54,6 +51,10 @@ export default function LearnersDashboard({ user, token }) {
     batch_no: "",
   });
 
+  const isManagerOrAdmin = ["manager", "admin"].includes(
+    (user?.role || "").toLowerCase()
+  );
+
   useEffect(() => {
     async function loadLearnersData() {
       setLoading(true);
@@ -64,7 +65,7 @@ export default function LearnersDashboard({ user, token }) {
         try {
           const res = await axios.get(`${API_BASE}/api/learners`, { headers });
           learnersData = Array.isArray(res.data) ? res.data : [];
-        } catch (e) {
+        } catch {
           console.log("No /api/learners endpoint, using batch-based load");
         }
 
@@ -85,7 +86,7 @@ export default function LearnersDashboard({ user, token }) {
                 ...(batchLearnersRes.data || []),
               ];
             } catch {
-              // ignore missing batches
+              // ignore
             }
           }
         }
@@ -124,49 +125,40 @@ export default function LearnersDashboard({ user, token }) {
   function handleSearch() {
     if (!searchEmail && !searchName && !searchBatch) {
       setMessage("Please enter email, name, or batch number");
-      setLearnerData(null);
       setBatchLearners([]);
       return;
     }
 
-    let found = null;
+    let list = [];
     const searchEmailTrim = searchEmail.trim().toLowerCase();
     const searchNameTrim = searchName.trim().toLowerCase();
     const searchBatchTrim = searchBatch.trim();
 
-    setBatchLearners([]);
-
     if (searchEmailTrim) {
-      found = allLearners.find(
+      list = allLearners.filter(
         (l) => (l.email || "").toLowerCase() === searchEmailTrim
       );
-      if (found) setBatchLearners([found]);
     } else if (searchNameTrim) {
-      found = allLearners.find(
+      list = allLearners.filter(
         (l) => (l.name || "").toLowerCase() === searchNameTrim
       );
-      if (found) setBatchLearners([found]);
     } else if (searchBatchTrim) {
-      const list = allLearners.filter(
+      list = allLearners.filter(
         (l) => String(l.batch_no).trim() === searchBatchTrim
       );
-      if (list.length > 0) {
-        found = list[0];
-        setBatchLearners(list);
-      }
     }
 
-    if (found) {
-      setLearnerData(found);
+    if (list.length > 0) {
+      setBatchLearners(list);
       if (searchBatchTrim) {
         setMessage(
-          `✅ Found ${batchLearners.length || 1} learners in batch ${searchBatchTrim}`
+          `✅ Found ${list.length} learner${list.length > 1 ? "s" : ""} in batch ${searchBatchTrim}`
         );
       } else {
-        setMessage(`✅ Learner found: ${found.name}`);
+        setMessage(`✅ Found ${list.length} learner${list.length > 1 ? "s" : ""}`);
       }
     } else {
-      setLearnerData(null);
+      setBatchLearners([]);
       setMessage("❌ Learner not found - check spelling or try another field");
     }
   }
@@ -214,7 +206,7 @@ export default function LearnersDashboard({ user, token }) {
     }
   }
 
-  async function handleStatusChange(learnerEmail, batchNo, newStatus) {
+  async function handleStatusChange(learner, newStatus) {
     setStatusUpdating(true);
     setMessage("");
     try {
@@ -222,16 +214,30 @@ export default function LearnersDashboard({ user, token }) {
       const res = await axios.put(
         `${API_BASE}/api/learners/status`,
         {
-          learner_email: learnerEmail,
-          batch_no: batchNo,
+          learner_email: learner.email,
+          batch_no: learner.batch_no,
           status: newStatus,
         },
         { headers }
       );
       if (res.data.success) {
         setMessage("✅ Learner status updated");
-        setLearnerData((prev) =>
-          prev ? { ...prev, status: newStatus } : prev
+
+        // update in allLearners
+        setAllLearners((prev) =>
+          prev.map((l) =>
+            l.email === learner.email && l.batch_no === learner.batch_no
+              ? { ...l, status: newStatus }
+              : l
+          )
+        );
+        // update in batchLearners
+        setBatchLearners((prev) =>
+          prev.map((l) =>
+            l.email === learner.email && l.batch_no === learner.batch_no
+              ? { ...l, status: newStatus }
+              : l
+          )
         );
       } else {
         setMessage("❌ Failed to update learner status");
@@ -247,14 +253,9 @@ export default function LearnersDashboard({ user, token }) {
     setSearchEmail("");
     setSearchName("");
     setSearchBatch("");
-    setLearnerData(null);
     setBatchLearners([]);
     setMessage("");
   }
-
-  const showStatusDropdown =
-    learnerData &&
-    ["manager", "admin"].includes((user?.role || "").toLowerCase());
 
   const listBoxStyle = {
     style: { maxHeight: 320, overflowY: "auto" },
@@ -468,87 +469,15 @@ export default function LearnersDashboard({ user, token }) {
           </Alert>
         )}
 
-        {learnerData && (
-          <Card
-            sx={{
-              background: "linear-gradient(135deg, #fa709a 0%, #fee140 100%)",
-              color: "#333",
-              borderRadius: 3,
-              boxShadow: "0 8px 20px rgba(250, 112, 154, 0.3)",
-              mb: 2,
-            }}
-          >
-            <CardContent>
-              <Typography variant="h6" gutterBottom fontWeight="bold">
-                👨‍🎓 Learner Details
-              </Typography>
-              <Grid container spacing={3}>
-                <Grid item xs={12} sm={6}>
-                  <Typography variant="body2" sx={{ opacity: 0.8 }}>
-                    Name
-                  </Typography>
-                  <Typography variant="h6" fontWeight="bold">
-                    {learnerData.name}
-                  </Typography>
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <Typography variant="body2" sx={{ opacity: 0.8 }}>
-                    Email
-                  </Typography>
-                  <Typography variant="h6" fontWeight="bold">
-                    {learnerData.email}
-                  </Typography>
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <Typography variant="body2" sx={{ opacity: 0.8 }}>
-                    Phone
-                  </Typography>
-                  <Typography variant="h6" fontWeight="bold">
-                    {learnerData.phone || "N/A"}
-                  </Typography>
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <Typography variant="body2" sx={{ opacity: 0.8 }}>
-                    Batch Number
-                  </Typography>
-                  <Typography variant="h6" fontWeight="bold">
-                    {learnerData.batch_no}
-                  </Typography>
-                </Grid>
-                {showStatusDropdown && (
-                  <Grid item xs={12} sm={6}>
-                    <TextField
-                      label="Status"
-                      select
-                      value={learnerData.status || "Enabled"}
-                      onChange={(e) =>
-                        handleStatusChange(
-                          learnerData.email,
-                          learnerData.batch_no,
-                          e.target.value
-                        )
-                      }
-                      size="small"
-                      disabled={statusUpdating}
-                      sx={{ minWidth: 150, mt: 2 }}
-                    >
-                      <MenuItem value="Enabled">Enable</MenuItem>
-                      <MenuItem value="Disabled">Disable</MenuItem>
-                      <MenuItem value="Dropout">Dropout</MenuItem>
-                    </TextField>
-                  </Grid>
-                )}
-              </Grid>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Batch learners table */}
-        {batchLearners.length > 0 && searchBatch.trim() && (
+        {/* Batch learners table with inline status editing */}
+        {batchLearners.length > 0 && (
           <Box mt={1}>
             <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
-              Batch {searchBatch}: {batchLearners.length} learner
-              {batchLearners.length > 1 ? "s" : ""}
+              {searchBatch
+                ? `Batch ${searchBatch}: ${batchLearners.length} learner${
+                    batchLearners.length > 1 ? "s" : ""
+                  }`
+                : `Matched learners: ${batchLearners.length}`}
             </Typography>
             <TableContainer component={Paper} sx={{ borderRadius: 2 }}>
               <Table size="small">
@@ -559,7 +488,7 @@ export default function LearnersDashboard({ user, token }) {
                     <TableCell>Email</TableCell>
                     <TableCell>Phone</TableCell>
                     <TableCell>Batch No</TableCell>
-                    <TableCell>Status</TableCell>
+                    {isManagerOrAdmin && <TableCell>Status</TableCell>}
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -570,7 +499,24 @@ export default function LearnersDashboard({ user, token }) {
                       <TableCell>{l.email}</TableCell>
                       <TableCell>{l.phone || "-"}</TableCell>
                       <TableCell>{l.batch_no}</TableCell>
-                      <TableCell>{l.status || "Enabled"}</TableCell>
+                      {isManagerOrAdmin && (
+                        <TableCell>
+                          <TextField
+                            select
+                            size="small"
+                            value={l.status || "Enabled"}
+                            disabled={statusUpdating}
+                            onChange={(e) =>
+                              handleStatusChange(l, e.target.value)
+                            }
+                            sx={{ minWidth: 120 }}
+                          >
+                            <MenuItem value="Enabled">Enable</MenuItem>
+                            <MenuItem value="Disabled">Disable</MenuItem>
+                            <MenuItem value="Dropout">Dropout</MenuItem>
+                          </TextField>
+                        </TableCell>
+                      )}
                     </TableRow>
                   ))}
                 </TableBody>
@@ -579,7 +525,7 @@ export default function LearnersDashboard({ user, token }) {
           </Box>
         )}
 
-        {/* Add Learner Dialog (unchanged except Autocomplete styling) */}
+        {/* Add Learner Dialog */}
         <Dialog
           open={openAddDialog}
           onClose={() => setOpenAddDialog(false)}
