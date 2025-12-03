@@ -17,6 +17,12 @@ import {
   CircularProgress,
   MenuItem,
   Autocomplete,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
 } from "@mui/material";
 import RestartAltIcon from "@mui/icons-material/RestartAlt";
 import SearchIcon from "@mui/icons-material/Search";
@@ -34,13 +40,12 @@ export default function LearnersDashboard({ user, token }) {
   const [learnerData, setLearnerData] = useState(null);
   const [allLearners, setAllLearners] = useState([]);
   const [distinctBatches, setDistinctBatches] = useState([]);
-  const [batchLearners, setBatchLearners] = useState([]); // all learners for selected batch
+  const [batchLearners, setBatchLearners] = useState([]);
 
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [statusUpdating, setStatusUpdating] = useState(false);
 
-  // Add learner dialog states
   const [openAddDialog, setOpenAddDialog] = useState(false);
   const [newLearner, setNewLearner] = useState({
     name: "",
@@ -49,32 +54,28 @@ export default function LearnersDashboard({ user, token }) {
     batch_no: "",
   });
 
-  // Load all learners using existing endpoints + get distinct batches
   useEffect(() => {
     async function loadLearnersData() {
       setLoading(true);
       try {
         const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-        // Method 1: Try existing learners endpoint first
         let learnersData = [];
         try {
           const res = await axios.get(`${API_BASE}/api/learners`, { headers });
           learnersData = Array.isArray(res.data) ? res.data : [];
         } catch (e) {
-          console.log("No general learners endpoint, trying batch approach");
+          console.log("No /api/learners endpoint, using batch-based load");
         }
 
-        // Method 2: If empty, load via batches (fallback)
         if (learnersData.length === 0) {
           const batchesRes = await axios.get(`${API_BASE}/api/batches`, {
             headers,
           });
           const batches = batchesRes.data || [];
-
           for (let i = 0; i < batches.length; i++) {
+            const batchNo = batches[i].batch_no || batches[i];
             try {
-              const batchNo = batches[i].batch_no || batches[i];
               const batchLearnersRes = await axios.get(
                 `${API_BASE}/api/getlearners?batchno=${batchNo}`,
                 { headers }
@@ -83,13 +84,12 @@ export default function LearnersDashboard({ user, token }) {
                 ...learnersData,
                 ...(batchLearnersRes.data || []),
               ];
-            } catch (e) {
-              console.log(`No learners for batch`, batches[i]);
+            } catch {
+              // ignore missing batches
             }
           }
         }
 
-        // Deduplicate learners
         const uniqueLearners = learnersData.filter(
           (learner, index, self) =>
             index ===
@@ -98,10 +98,8 @@ export default function LearnersDashboard({ user, token }) {
                 l.email === learner.email && l.batch_no === learner.batch_no
             )
         );
-
         setAllLearners(uniqueLearners);
 
-        // Extract distinct batches
         const batches = [
           ...new Set(
             uniqueLearners
@@ -110,10 +108,6 @@ export default function LearnersDashboard({ user, token }) {
           ),
         ].sort();
         setDistinctBatches(batches);
-
-        console.log(
-          `Loaded ${uniqueLearners.length} learners, ${batches.length} batches`
-        );
       } catch (err) {
         console.error("Error loading learners data:", err);
         setAllLearners([]);
@@ -127,7 +121,6 @@ export default function LearnersDashboard({ user, token }) {
     loadLearnersData();
   }, [token]);
 
-  // Improved search with better matching
   function handleSearch() {
     if (!searchEmail && !searchName && !searchBatch) {
       setMessage("Please enter email, name, or batch number");
@@ -136,43 +129,38 @@ export default function LearnersDashboard({ user, token }) {
       return;
     }
 
-    setBatchLearners([]);
-
     let found = null;
     const searchEmailTrim = searchEmail.trim().toLowerCase();
     const searchNameTrim = searchName.trim().toLowerCase();
     const searchBatchTrim = searchBatch.trim();
 
-    // Priority 1: Exact email match
+    setBatchLearners([]);
+
     if (searchEmailTrim) {
       found = allLearners.find(
         (l) => (l.email || "").toLowerCase() === searchEmailTrim
       );
       if (found) setBatchLearners([found]);
-    }
-    // Priority 2: Exact name match
-    else if (searchNameTrim) {
+    } else if (searchNameTrim) {
       found = allLearners.find(
         (l) => (l.name || "").toLowerCase() === searchNameTrim
       );
       if (found) setBatchLearners([found]);
-    }
-    // Priority 3: Exact batch_no match (all learners in batch)
-    else if (searchBatchTrim) {
+    } else if (searchBatchTrim) {
       const list = allLearners.filter(
         (l) => String(l.batch_no).trim() === searchBatchTrim
       );
       if (list.length > 0) {
-        found = list[0]; // show first learner in main card
-        setBatchLearners(list); // store all learners for batch
+        found = list[0];
+        setBatchLearners(list);
       }
     }
 
     if (found) {
       setLearnerData(found);
-      if (searchBatchTrim && batchLearners.length > 1) {
+      if (searchBatchTrim) {
         setMessage(
-          `✅ Found ${batchLearners.length} learners in batch ${searchBatchTrim}`
+          `✅ Found ${batchLearners.length || 1} learners in batch ${searchBatchTrim}`
         );
       } else {
         setMessage(`✅ Learner found: ${found.name}`);
@@ -226,7 +214,6 @@ export default function LearnersDashboard({ user, token }) {
     }
   }
 
-  // Update learner status handler
   async function handleStatusChange(learnerEmail, batchNo, newStatus) {
     setStatusUpdating(true);
     setMessage("");
@@ -269,7 +256,6 @@ export default function LearnersDashboard({ user, token }) {
     learnerData &&
     ["manager", "admin"].includes((user?.role || "").toLowerCase());
 
-  // Common dropdown style: taller listbox
   const listBoxStyle = {
     style: { maxHeight: 320, overflowY: "auto" },
   };
@@ -460,7 +446,6 @@ export default function LearnersDashboard({ user, token }) {
           </Grid>
         </Grid>
 
-        {/* Debug info */}
         <Typography
           variant="caption"
           sx={{ mb: 2, display: "block", color: "gray" }}
@@ -483,7 +468,6 @@ export default function LearnersDashboard({ user, token }) {
           </Alert>
         )}
 
-        {/* Main learner card */}
         {learnerData && (
           <Card
             sx={{
@@ -559,44 +543,43 @@ export default function LearnersDashboard({ user, token }) {
           </Card>
         )}
 
-        {/* Batch learners summary/list */}
+        {/* Batch learners table */}
         {batchLearners.length > 0 && searchBatch.trim() && (
           <Box mt={1}>
             <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
               Batch {searchBatch}: {batchLearners.length} learner
               {batchLearners.length > 1 ? "s" : ""}
             </Typography>
-            <Grid container spacing={1}>
-              {batchLearners.map((l) => (
-                <Grid
-                  item
-                  xs={12}
-                  sm={6}
-                  md={4}
-                  key={`${l.email}-${l.batch_no}`}
-                >
-                  <Paper
-                    sx={{
-                      p: 1.5,
-                      borderRadius: 2,
-                      bgcolor: "#fff7f0",
-                      border: "1px solid rgba(0,0,0,0.06)",
-                    }}
-                  >
-                    <Typography variant="subtitle2" fontWeight="bold">
-                      {l.name}
-                    </Typography>
-                    <Typography variant="body2" sx={{ opacity: 0.8 }}>
-                      {l.email}
-                    </Typography>
-                  </Paper>
-                </Grid>
-              ))}
-            </Grid>
+            <TableContainer component={Paper} sx={{ borderRadius: 2 }}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>#</TableCell>
+                    <TableCell>Name</TableCell>
+                    <TableCell>Email</TableCell>
+                    <TableCell>Phone</TableCell>
+                    <TableCell>Batch No</TableCell>
+                    <TableCell>Status</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {batchLearners.map((l, idx) => (
+                    <TableRow key={`${l.email}-${l.batch_no}`}>
+                      <TableCell>{idx + 1}</TableCell>
+                      <TableCell>{l.name}</TableCell>
+                      <TableCell>{l.email}</TableCell>
+                      <TableCell>{l.phone || "-"}</TableCell>
+                      <TableCell>{l.batch_no}</TableCell>
+                      <TableCell>{l.status || "Enabled"}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
           </Box>
         )}
 
-        {/* Add Learner Dialog */}
+        {/* Add Learner Dialog (unchanged except Autocomplete styling) */}
         <Dialog
           open={openAddDialog}
           onClose={() => setOpenAddDialog(false)}
