@@ -19,7 +19,7 @@ import {
   Chip,
 } from "@mui/material";
 
-const API_BASE =  process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
+const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 const sessionsPerDay = 3;
 
 export default function AttendanceDashboard({ token }) {
@@ -28,8 +28,10 @@ export default function AttendanceDashboard({ token }) {
   const [batches, setBatches] = useState([]);
   const [batchNo, setBatchNo] = useState("");
   const [learners, setLearners] = useState([]);
-  const [dates, setDates] = useState([]);
-  // attendance[learnerEmail][date][session] = { status: "", locked: false }
+  const [todayDate, setTodayDate] = useState("");
+  const [courseStartDate, setCourseStartDate] = useState("");
+  const [courseEndDate, setCourseEndDate] = useState("");
+  // attendance[learnerEmail][todayDate][session] = { status: "", locked: false }
   const [attendance, setAttendance] = useState({});
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
@@ -45,7 +47,9 @@ export default function AttendanceDashboard({ token }) {
       setBatches([]);
       setBatchNo("");
       setLearners([]);
-      setDates([]);
+      setTodayDate("");
+      setCourseStartDate("");
+      setCourseEndDate("");
       setAttendance({});
       return;
     }
@@ -55,7 +59,9 @@ export default function AttendanceDashboard({ token }) {
   useEffect(() => {
     if (!batchNo) {
       setLearners([]);
-      setDates([]);
+      setTodayDate("");
+      setCourseStartDate("");
+      setCourseEndDate("");
       setAttendance({});
       return;
     }
@@ -66,59 +72,73 @@ export default function AttendanceDashboard({ token }) {
           axios.get(`${API_BASE}/api/get_learners`, { params: { batch_no: batchNo } }),
           axios.get(`${API_BASE}/api/get_batch_dates`, { params: { batch_no: batchNo } }),
         ]);
+        
         // Remove dropout learners
         const filteredLearners = (learnersRes.data || []).filter(l => l.status !== "Dropout");
         setLearners(filteredLearners);
 
-        // Generate date list
+        // Get course dates from API response
         const { start_date, end_date } = datesRes.data || {};
-        const dateList = generateDateRange(start_date, end_date);
-        setDates(dateList);
+        setCourseStartDate(start_date);
+        setCourseEndDate(end_date);
 
-        // Fetch existing attendance for batch
+        // Set today's date in YYYY-MM-DD format
+        const today = new Date().toISOString().slice(0, 10);
+        setTodayDate(today);
+
+        // Check if today is within course duration
+        if (!start_date || !end_date || today < start_date || today > end_date) {
+          setMessage("⚠️ Today is outside the course duration");
+          setAttendance({});
+          setLoading(false);
+          return;
+        }
+
+        // Fetch existing attendance for today only
         let serverAttendance = {};
         try {
           const attRes = await axios.get(`${API_BASE}/api/get_batch_attendance`, { params: { batch_no: batchNo } });
           serverAttendance = attRes.data || {};
         } catch (e) {}
 
-        // Compose initial attendance state:
+        // Compose attendance state only for today
         const newAttendance = {};
         filteredLearners.forEach(learner => {
           newAttendance[learner.email] = {};
-          dateList.forEach(date => {
-            newAttendance[learner.email][date] = {};
-            for (let session = 1; session <= sessionsPerDay; session++) {
-              // Existing?
-              let serverCell = undefined;
-              if (serverAttendance[learner.email] && serverAttendance[learner.email][date] && serverAttendance[learner.email][date][session]) {
-                serverCell = serverAttendance[learner.email][date][session];
-              }
-              if (serverCell) {
-                newAttendance[learner.email][date][session] = {
-                  status: serverCell.status,
-                  locked: true
-                };
-              } else if (learner.status === "Disabled") {
-                newAttendance[learner.email][date][session] = {
-                  status: "NA",
-                  locked: true
-                };
-              } else {
-                newAttendance[learner.email][date][session] = {
-                  status: "",
-                  locked: false
-                };
-              }
+          // Only today's date
+          newAttendance[learner.email][today] = {};
+          for (let session = 1; session <= sessionsPerDay; session++) {
+            // Check existing attendance for today
+            let serverCell = undefined;
+            if (serverAttendance[learner.email] && serverAttendance[learner.email][today] && serverAttendance[learner.email][today][session]) {
+              serverCell = serverAttendance[learner.email][today][session];
             }
-          });
+            if (serverCell) {
+              newAttendance[learner.email][today][session] = {
+                status: serverCell.status,
+                locked: true
+              };
+            } else if (learner.status === "Disabled") {
+              newAttendance[learner.email][today][session] = {
+                status: "NA",
+                locked: true
+              };
+            } else {
+              newAttendance[learner.email][today][session] = {
+                status: "",
+                locked: false
+              };
+            }
+          }
         });
         setAttendance(newAttendance);
         setMessage("");
       } catch (e) {
         setMessage("Failed to load batch data");
         setLearners([]);
-        setDates([]);
+        setTodayDate("");
+        setCourseStartDate("");
+        setCourseEndDate("");
         setAttendance({});
       }
       setLoading(false);
@@ -126,23 +146,14 @@ export default function AttendanceDashboard({ token }) {
     fetchBatchDetails();
   }, [batchNo]);
 
-  function generateDateRange(start, end) {
-    const result = [];
-    const startDate = new Date(start), endDate = new Date(end);
-    for (let dt = new Date(startDate); dt <= endDate; dt.setDate(dt.getDate() + 1)) {
-      result.push(dt.toISOString().slice(0, 10));
-    }
-    return result;
-  }
-
-  // Handler to mark Present, Absent, NA per session
-  function markAttendance(learnerEmail, date, session, status) {
+  // Handler to mark Present, Absent, Leave per session
+  function markAttendance(learnerEmail, session, status) {
     setAttendance(prev => ({
       ...prev,
       [learnerEmail]: {
         ...prev[learnerEmail],
-        [date]: {
-          ...prev[learnerEmail][date],
+        [todayDate]: {
+          ...prev[learnerEmail]?.[todayDate],
           [session]: { status, locked: true }
         }
       }
@@ -153,23 +164,28 @@ export default function AttendanceDashboard({ token }) {
     setLoading(true);
     setMessage("");
     try {
-      // Transform UI state to API format: { learnerEmail: { date: { session: status } } }
+      // Transform UI state to API format for today only: { learnerEmail: { todayDate: { session: status } } }
       const saveObj = {};
       Object.keys(attendance).forEach(email => {
         saveObj[email] = {};
-        Object.keys(attendance[email]).forEach(date => {
-          saveObj[email][date] = {};
-          for (let session = 1; session <= sessionsPerDay; session++) {
-            saveObj[email][date][session] = attendance[email][date][session]?.status || "";
-          }
-        });
+        saveObj[email][todayDate] = {};
+        for (let session = 1; session <= sessionsPerDay; session++) {
+          saveObj[email][todayDate][session] = attendance[email][todayDate][session]?.status || "";
+        }
       });
+
+      // Send attendance data along with batch info for percentage calculation
       await axios.post(
         `${API_BASE}/api/save_attendance_ui`,
-        { batch_no: batchNo, attendance: saveObj },
+        { 
+          batch_no: batchNo, 
+          attendance: saveObj,
+          course_start_date: courseStartDate,
+          course_end_date: courseEndDate
+        },
         { headers: authHeaders() }
       );
-      setMessage("✅ Attendance saved successfully");
+      setMessage("✅ Today's attendance saved successfully");
     } catch (err) {
       setMessage("❌ Failed to save attendance");
       console.error(err);
@@ -177,32 +193,44 @@ export default function AttendanceDashboard({ token }) {
     setLoading(false);
   }
 
-  // Render attendance cell per session
-  function renderSessionCell(learner, date, session) {
-    const cell = attendance[learner.email]?.[date]?.[session] || { status: "", locked: false };
+  // Render attendance cell per session for today only
+  function renderSessionCell(learner, session) {
+    const cell = attendance[learner.email]?.[todayDate]?.[session] || { status: "", locked: false };
     if (cell.locked) {
       if (cell.status === "P") return <Chip label="P" color="success" size="small" />;
       if (cell.status === "A") return <Chip label="A" color="error" size="small" />;
-      if (cell.status === "NA") return <Chip label="NA" color="warning" size="small" />;
+      if (cell.status === "L") return <Chip label="L" color="warning" size="small" />;
+      if (cell.status === "NA") return <Chip label="NA" color="default" size="small" />;
       return <Chip label="-" size="small" />;
     }
     return (
-      <Box sx={{ display: "flex", gap: 1 }}>
+      <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5, p: 0.5 }}>
         <Button
-          onClick={() => markAttendance(learner.email, date, session, "P")}
+          onClick={() => markAttendance(learner.email, session, "P")}
           size="small"
           color="success"
           variant="outlined"
+          sx={{ minWidth: 28, fontSize: '0.7rem' }}
         >
           P
         </Button>
         <Button
-          onClick={() => markAttendance(learner.email, date, session, "A")}
+          onClick={() => markAttendance(learner.email, session, "A")}
           size="small"
           color="error"
           variant="outlined"
+          sx={{ minWidth: 28, fontSize: '0.7rem' }}
         >
           A
+        </Button>
+        <Button
+          onClick={() => markAttendance(learner.email, session, "L")}
+          size="small"
+          color="warning"
+          variant="outlined"
+          sx={{ minWidth: 28, fontSize: '0.7rem' }}
+        >
+          L
         </Button>
       </Box>
     );
@@ -211,8 +239,12 @@ export default function AttendanceDashboard({ token }) {
   return (
     <Box sx={{ maxWidth: 1400, mx: "auto", my: 4, px: 2 }}>
       <Typography variant="h4" gutterBottom>
-        Attendance Dashboard
+        Attendance Dashboard - Today ({todayDate})
       </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+        Course: {courseStartDate} to {courseEndDate} | Marking attendance for today only
+      </Typography>
+      
       <Grid container spacing={2} sx={{ mb: 3 }}>
         <Grid item xs={12} sm={6}>
           <FormControl fullWidth>
@@ -231,53 +263,57 @@ export default function AttendanceDashboard({ token }) {
           </FormControl>
         </Grid>
       </Grid>
+
       {loading && <CircularProgress />}
-      {learners.length > 0 && dates.length > 0 && (
-        <Table size="small" sx={{ overflowX: "auto", display: "block" }}>
-          <TableHead>
-            <TableRow>
-              <TableCell>Sr No</TableCell>
-              <TableCell>Learner Name</TableCell>
-              <TableCell>Email</TableCell>
-              {dates.map(date => (
-                <TableCell key={date} align="center" colSpan={sessionsPerDay}>
-                  {date}
+      
+      {learners.length > 0 && todayDate && courseStartDate && courseEndDate && (
+        <>
+          <Table size="small" sx={{ overflowX: "auto", display: "block", mb: 2 }}>
+            <TableHead>
+              <TableRow>
+                <TableCell>Sr No</TableCell>
+                <TableCell>Learner Name</TableCell>
+                <TableCell>Email</TableCell>
+                <TableCell align="center" colSpan={sessionsPerDay}>
+                  Today ({todayDate})
                 </TableCell>
-              ))}
-            </TableRow>
-            <TableRow>
-              <TableCell />
-              <TableCell />
-              <TableCell />
-              {dates.flatMap(date =>
-                Array.from({ length: sessionsPerDay }, (_, i) => (
-                  <TableCell key={date + "_session" + (i + 1)} align="center">
+              </TableRow>
+              <TableRow>
+                <TableCell />
+                <TableCell />
+                <TableCell />
+                {Array.from({ length: sessionsPerDay }, (_, i) => (
+                  <TableCell key={`session_${i + 1}`} align="center">
                     S{i + 1}
                   </TableCell>
-                ))
-              )}
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {learners.map((learner, idx) => (
-              <TableRow key={learner.email}>
-                <TableCell>{idx + 1}</TableCell>
-                <TableCell>{learner.name}</TableCell>
-                <TableCell>{learner.email}</TableCell>
-                {dates.flatMap(date =>
-                  Array.from({ length: sessionsPerDay }, (_, i) =>
-                    <TableCell key={learner.email + "_session" + (i + 1) + "_" + date} align="center">
-                      {renderSessionCell(learner, date, i + 1)}
-                    </TableCell>
-                  )
-                )}
+                ))}
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+            </TableHead>
+            <TableBody>
+              {learners.map((learner, idx) => (
+                <TableRow key={learner.email}>
+                  <TableCell>{idx + 1}</TableCell>
+                  <TableCell>{learner.name}</TableCell>
+                  <TableCell sx={{ maxWidth: 200, wordBreak: 'break-all' }}>{learner.email}</TableCell>
+                  {Array.from({ length: sessionsPerDay }, (_, i) =>
+                    <TableCell key={`cell_${learner.email}_session_${i + 1}`} align="center">
+                      {renderSessionCell(learner, i + 1)}
+                    </TableCell>
+                  )}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </>
       )}
-      <Button variant="contained" onClick={saveAttendance} disabled={loading} sx={{ mt: 2 }}>
-        {loading ? "Saving..." : "Save Attendance"}
+
+      <Button 
+        variant="contained" 
+        onClick={saveAttendance} 
+        disabled={loading || !todayDate || learners.length === 0}
+        sx={{ mt: 2 }}
+      >
+        {loading ? "Saving..." : "Save Today's Attendance"}
       </Button>
       {message && <Alert sx={{ mt: 2 }}>{message}</Alert>}
     </Box>
