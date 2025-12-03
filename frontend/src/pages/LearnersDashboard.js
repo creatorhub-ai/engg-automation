@@ -34,6 +34,7 @@ export default function LearnersDashboard({ user, token }) {
   const [learnerData, setLearnerData] = useState(null);
   const [allLearners, setAllLearners] = useState([]);
   const [distinctBatches, setDistinctBatches] = useState([]);
+  const [batchLearners, setBatchLearners] = useState([]); // all learners for selected batch
 
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
@@ -54,11 +55,10 @@ export default function LearnersDashboard({ user, token }) {
       setLoading(true);
       try {
         const headers = token ? { Authorization: `Bearer ${token}` } : {};
-        
+
         // Method 1: Try existing learners endpoint first
         let learnersData = [];
         try {
-          // Use existing /api/learners/email endpoint pattern or general learners
           const res = await axios.get(`${API_BASE}/api/learners`, { headers });
           learnersData = Array.isArray(res.data) ? res.data : [];
         } catch (e) {
@@ -67,20 +67,24 @@ export default function LearnersDashboard({ user, token }) {
 
         // Method 2: If empty, load via batches (fallback)
         if (learnersData.length === 0) {
-          // Get batches first
-          const batchesRes = await axios.get(`${API_BASE}/api/batches`, { headers });
+          const batchesRes = await axios.get(`${API_BASE}/api/batches`, {
+            headers,
+          });
           const batches = batchesRes.data || [];
-          
-          // Load learners for first few batches to populate suggestions
-          for (let i = 0; i < Math.min(5, batches.length); i++) {
+
+          for (let i = 0; i < batches.length; i++) {
             try {
+              const batchNo = batches[i].batch_no || batches[i];
               const batchLearnersRes = await axios.get(
-                `${API_BASE}/api/getlearners?batchno=${batches[i]}`,
+                `${API_BASE}/api/getlearners?batchno=${batchNo}`,
                 { headers }
               );
-              learnersData = [...learnersData, ...(batchLearnersRes.data || [])];
+              learnersData = [
+                ...learnersData,
+                ...(batchLearnersRes.data || []),
+              ];
             } catch (e) {
-              console.log(`No learners for batch ${batches[i]}`);
+              console.log(`No learners for batch`, batches[i]);
             }
           }
         }
@@ -90,7 +94,8 @@ export default function LearnersDashboard({ user, token }) {
           (learner, index, self) =>
             index ===
             self.findIndex(
-              (l) => l.email === learner.email && l.batch_no === learner.batch_no
+              (l) =>
+                l.email === learner.email && l.batch_no === learner.batch_no
             )
         );
 
@@ -106,7 +111,9 @@ export default function LearnersDashboard({ user, token }) {
         ].sort();
         setDistinctBatches(batches);
 
-        console.log(`Loaded ${uniqueLearners.length} learners, ${batches.length} batches`);
+        console.log(
+          `Loaded ${uniqueLearners.length} learners, ${batches.length} batches`
+        );
       } catch (err) {
         console.error("Error loading learners data:", err);
         setAllLearners([]);
@@ -125,8 +132,11 @@ export default function LearnersDashboard({ user, token }) {
     if (!searchEmail && !searchName && !searchBatch) {
       setMessage("Please enter email, name, or batch number");
       setLearnerData(null);
+      setBatchLearners([]);
       return;
     }
+
+    setBatchLearners([]);
 
     let found = null;
     const searchEmailTrim = searchEmail.trim().toLowerCase();
@@ -138,21 +148,35 @@ export default function LearnersDashboard({ user, token }) {
       found = allLearners.find(
         (l) => (l.email || "").toLowerCase() === searchEmailTrim
       );
+      if (found) setBatchLearners([found]);
     }
     // Priority 2: Exact name match
     else if (searchNameTrim) {
       found = allLearners.find(
         (l) => (l.name || "").toLowerCase() === searchNameTrim
       );
+      if (found) setBatchLearners([found]);
     }
-    // Priority 3: Exact batch_no match (first learner in batch)
+    // Priority 3: Exact batch_no match (all learners in batch)
     else if (searchBatchTrim) {
-      found = allLearners.find((l) => String(l.batch_no).trim() === searchBatchTrim);
+      const list = allLearners.filter(
+        (l) => String(l.batch_no).trim() === searchBatchTrim
+      );
+      if (list.length > 0) {
+        found = list[0]; // show first learner in main card
+        setBatchLearners(list); // store all learners for batch
+      }
     }
 
     if (found) {
       setLearnerData(found);
-      setMessage(`✅ Learner found: ${found.name}`);
+      if (searchBatchTrim && batchLearners.length > 1) {
+        setMessage(
+          `✅ Found ${batchLearners.length} learners in batch ${searchBatchTrim}`
+        );
+      } else {
+        setMessage(`✅ Learner found: ${found.name}`);
+      }
     } else {
       setLearnerData(null);
       setMessage("❌ Learner not found - check spelling or try another field");
@@ -180,8 +204,7 @@ export default function LearnersDashboard({ user, token }) {
       if (res.data.success) {
         setMessage("✅ Learner added successfully");
         setOpenAddDialog(false);
-        // Add to local state
-        const learnerToAdd = { ...newLearner, id: Date.now() }; // temp id
+        const learnerToAdd = { ...newLearner, id: Date.now() };
         setAllLearners((prev) => [...prev, learnerToAdd]);
         if (!distinctBatches.includes(newLearner.batch_no)) {
           setDistinctBatches((prev) => [...prev, newLearner.batch_no]);
@@ -196,7 +219,7 @@ export default function LearnersDashboard({ user, token }) {
         setMessage("❌ Failed to add learner: " + (res.data.error || ""));
       }
     } catch (error) {
-      setMessage("❌ Error adding learner: " + error.response?.data?.error);
+      setMessage("❌ Error adding learner");
       console.error(error);
     } finally {
       setLoading(false);
@@ -238,12 +261,18 @@ export default function LearnersDashboard({ user, token }) {
     setSearchName("");
     setSearchBatch("");
     setLearnerData(null);
+    setBatchLearners([]);
     setMessage("");
   }
 
   const showStatusDropdown =
     learnerData &&
     ["manager", "admin"].includes((user?.role || "").toLowerCase());
+
+  // Common dropdown style: taller listbox
+  const listBoxStyle = {
+    style: { maxHeight: 320, overflowY: "auto" },
+  };
 
   return (
     <Box sx={{ maxWidth: 1200, mx: "auto", my: 3, px: 2 }}>
@@ -255,7 +284,12 @@ export default function LearnersDashboard({ user, token }) {
           background: "linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%)",
         }}
       >
-        <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
+        <Box
+          display="flex"
+          justifyContent="space-between"
+          alignItems="center"
+          mb={3}
+        >
           <Box display="flex" alignItems="center" gap={2}>
             <MenuBookIcon sx={{ fontSize: 40, color: "#e8744f" }} />
             <Typography variant="h4" fontWeight="bold" color="#333">
@@ -295,6 +329,8 @@ export default function LearnersDashboard({ user, token }) {
               freeSolo
               options={allLearners.map((l) => l.email || "")}
               value={searchEmail}
+              disablePortal
+              ListboxProps={listBoxStyle}
               onChange={(e, value) => setSearchEmail(value || "")}
               onInputChange={(e, value) => setSearchEmail(value)}
               renderInput={(params) => (
@@ -322,6 +358,8 @@ export default function LearnersDashboard({ user, token }) {
               freeSolo
               options={allLearners.map((l) => l.name || "")}
               value={searchName}
+              disablePortal
+              ListboxProps={listBoxStyle}
               onChange={(e, value) => setSearchName(value || "")}
               onInputChange={(e, value) => setSearchName(value)}
               renderInput={(params) => (
@@ -349,6 +387,8 @@ export default function LearnersDashboard({ user, token }) {
               freeSolo
               options={distinctBatches}
               value={searchBatch}
+              disablePortal
+              ListboxProps={listBoxStyle}
               onChange={(e, value) => setSearchBatch(value || "")}
               onInputChange={(e, value) => setSearchBatch(value)}
               renderInput={(params) => (
@@ -380,11 +420,13 @@ export default function LearnersDashboard({ user, token }) {
               disabled={loading}
               sx={{
                 height: "56px",
-                background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                background:
+                  "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
                 fontWeight: "bold",
                 borderRadius: 2,
                 "&:hover": {
-                  background: "linear-gradient(135deg, #764ba2 0%, #667eea 100%)",
+                  background:
+                    "linear-gradient(135deg, #764ba2 0%, #667eea 100%)",
                 },
               }}
             >
@@ -419,7 +461,10 @@ export default function LearnersDashboard({ user, token }) {
         </Grid>
 
         {/* Debug info */}
-        <Typography variant="caption" sx={{ mb: 2, display: 'block', color: 'gray' }}>
+        <Typography
+          variant="caption"
+          sx={{ mb: 2, display: "block", color: "gray" }}
+        >
           Loaded: {allLearners.length} learners, {distinctBatches.length} batches
         </Typography>
 
@@ -438,7 +483,7 @@ export default function LearnersDashboard({ user, token }) {
           </Alert>
         )}
 
-        {/* Rest of the component remains the same */}
+        {/* Main learner card */}
         {learnerData && (
           <Card
             sx={{
@@ -446,6 +491,7 @@ export default function LearnersDashboard({ user, token }) {
               color: "#333",
               borderRadius: 3,
               boxShadow: "0 8px 20px rgba(250, 112, 154, 0.3)",
+              mb: 2,
             }}
           >
             <CardContent>
@@ -513,7 +559,44 @@ export default function LearnersDashboard({ user, token }) {
           </Card>
         )}
 
-        {/* Add Learner Dialog - SAME AS BEFORE */}
+        {/* Batch learners summary/list */}
+        {batchLearners.length > 0 && searchBatch.trim() && (
+          <Box mt={1}>
+            <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
+              Batch {searchBatch}: {batchLearners.length} learner
+              {batchLearners.length > 1 ? "s" : ""}
+            </Typography>
+            <Grid container spacing={1}>
+              {batchLearners.map((l) => (
+                <Grid
+                  item
+                  xs={12}
+                  sm={6}
+                  md={4}
+                  key={`${l.email}-${l.batch_no}`}
+                >
+                  <Paper
+                    sx={{
+                      p: 1.5,
+                      borderRadius: 2,
+                      bgcolor: "#fff7f0",
+                      border: "1px solid rgba(0,0,0,0.06)",
+                    }}
+                  >
+                    <Typography variant="subtitle2" fontWeight="bold">
+                      {l.name}
+                    </Typography>
+                    <Typography variant="body2" sx={{ opacity: 0.8 }}>
+                      {l.email}
+                    </Typography>
+                  </Paper>
+                </Grid>
+              ))}
+            </Grid>
+          </Box>
+        )}
+
+        {/* Add Learner Dialog */}
         <Dialog
           open={openAddDialog}
           onClose={() => setOpenAddDialog(false)}
@@ -558,7 +641,12 @@ export default function LearnersDashboard({ user, token }) {
                 freeSolo
                 options={distinctBatches}
                 value={newLearner.batch_no}
+                disablePortal
+                ListboxProps={listBoxStyle}
                 onChange={(e, value) =>
+                  setNewLearner({ ...newLearner, batch_no: value || "" })
+                }
+                onInputChange={(e, value) =>
                   setNewLearner({ ...newLearner, batch_no: value || "" })
                 }
                 renderInput={(params) => (
@@ -597,7 +685,8 @@ export default function LearnersDashboard({ user, token }) {
                 px: 3,
                 fontWeight: "bold",
                 "&:hover": {
-                  background: "linear-gradient(135deg, #fee140 0%, #fa709a 100%)",
+                  background:
+                    "linear-gradient(135deg, #fee140 0%, #fa709a 100%)",
                 },
               }}
             >
