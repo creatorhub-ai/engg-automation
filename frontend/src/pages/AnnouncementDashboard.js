@@ -16,7 +16,8 @@ import {
 } from "@mui/material";
 import axios from "axios";
 
-const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
+const API_BASE =
+  process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 
 export default function AnnouncementDashboard({ token }) {
   const [domains, setDomains] = useState([]);
@@ -27,10 +28,10 @@ export default function AnnouncementDashboard({ token }) {
   const [learners, setLearners] = useState([]);
 
   const [subject, setSubject] = useState("");
-  const [message, setMessage] = useState(""); // For text content or URL
+  const [message, setMessage] = useState(""); // text content or URL
   const [messageType, setMessageType] = useState("text"); // text, multiline, paragraph, link, image, file
 
-  const [file, setFile] = useState(null); // for image / file upload
+  const [file, setFile] = useState(null);
 
   const [loadingLearners, setLoadingLearners] = useState(false);
   const [sending, setSending] = useState(false);
@@ -40,8 +41,23 @@ export default function AnnouncementDashboard({ token }) {
   useEffect(() => {
     // load domains and batches on mount
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
-    axios.get(`${API_BASE}/api/announcement/domains`, { headers }).then(res => setDomains(res.data)).catch(() => setDomains([]));
-    axios.get(`${API_BASE}/api/announcement/batches`, { headers }).then(res => setBatches(res.data)).catch(() => setBatches([]));
+
+    // FIX: use existing backend routes /api/domains and /api/batches
+    axios
+      .get(`${API_BASE}/api/domains`, { headers })
+      .then((res) => setDomains(res.data || []))
+      .catch((err) => {
+        console.error("Error loading domains:", err);
+        setDomains([]);
+      });
+
+    axios
+      .get(`${API_BASE}/api/batches`, { headers })
+      .then((res) => setBatches(res.data || []))
+      .catch((err) => {
+        console.error("Error loading batches:", err);
+        setBatches([]);
+      });
   }, [token]);
 
   useEffect(() => {
@@ -56,12 +72,16 @@ export default function AnnouncementDashboard({ token }) {
       try {
         const headers = token ? { Authorization: `Bearer ${token}` } : {};
         const params = {};
-        if(selectedDomain) params.domain = selectedDomain;
-        if(selectedBatch) params.batch_no = selectedBatch;
+        if (selectedDomain) params.domain = selectedDomain;
+        if (selectedBatch) params.batch_no = selectedBatch;
 
-        const res = await axios.get(`${API_BASE}/api/announcement/learners`, { params, headers });
+        const res = await axios.get(
+          `${API_BASE}/api/announcement/learners`,
+          { params, headers }
+        );
         setLearners(res.data || []);
       } catch (e) {
+        console.error("Failed to load learners:", e);
         setError("Failed to load learners");
         setLearners([]);
       } finally {
@@ -71,30 +91,33 @@ export default function AnnouncementDashboard({ token }) {
     loadLearners();
   }, [selectedDomain, selectedBatch, token]);
 
-  // Handle file input change
   const onFileChange = (e) => {
     const uploadedFile = e.target.files[0];
-    if(uploadedFile) {
+    if (uploadedFile) {
       setFile(uploadedFile);
     }
   };
 
-  // Upload file to server or third-party service
   async function uploadFile(fileToUpload) {
-    // Replace this with your actual file upload endpoint logic
     const formData = new FormData();
     formData.append("file", fileToUpload);
 
     try {
-      // Example: upload to your backend upload API
-      const headers = token ? { Authorization: `Bearer ${token}`, "Content-Type": "multipart/form-data" } : { "Content-Type": "multipart/form-data" };
-      const res = await axios.post(`${API_BASE}/api/upload`, formData, { headers });
-      // Expect server to respond with { url: "uploaded file url" }
-      if(res.data && res.data.url) {
+      const headers = token
+        ? {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "multipart/form-data",
+          }
+        : { "Content-Type": "multipart/form-data" };
+      const res = await axios.post(`${API_BASE}/api/upload`, formData, {
+        headers,
+      });
+      if (res.data && res.data.url) {
         return res.data.url;
       }
       throw new Error("Upload failed: no URL returned");
     } catch (err) {
+      console.error("File upload failed:", err);
       throw err;
     }
   }
@@ -102,20 +125,28 @@ export default function AnnouncementDashboard({ token }) {
   const onSend = async () => {
     setError("");
     setSuccessMsg("");
+
     if (!subject.trim()) {
       setError("Subject cannot be empty");
       return;
     }
-    if(!selectedDomain && !selectedBatch) {
+    if (!selectedDomain && !selectedBatch) {
       setError("Select either a domain or batch");
       return;
     }
-    // For image/file types, allow either file upload or message URL/text
-    if((messageType === "image" || messageType === "file") && !file && !message.trim()) {
+    if (
+      (messageType === "image" || messageType === "file") &&
+      !file &&
+      !message.trim()
+    ) {
       setError("Please upload a file/image or enter its URL");
       return;
     }
-    if(messageType !== "image" && messageType !== "file" && !message.trim()) {
+    if (
+      messageType !== "image" &&
+      messageType !== "file" &&
+      !message.trim()
+    ) {
       setError("Message cannot be empty");
       return;
     }
@@ -124,8 +155,7 @@ export default function AnnouncementDashboard({ token }) {
     try {
       let finalMessage = message;
 
-      // If file uploaded, upload it and replace message with returned url
-      if(file) {
+      if (file) {
         finalMessage = await uploadFile(file);
       }
 
@@ -138,10 +168,16 @@ export default function AnnouncementDashboard({ token }) {
         batch_no: selectedBatch || null,
       };
 
-      const res = await axios.post(`${API_BASE}/api/announcement/send`, payload, { headers });
+      const res = await axios.post(
+        `${API_BASE}/api/announcement/send`,
+        payload,
+        { headers }
+      );
 
-      if(res.data.success) {
-        setSuccessMsg(`Announcement sent successfully to ${res.data.sentTo} learners.`);
+      if (res.data.success) {
+        setSuccessMsg(
+          `Announcement sent successfully to ${res.data.sentTo} learners.`
+        );
         setMessage("");
         setSubject("");
         setFile(null);
@@ -149,6 +185,7 @@ export default function AnnouncementDashboard({ token }) {
         setError("Failed to send announcement");
       }
     } catch (e) {
+      console.error("Failed to send announcement:", e);
       setError("Failed to send announcement");
     } finally {
       setSending(false);
@@ -157,23 +194,29 @@ export default function AnnouncementDashboard({ token }) {
 
   return (
     <Paper sx={{ p: 3, maxWidth: 800, mx: "auto" }}>
-      <Typography variant="h4" gutterBottom>Announcement Dashboard</Typography>
+      <Typography variant="h4" gutterBottom>
+        Announcement Dashboard
+      </Typography>
 
       <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap", mb: 2 }}>
         <FormControl sx={{ minWidth: 240 }}>
           <InputLabel>Domain (optional)</InputLabel>
           <Select
-            label="Domain"
+            label="Domain (optional)"
             value={selectedDomain}
-            onChange={e => {
+            onChange={(e) => {
               setSelectedDomain(e.target.value);
-              if(e.target.value) setSelectedBatch("");
+              if (e.target.value) setSelectedBatch("");
             }}
             displayEmpty
           >
-            <MenuItem value=""><em>None</em></MenuItem>
-            {domains.map(domain => (
-              <MenuItem key={domain} value={domain}>{domain}</MenuItem>
+            <MenuItem value="">
+              <em>None</em>
+            </MenuItem>
+            {domains.map((domain) => (
+              <MenuItem key={domain} value={domain}>
+                {domain}
+              </MenuItem>
             ))}
           </Select>
         </FormControl>
@@ -181,31 +224,36 @@ export default function AnnouncementDashboard({ token }) {
         <FormControl sx={{ minWidth: 180 }}>
           <InputLabel>Batch No (optional)</InputLabel>
           <Select
-            label="Batch No"
+            label="Batch No (optional)"
             value={selectedBatch}
-            onChange={e => {
+            onChange={(e) => {
               setSelectedBatch(e.target.value);
-              if(e.target.value) setSelectedDomain("");
+              if (e.target.value) setSelectedDomain("");
             }}
             displayEmpty
           >
-            <MenuItem value=""><em>None</em></MenuItem>
-            {batches.map(batch => (
-              <MenuItem key={batch} value={batch}>{batch}</MenuItem>
+            <MenuItem value="">
+              <em>None</em>
+            </MenuItem>
+            {batches.map((batch) => (
+              <MenuItem key={batch.batch_no || batch} value={batch.batch_no || batch}>
+                {batch.batch_no || batch}
+              </MenuItem>
             ))}
           </Select>
         </FormControl>
       </Box>
 
       <Typography variant="subtitle2" sx={{ mb: 1 }}>
-        Learners matching selection: {loadingLearners ? "Loading..." : learners.length}
+        Learners matching selection:{" "}
+        {loadingLearners ? "Loading..." : learners.length}
       </Typography>
 
       <FormControl fullWidth sx={{ mb: 2 }}>
         <TextField
           label="Subject"
           value={subject}
-          onChange={e => setSubject(e.target.value)}
+          onChange={(e) => setSubject(e.target.value)}
           size="small"
           required
         />
@@ -215,27 +263,51 @@ export default function AnnouncementDashboard({ token }) {
         <RadioGroup
           row
           value={messageType}
-          onChange={e => {
+          onChange={(e) => {
             setMessageType(e.target.value);
             setFile(null);
             setMessage("");
           }}
         >
-          <FormControlLabel value="text" control={<Radio />} label="Single Line Text" />
-          <FormControlLabel value="multiline" control={<Radio />} label="Multiline Text" />
-          <FormControlLabel value="paragraph" control={<Radio />} label="Paragraph" />
-          <FormControlLabel value="link" control={<Radio />} label="Link (URL)" />
-          <FormControlLabel value="image" control={<Radio />} label="Image Upload or URL" />
-          <FormControlLabel value="file" control={<Radio />} label="File Upload or URL" />
+          <FormControlLabel
+            value="text"
+            control={<Radio />}
+            label="Single Line Text"
+          />
+          <FormControlLabel
+            value="multiline"
+            control={<Radio />}
+            label="Multiline Text"
+          />
+          <FormControlLabel
+            value="paragraph"
+            control={<Radio />}
+            label="Paragraph"
+          />
+          <FormControlLabel
+            value="link"
+            control={<Radio />}
+            label="Link (URL)"
+          />
+          <FormControlLabel
+            value="image"
+            control={<Radio />}
+            label="Image Upload or URL"
+          />
+          <FormControlLabel
+            value="file"
+            control={<Radio />}
+            label="File Upload or URL"
+          />
         </RadioGroup>
       </FormControl>
 
       <FormControl fullWidth sx={{ mb: 2 }}>
-        {(messageType === "text") && (
+        {messageType === "text" && (
           <TextField
             label="Message"
             value={message}
-            onChange={e => setMessage(e.target.value)}
+            onChange={(e) => setMessage(e.target.value)}
             size="small"
             required
           />
@@ -244,17 +316,17 @@ export default function AnnouncementDashboard({ token }) {
           <TextField
             label="Message"
             value={message}
-            onChange={e => setMessage(e.target.value)}
+            onChange={(e) => setMessage(e.target.value)}
             multiline
             rows={messageType === "paragraph" ? 6 : 3}
             required
           />
         )}
-        {(messageType === "link") && (
+        {messageType === "link" && (
           <TextField
             label="Link URL"
             value={message}
-            onChange={e => setMessage(e.target.value)}
+            onChange={(e) => setMessage(e.target.value)}
             required
           />
         )}
@@ -269,11 +341,17 @@ export default function AnnouncementDashboard({ token }) {
                 onChange={onFileChange}
               />
             </Button>
-            {file && <Typography variant="body2">{file.name}</Typography>}
+            {file && (
+              <Typography variant="body2" sx={{ mb: 1 }}>
+                {file.name}
+              </Typography>
+            )}
             <TextField
-              label={`${messageType === "image" ? "Image" : "File"} URL (or leave blank to use uploaded file)`}
+              label={`${
+                messageType === "image" ? "Image" : "File"
+              } URL (or leave blank to use uploaded file)`}
               value={message}
-              onChange={e => setMessage(e.target.value)}
+              onChange={(e) => setMessage(e.target.value)}
               size="small"
               fullWidth
             />
@@ -281,8 +359,16 @@ export default function AnnouncementDashboard({ token }) {
         )}
       </FormControl>
 
-      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-      {successMsg && <Alert severity="success" sx={{ mb: 2 }}>{successMsg}</Alert>}
+      {error && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {error}
+        </Alert>
+      )}
+      {successMsg && (
+        <Alert severity="success" sx={{ mb: 2 }}>
+          {successMsg}
+        </Alert>
+      )}
 
       <Button
         variant="contained"
