@@ -72,7 +72,7 @@ export default function AnnouncementDashboard({ token }) {
       try {
         const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-        // NOTE: backend route is /apigetlearners (no /api prefix)
+        // backend route is /apigetlearners (no /api prefix)
         const res = await axios.get(`${API_BASE}/apigetlearners`, {
           params: { batchno: selectedBatch },
           headers,

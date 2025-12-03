@@ -1595,38 +1595,48 @@ app.post('/api/announcement/send', async (req, res) => {
     const { subject, message, messageType, batch_no, domain } = req.body;
 
     if (!subject || !message) {
-      return res.status(400).json({ success: false, error: 'Missing subject or message' });
+      return res
+        .status(400)
+        .json({ success: false, error: 'Missing subject or message' });
     }
 
     if (!batch_no && !domain) {
-      return res.status(400).json({ success: false, error: 'batch_no or domain required' });
+      return res
+        .status(400)
+        .json({ success: false, error: 'batch_no or domain required' });
     }
 
-    // 1) Find learners by batch_no (primary use-case)
+    // 1) Reuse existing /apigetlearners logic via Supabase, but copy it exactly
     let learners = [];
+
     if (batch_no) {
+      // This matches your working /apigetlearners route
       const { data, error } = await supabase
-        .from('learnersdata')
-        .select('name,email,batchno')
+        .from('learnersdata') // ensure this is EXACT table name used in apigetlearners
+        .select('id, name, email, batchno, status') // same columns as apigetlearners
         .eq('batchno', batch_no);
 
       if (error) {
         console.error('Announcement send – learners fetch error:', error);
-        return res.status(500).json({ success: false, error: 'Failed to fetch learners' });
+        return res
+          .status(500)
+          .json({ success: false, error: 'Failed to fetch learners' });
       }
       learners = data || [];
     }
 
-    // Optional: domain support (can be expanded later)
+    // Optional: domain support – only if your table has a domain column
     if (!learners.length && domain) {
       const { data, error } = await supabase
         .from('learnersdata')
-        .select('name,email,batchno,domain')
+        .select('id, name, email, batchno, status, domain')
         .eq('domain', domain);
 
       if (error) {
         console.error('Announcement send – domain learners fetch error:', error);
-        return res.status(500).json({ success: false, error: 'Failed to fetch learners' });
+        return res
+          .status(500)
+          .json({ success: false, error: 'Failed to fetch learners' });
       }
       learners = data || [];
     }
@@ -1637,7 +1647,7 @@ app.post('/api/announcement/send', async (req, res) => {
         .json({ success: false, error: 'No learners found for selection' });
     }
 
-    // 2) Send emails immediately using existing sendRawEmail helper
+    // 2) Send emails using sendRawEmail
     let sentCount = 0;
     for (const l of learners) {
       const to = l.email;
@@ -1657,7 +1667,7 @@ app.post('/api/announcement/send', async (req, res) => {
         sentCount += 1;
       } catch (e) {
         console.error('Announcement send – failed for', to, e.message);
-        // continue sending to others
+        // keep going for other learners
       }
     }
 
