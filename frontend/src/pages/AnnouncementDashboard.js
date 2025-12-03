@@ -38,11 +38,10 @@ export default function AnnouncementDashboard({ token }) {
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
 
+  // Load domains and batches once
   useEffect(() => {
-    // load domains and batches on mount
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-    // FIX: use existing backend routes /api/domains and /api/batches
     axios
       .get(`${API_BASE}/api/domains`, { headers })
       .then((res) => setDomains(res.data || []))
@@ -60,36 +59,37 @@ export default function AnnouncementDashboard({ token }) {
       });
   }, [token]);
 
+  // Load learners for selected batch (from learnersdata table)
   useEffect(() => {
-    // load learners based on selected domain or batch
     async function loadLearners() {
-      if (!selectedDomain && !selectedBatch) {
+      if (!selectedBatch) {
         setLearners([]);
         return;
       }
+
       setLoadingLearners(true);
       setError("");
       try {
         const headers = token ? { Authorization: `Bearer ${token}` } : {};
-        const params = {};
-        if (selectedDomain) params.domain = selectedDomain;
-        if (selectedBatch) params.batch_no = selectedBatch;
 
-        const res = await axios.get(
-          `${API_BASE}/api/announcement/learners`,
-          { params, headers }
-        );
-        setLearners(res.data || []);
+        // NOTE: backend route is /apigetlearners (no /api prefix)
+        const res = await axios.get(`${API_BASE}/apigetlearners`, {
+          params: { batchno: selectedBatch },
+          headers,
+        });
+
+        setLearners(Array.isArray(res.data) ? res.data : []);
       } catch (e) {
-        console.error("Failed to load learners:", e);
+        console.error("Failed to load learners:", e?.response?.data || e);
         setError("Failed to load learners");
         setLearners([]);
       } finally {
         setLoadingLearners(false);
       }
     }
+
     loadLearners();
-  }, [selectedDomain, selectedBatch, token]);
+  }, [selectedBatch, token]);
 
   const onFileChange = (e) => {
     const uploadedFile = e.target.files[0];
@@ -117,7 +117,7 @@ export default function AnnouncementDashboard({ token }) {
       }
       throw new Error("Upload failed: no URL returned");
     } catch (err) {
-      console.error("File upload failed:", err);
+      console.error("File upload failed:", err?.response?.data || err);
       throw err;
     }
   }
@@ -132,6 +132,10 @@ export default function AnnouncementDashboard({ token }) {
     }
     if (!selectedDomain && !selectedBatch) {
       setError("Select either a domain or batch");
+      return;
+    }
+    if (learners.length === 0) {
+      setError("No learners found for the selected batch");
       return;
     }
     if (
@@ -174,19 +178,27 @@ export default function AnnouncementDashboard({ token }) {
         { headers }
       );
 
-      if (res.data.success) {
+      if (res.status === 200 && res.data?.success) {
         setSuccessMsg(
-          `Announcement sent successfully to ${res.data.sentTo} learners.`
+          `Announcement sent successfully to ${
+            res.data.sentTo ?? learners.length
+          } learners.`
         );
         setMessage("");
         setSubject("");
         setFile(null);
       } else {
-        setError("Failed to send announcement");
+        setError(
+          res.data?.error || "Failed to send announcement (backend error)"
+        );
       }
     } catch (e) {
-      console.error("Failed to send announcement:", e);
-      setError("Failed to send announcement");
+      console.error("Failed to send announcement:", e?.response?.data || e);
+      setError(
+        e?.response?.data?.error ||
+          e?.message ||
+          "Failed to send announcement"
+      );
     } finally {
       setSending(false);
     }
@@ -211,7 +223,7 @@ export default function AnnouncementDashboard({ token }) {
             displayEmpty
           >
             <MenuItem value="">
-              <em>None</em>
+              <em></em>
             </MenuItem>
             {domains.map((domain) => (
               <MenuItem key={domain} value={domain}>
@@ -233,10 +245,13 @@ export default function AnnouncementDashboard({ token }) {
             displayEmpty
           >
             <MenuItem value="">
-              <em>None</em>
+              <em></em>
             </MenuItem>
             {batches.map((batch) => (
-              <MenuItem key={batch.batch_no || batch} value={batch.batch_no || batch}>
+              <MenuItem
+                key={batch.batch_no || batch}
+                value={batch.batch_no || batch}
+              >
                 {batch.batch_no || batch}
               </MenuItem>
             ))}
@@ -370,11 +385,7 @@ export default function AnnouncementDashboard({ token }) {
         </Alert>
       )}
 
-      <Button
-        variant="contained"
-        onClick={onSend}
-        disabled={sending || loadingLearners}
-      >
+      <Button variant="contained" onClick={onSend} disabled={sending}>
         {sending ? "Sending..." : "Send Announcement"}
       </Button>
     </Paper>

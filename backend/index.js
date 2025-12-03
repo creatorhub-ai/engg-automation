@@ -70,7 +70,6 @@ app.use(
 // Mount routers
 app.use("/api/marks", marksWindowsRouter);
 app.use("/api/marks", marksSaveRouter);
-app.use("/api/announcement", announceRouter);
 
 // =====================================================
 // ✅ Handle Preflight Requests (OPTIONS)
@@ -1589,6 +1588,88 @@ app.post("/api/save_attendance_ui", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+
+// Simple Announcement API used by AnnouncementDashboard
+app.post('/api/announcement/send', async (req, res) => {
+  try {
+    const { subject, message, messageType, batch_no, domain } = req.body;
+
+    if (!subject || !message) {
+      return res.status(400).json({ success: false, error: 'Missing subject or message' });
+    }
+
+    if (!batch_no && !domain) {
+      return res.status(400).json({ success: false, error: 'batch_no or domain required' });
+    }
+
+    // 1) Find learners by batch_no (primary use-case)
+    let learners = [];
+    if (batch_no) {
+      const { data, error } = await supabase
+        .from('learnersdata')
+        .select('name,email,batchno')
+        .eq('batchno', batch_no);
+
+      if (error) {
+        console.error('Announcement send – learners fetch error:', error);
+        return res.status(500).json({ success: false, error: 'Failed to fetch learners' });
+      }
+      learners = data || [];
+    }
+
+    // Optional: domain support (can be expanded later)
+    if (!learners.length && domain) {
+      const { data, error } = await supabase
+        .from('learnersdata')
+        .select('name,email,batchno,domain')
+        .eq('domain', domain);
+
+      if (error) {
+        console.error('Announcement send – domain learners fetch error:', error);
+        return res.status(500).json({ success: false, error: 'Failed to fetch learners' });
+      }
+      learners = data || [];
+    }
+
+    if (!learners.length) {
+      return res
+        .status(404)
+        .json({ success: false, error: 'No learners found for selection' });
+    }
+
+    // 2) Send emails immediately using existing sendRawEmail helper
+    let sentCount = 0;
+    for (const l of learners) {
+      const to = l.email;
+      const name = l.name || 'Learner';
+
+      const bodyHtml =
+        messageType === 'link'
+          ? `<p>Dear ${name},</p><p>Please check this link: <a href="${message}">${message}</a></p>`
+          : `<p>Dear ${name},</p><p>${message}</p>`;
+
+      try {
+        await sendRawEmail({
+          to,
+          subject,
+          html: bodyHtml,
+        });
+        sentCount += 1;
+      } catch (e) {
+        console.error('Announcement send – failed for', to, e.message);
+        // continue sending to others
+      }
+    }
+
+    return res.json({ success: true, sentTo: sentCount });
+  } catch (e) {
+    console.error('Announcement send – unexpected error:', e);
+    return res
+      .status(500)
+      .json({ success: false, error: 'Internal server error' });
+  }
+});
+
 
 // === save the attendance ===
 app.post("/api/save_attendance", async (req, res) => {

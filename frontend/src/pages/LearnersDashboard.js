@@ -58,12 +58,14 @@ export default function LearnersDashboard({ user, token }) {
   const dropdownSlotProps = {
     paper: {
       sx: {
-        maxHeight: 400,   // taller dropdown
+        maxHeight: 800,   // taller dropdown.
+        maxWidth: 800,
       },
     },
     listbox: {
       sx: {
-        maxHeight: 380,
+        maxHeight: 400,
+        maxWidth: 1000,
       },
     },
   };
@@ -271,7 +273,7 @@ export default function LearnersDashboard({ user, token }) {
   }
 
   const listBoxStyle = {
-    style: { maxHeight: 320, overflowY: "auto" },
+    style: { maxHeight: 320, maxWidth: 1000, overflowY: "auto" },
   };
 
   return (
