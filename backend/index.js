@@ -4258,6 +4258,125 @@ app.get("/api/batch-date-summary/:batch_no", async (req, res) => {
   }
 });
 
+// Weekly date-change report for a batch & week
+// GET /api/weekly-date-report/:batch_no?week_no=2
+app.get("/api/weekly-date-report/:batch_no", async (req, res) => {
+  try {
+    const { batch_no } = req.params;
+    const { week_no } = req.query;
+
+    if (!week_no) {
+      return res
+        .status(400)
+        .json({ error: "week_no query parameter is required" });
+    }
+
+    // 1. topics of this batch + week from course_planner_data
+    const { data: topics, error: topicsError } = await supabase
+      .from("course_planner_data")
+      .select(
+        `
+        id,
+        batch_no,
+        week_no,
+        module_name,
+        topic_name,
+        trainer_name,
+        trainer_email,
+        topic_status,
+        remarks,
+        date,
+        actual_date,
+        date_difference,
+        date_changed_by,
+        date_changed_at
+      `
+      )
+      .eq("batch_no", batch_no)
+      .eq("week_no", week_no)
+      .order("date", { ascending: true });
+
+    if (topicsError) {
+      console.error("Error fetching weekly topics:", topicsError);
+      return res.json({ error: topicsError.message });
+    }
+
+    if (!topics || topics.length === 0) {
+      return res.json([]); // no topics for this batch/week
+    }
+
+    // 2. latest audit entry per topic from date_change_audit
+    const topicIds = topics.map((t) => t.id);
+
+    const { data: audits, error: auditsError } = await supabase
+      .from("date_change_audit")
+      .select(
+        `
+        id,
+        topic_id,
+        batch_no,
+        topic_name,
+        planned_date,
+        actual_date,
+        date_difference,
+        changed_by,
+        changed_at
+      `
+      )
+      .in("topic_id", topicIds)
+      .order("changed_at", { ascending: false });
+
+    if (auditsError) {
+      console.error("Error fetching weekly audits:", auditsError);
+      // continue with topics only
+    }
+
+    const latestAuditByTopic = {};
+    (audits || []).forEach((row) => {
+      if (!latestAuditByTopic[row.topic_id]) {
+        latestAuditByTopic[row.topic_id] = row;
+      }
+    });
+
+    // 3. merge topics + latest audit
+    const result = topics.map((t) => {
+      const audit = latestAuditByTopic[t.id];
+
+      const plannedDate = audit?.planned_date || t.date;
+      const actualDate = audit?.actual_date || t.actual_date || t.date;
+      const diffRaw =
+        audit?.date_difference !== undefined && audit?.date_difference !== null
+          ? audit.date_difference
+          : t.date_difference;
+      const diff = typeof diffRaw === "number" ? diffRaw : 0;
+
+      return {
+        id: audit?.id || t.id,
+        topic_id: t.id,
+        batch_no: t.batch_no,
+        week_no: t.week_no,
+        module_name: t.module_name || "N/A",
+        topic_name: audit?.topic_name || t.topic_name,
+        trainer_name: t.trainer_name || "N/A",
+        trainer_email: t.trainer_email || "N/A",
+        planned_date: plannedDate,
+        actual_date: actualDate,
+        date_difference: diff,
+        topic_status: t.topic_status || "N/A",
+        changed_by: audit?.changed_by || t.date_changed_by || null,
+        changed_at: audit?.changed_at || t.date_changed_at || null,
+        remarks: t.remarks || "",
+      };
+    });
+
+    return res.json(result);
+  } catch (error) {
+    console.error("Error in weekly-date-report:", error);
+    return res.json({ error: error.message });
+  }
+});
+
+
 // Get email content for viewing/editing
 app.get('/api/mail/content', async (req, res) => {
   const { mail_id } = req.query;

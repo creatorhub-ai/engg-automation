@@ -9,6 +9,7 @@ import {
 import DateChangeReport from "./DateChangeReport";
 import MarksExtensionReport from "./MarksExtensionReport";
 import AttendanceReport from "./AttendanceReport"; // <-- create this
+import WeeklyReports from "./WeeklyReports";
 
 export default function ReportsDashboard({ user, token }) {
   const [activeTab, setActiveTab] = useState("date-change");
@@ -46,6 +47,7 @@ export default function ReportsDashboard({ user, token }) {
             label="Attendance Report"
             value="attendance-report"
           />
+          <Tab label="Weekly Reports - CMS" value="weekly-reports" />
         </Tabs>
 
         {/* Content area */}
@@ -58,6 +60,9 @@ export default function ReportsDashboard({ user, token }) {
           )}
           {activeTab === "attendance-report" && (
             <AttendanceReport user={user} token={token} />
+          )}
+          {activeTab === "weekly-reports" && (
+            <WeeklyReports user={user} token={token} />
           )}
         </Box>
       </Paper>

@@ -253,7 +253,7 @@ export default function DateChangeReport({ user, token }) {
         </Box>
 
         <FormControl fullWidth sx={{ mb: 4, maxWidth: 400 }}>
-          <InputLabel>Select Batch</InputLabel>
+          <InputLabel></InputLabel>
           <Select
             value={selectedBatch}
             label="Select Batch"
