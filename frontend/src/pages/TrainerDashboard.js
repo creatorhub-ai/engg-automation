@@ -26,10 +26,6 @@ import {
   Tabs,
   Tab,
   Button,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
 } from "@mui/material";
 import CheckIcon from "@mui/icons-material/Check";
 import { green, orange, red, grey } from "@mui/material/colors";
@@ -310,14 +306,11 @@ function TrainerDashboard({ user, token }) {
   const [allBatchTopics, setAllBatchTopics] = useState([]);
   const [firstIncompleteWeek, setFirstIncompleteWeek] = useState(null);
 
-  // NEW: dialog state for mandatory remarks
-  const [remarksDialogOpen, setRemarksDialogOpen] = useState(false);
-  const [remarksDialogTopic, setRemarksDialogTopic] = useState(null);
-  const [remarksDialogTemp, setRemarksDialogTemp] = useState("");
+  // NEW: track topics where date changed but remarks missing
+  const [blockedTopics, setBlockedTopics] = useState({}); // { [topicId]: true }
 
-  // helper to know which topics are blocked because of missing remarks
-  const isTopicBlockedByRemarks = (topicId) =>
-    remarksDialogTopic && remarksDialogTopic.id === topicId;
+  // popup (Snackbar) when remarks missing
+  const [remarksAlertOpen, setRemarksAlertOpen] = useState(false);
 
   // Load batches
   useEffect(() => {
@@ -345,6 +338,7 @@ function TrainerDashboard({ user, token }) {
       setTopics([]);
       setAllBatchTopics([]);
       setFirstIncompleteWeek(null);
+      setBlockedTopics({});
       return;
     }
 
@@ -454,6 +448,7 @@ function TrainerDashboard({ user, token }) {
           setRemarksMap(newRemarks);
           setActualDatesMap(newActualDates);
           setPendingStatusChanges({});
+          setBlockedTopics({});
           setMessage("");
         } else {
           setTopics([]);
@@ -492,7 +487,9 @@ function TrainerDashboard({ user, token }) {
     setPendingStatusChanges((prev) => ({ ...prev, [topicId]: value }));
   }
 
-  // ====== STATUS CONFIRM WITH REMARKS GUARD ======
+  const isBlocked = (topicId) => !!blockedTopics[topicId];
+
+  // ==== STATUS CONFIRM – blocked if remarks missing after date change ====
   async function handleStatusConfirm(topicId) {
     const newStatus = pendingStatusChanges[topicId];
     if (!newStatus) {
@@ -515,18 +512,19 @@ function TrainerDashboard({ user, token }) {
     const remarks = (remarksMap[topicId] || "").trim();
 
     if (daysDiff !== 0 && !remarks) {
-      // open blocking dialog for remarks
-      setRemarksDialogTopic(topic);
-      setRemarksDialogTemp("");
-      setRemarksDialogOpen(true);
+      // freeze actions and show popup
+      setBlockedTopics((prev) => ({ ...prev, [topicId]: true }));
+      setRemarksAlertOpen(true);
+      setAlertMessage(
+        "Without entering remarks, status / other actions are locked for this topic. Please add remarks and save again."
+      );
+      setAlertSeverity("warning");
       return;
     }
 
-    // normal flow if no date change or remarks already there
     await performStatusUpdate(topicId, newStatus);
   }
 
-  // shared function to actually call API for status update
   async function performStatusUpdate(topicId, newStatus) {
     setTopics((prev) =>
       prev.map((t) => (t.id === topicId ? { ...t, _pending: true } : t))
@@ -599,7 +597,7 @@ function TrainerDashboard({ user, token }) {
     }
   }
 
-  // ====== ACTUAL DATE SAVE WITH POPUP ======
+  // ====== ACTUAL DATE SAVE ======
   async function handleActualDateSave(topicId, actualDate, plannedDate) {
     try {
       if (!plannedDate || !actualDate) {
@@ -613,21 +611,6 @@ function TrainerDashboard({ user, token }) {
       );
 
       const remarks = (remarksMap[topicId] || "").trim();
-
-      if (daysDiff !== 0 && !remarks) {
-        // open dialog and freeze this topic
-        const topic = topics.find((t) => t.id === topicId);
-        setRemarksDialogTopic(topic);
-        setRemarksDialogTemp("");
-        setRemarksDialogOpen(true);
-
-        // reset visible actual date back to original until remarks given
-        setActualDatesMap((prev) => ({
-          ...prev,
-          [topicId]: plannedDate,
-        }));
-        return;
-      }
 
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
       const res = await axios.post(
@@ -649,33 +632,73 @@ function TrainerDashboard({ user, token }) {
           )
         );
 
+        // if date changed and no remarks, freeze further actions & show popup
+        if (daysDiff !== 0 && !remarks) {
+          setBlockedTopics((prev) => ({ ...prev, [topicId]: true }));
+          setRemarksAlertOpen(true);
+          setAlertMessage(
+            "Date has been changed. Without entering remarks, all other actions for this topic are frozen. Add remarks and save them to continue."
+          );
+          setAlertSeverity("warning");
+        }
+
         if (daysDiff > 2) {
           setAlertMessage(
             `⚠️ You are exceeding the topic by ${daysDiff} day(s)!`
           );
           setAlertSeverity("error");
+          setAlertOpen(true);
         } else if (daysDiff > 0) {
           setAlertMessage(
             `Topic completed ${daysDiff} day(s) later than planned.`
           );
           setAlertSeverity("warning");
+          setAlertOpen(true);
         } else if (daysDiff < 0) {
           setAlertMessage(
             `🎉 You finished ${Math.abs(daysDiff)} day(s) earlier!`
           );
           setAlertSeverity("success");
+          setAlertOpen(true);
         } else {
           setAlertMessage(
             "✅ Topic completed on the planned date (On time recorded)."
           );
           setAlertSeverity("success");
+          setAlertOpen(true);
         }
-        setAlertOpen(true);
       } else {
         setMessage("❌ Failed to update actual date");
       }
     } catch {
       setMessage("❌ Error updating actual date");
+    }
+  }
+
+  // remarks save – if previously blocked and now non‑empty, unfreeze
+  async function handleRemarksSave(topicId, value) {
+    const trimmed = (value || "").trim();
+    try {
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await axios.post(
+        `${API_BASE}/api/update-remarks`,
+        {
+          topic_id: topicId,
+          remarks: trimmed,
+        },
+        { headers }
+      );
+      if (res.data && res.data.success) {
+        if (trimmed) {
+          setBlockedTopics((prev) => {
+            const copy = { ...prev };
+            delete copy[topicId];
+            return copy;
+          });
+        }
+      }
+    } catch {
+      // ignore small error
     }
   }
 
@@ -691,45 +714,6 @@ function TrainerDashboard({ user, token }) {
     ? user.role.charAt(0).toUpperCase() + user.role.slice(1)
     : "Trainer";
   const welcomeName = user?.name || "Trainer";
-
-  // ==== dialog handlers ====
-  function handleRemarksDialogCancel() {
-    setRemarksDialogOpen(false);
-    setRemarksDialogTopic(null);
-    setRemarksDialogTemp("");
-  }
-
-  async function handleRemarksDialogSave() {
-    if (!remarksDialogTopic) return;
-    const id = remarksDialogTopic.id;
-    const trimmed = remarksDialogTemp.trim();
-    if (!trimmed) {
-      // keep dialog open
-      return;
-    }
-
-    // save remarks to backend
-    try {
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      await axios.post(
-        `${API_BASE}/api/update-remarks`,
-        {
-          topic_id: id,
-          remarks: trimmed,
-        },
-        { headers }
-      );
-      setRemarksMap((prev) => ({ ...prev, [id]: trimmed }));
-    } catch {
-      // even if API fails, keep dialog so user does not think it's saved
-      return;
-    }
-
-    setRemarksDialogOpen(false);
-    setRemarksDialogTopic(null);
-    setRemarksDialogTemp("");
-    setMessage("✅ Remarks saved for date change. You can proceed now.");
-  }
 
   return (
     <Box
@@ -836,6 +820,12 @@ function TrainerDashboard({ user, token }) {
             </Grid>
           </Grid>
 
+          {Object.keys(topicsByDate).length === 0 && (
+            <Typography variant="body2" color="text.secondary">
+              No topics to display.
+            </Typography>
+          )}
+
           {sortedDates.map((dateKey) => {
             const dateTopics = topicsByDate[dateKey] || [];
             const weekNoForBlock = dateTopics[0]?.week_no || selectedWeek;
@@ -894,7 +884,7 @@ function TrainerDashboard({ user, token }) {
                           t.topic_status
                         );
                         const frozen = isActionFrozen(t);
-                        const blocked = isTopicBlockedByRemarks(t.id);
+                        const blocked = isBlocked(t.id);
                         const editable = weekEditable && !frozen && !blocked;
 
                         return (
@@ -1037,7 +1027,7 @@ function TrainerDashboard({ user, token }) {
                                     : frozen
                                     ? "This topic is completed and cannot be changed"
                                     : blocked
-                                    ? "Please add remarks for the date change to continue"
+                                    ? "Date changed without remarks. Please add remarks to unlock."
                                     : "Change Status"
                                 }
                               >
@@ -1166,6 +1156,24 @@ function TrainerDashboard({ user, token }) {
         </Box>
       )}
 
+      {/* Top‑center alert for date‑change without remarks */}
+      <Snackbar
+        open={remarksAlertOpen}
+        autoHideDuration={6000}
+        onClose={() => setRemarksAlertOpen(false)}
+        anchorOrigin={{ vertical: "top", horizontal: "center" }}
+      >
+        <Alert
+          onClose={() => setRemarksAlertOpen(false)}
+          severity={alertSeverity}
+          sx={{ width: "100%", fontSize: "1rem", fontWeight: "medium" }}
+        >
+          {alertMessage ||
+            "Without entering remarks, other actions will remain frozen for this topic."}
+        </Alert>
+      </Snackbar>
+
+      {/* Existing alert for delay/early messages */}
       <Snackbar
         open={alertOpen}
         autoHideDuration={6000}
@@ -1180,52 +1188,8 @@ function TrainerDashboard({ user, token }) {
           {alertMessage}
         </Alert>
       </Snackbar>
-
-      {/* Remarks mandatory dialog */}
-      <Dialog open={remarksDialogOpen} onClose={handleRemarksDialogCancel}>
-        <DialogTitle>Remarks required for date change</DialogTitle>
-        <DialogContent>
-          <Typography variant="body2" sx={{ mb: 2 }}>
-            The actual date differs from the planned date. Please enter remarks
-            explaining this change. Until you add remarks, further actions for
-            this topic will remain locked.
-          </Typography>
-          <TextField
-            autoFocus
-            fullWidth
-            multiline
-            minRows={2}
-            label="Remarks"
-            value={remarksDialogTemp}
-            onChange={(e) => setRemarksDialogTemp(e.target.value)}
-          />
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={handleRemarksDialogCancel}>Close</Button>
-          <Button
-            variant="contained"
-            onClick={handleRemarksDialogSave}
-            disabled={!remarksDialogTemp.trim()}
-          >
-            Save Remarks
-          </Button>
-        </DialogActions>
-      </Dialog>
     </Box>
   );
-}
-
-// Extra helper still used above
-async function handleRemarksSave(topicId, value) {
-  // kept simple: fire‑and‑forget; main flow uses dialog
-  try {
-    await axios.post(`${API_BASE}/api/update-remarks`, {
-      topic_id: topicId,
-      remarks: value,
-    });
-  } catch {
-    // ignore background error
-  }
 }
 
 export default TrainerDashboard;
