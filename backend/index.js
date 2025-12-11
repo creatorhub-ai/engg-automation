@@ -4259,23 +4259,19 @@ app.get("/api/batch-date-summary/:batch_no", async (req, res) => {
 });
 
 // Weekly date-change report for a batch & week
-// GET /api/weekly-date-report/:batch_no?week_no=2
-app.get("/api/weekly-date-report/:batch_no/pdf", async (req, res) => {
+// ROUTE 1: JSON data for table display (MUST have this first)
+app.get("/api/weekly-date-report/:batch_no", async (req, res) => {
   try {
     const { batch_no } = req.params;
     const { week_no } = req.query;
 
     if (!week_no) {
-      return res
-        .status(400)
-        .json({ error: "week_no query parameter is required" });
+      return res.status(400).json({ error: "week_no query parameter is required" });
     }
 
-    // Fetch data same as the JSON endpoint
     const { data: topics, error: topicsError } = await supabase
       .from("course_planner_data")
-      .select(
-        `
+      .select(`
         id,
         batch_no,
         week_no,
@@ -4290,59 +4286,34 @@ app.get("/api/weekly-date-report/:batch_no/pdf", async (req, res) => {
         date_difference,
         date_changed_by,
         date_changed_at
-      `
-      )
+      `)
       .eq("batch_no", batch_no)
       .eq("week_no", week_no)
       .order("date", { ascending: true });
 
     if (topicsError) {
-      console.error("Error fetching weekly topics for PDF:", topicsError);
+      console.error("Topics error:", topicsError);
       return res.status(500).json({ error: topicsError.message });
     }
 
-    if (!topics || topics.length === 0) {
-      return res.status(404).json({ error: "No data found for this batch/week" });
-    }
+    if (!topics?.length) return res.json([]);
 
-    // Fetch audits
-    const topicIds = topics.map((t) => t.id);
-    const { data: audits, error: auditsError } = await supabase
+    const topicIds = topics.map(t => t.id);
+    const { data: audits } = await supabase
       .from("date_change_audit")
-      .select(
-        `
-        id,
-        topic_id,
-        batch_no,
-        topic_name,
-        planned_date,
-        actual_date,
-        date_difference,
-        changed_by,
-        changed_at
-      `
-      )
+      .select("id, topic_id, batch_no, topic_name, planned_date, actual_date, date_difference, changed_by, changed_at")
       .in("topic_id", topicIds)
       .order("changed_at", { ascending: false });
 
     const latestAuditByTopic = {};
-    (audits || []).forEach((row) => {
+    audits?.forEach(row => {
       if (!latestAuditByTopic[row.topic_id]) {
         latestAuditByTopic[row.topic_id] = row;
       }
     });
 
-    // Build result data
-    const result = topics.map((t) => {
+    const result = topics.map(t => {
       const audit = latestAuditByTopic[t.id];
-      const plannedDate = audit?.planned_date || t.date;
-      const actualDate = audit?.actual_date || t.actual_date || t.date;
-      const diffRaw =
-        audit?.date_difference !== undefined && audit?.date_difference !== null
-          ? audit.date_difference
-          : t.date_difference;
-      const diff = typeof diffRaw === "number" ? diffRaw : 0;
-
       return {
         id: audit?.id || t.id,
         topic_id: t.id,
@@ -4351,10 +4322,9 @@ app.get("/api/weekly-date-report/:batch_no/pdf", async (req, res) => {
         module_name: t.module_name || "N/A",
         topic_name: audit?.topic_name || t.topic_name,
         trainer_name: t.trainer_name || "N/A",
-        trainer_email: t.trainer_email || "N/A",
-        planned_date: plannedDate,
-        actual_date: actualDate,
-        date_difference: diff,
+        planned_date: audit?.planned_date || t.date,
+        actual_date: audit?.actual_date || t.actual_date || t.date,
+        date_difference: Number(audit?.date_difference ?? t.date_difference ?? 0),
         topic_status: t.topic_status || "N/A",
         changed_by: audit?.changed_by || t.date_changed_by || null,
         changed_at: audit?.changed_at || t.date_changed_at || null,
@@ -4362,141 +4332,132 @@ app.get("/api/weekly-date-report/:batch_no/pdf", async (req, res) => {
       };
     });
 
-    // Create PDF
-    const doc = new PDFDocument({ margin: 30, size: "A4", bufferPages: true });
+    res.json(result);
+  } catch (error) {
+    console.error("Weekly report error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
-    // Set response headers
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="Weekly_Report_${batch_no}_Week${week_no}.pdf"`
-    );
+// ROUTE 2: PDF download (install pdfkit first: npm install pdfkit)
+app.get("/api/weekly-date-report/:batch_no/pdf", async (req, res) => {
+  try {
+    const { batch_no } = req.params;
+    const { week_no } = req.query;
 
-    doc.pipe(res);
+    if (!week_no) {
+      return res.status(400).json({ error: "week_no query parameter is required" });
+    }
 
-    // Title
-    doc
-      .fontSize(20)
-      .font("Helvetica-Bold")
-      .text("Weekly Date Change Report", { align: "center" });
+    // Same data fetch as JSON endpoint
+    const { data: topics } = await supabase
+      .from("course_planner_data")
+      .select(`
+        id,
+        batch_no,
+        week_no,
+        module_name,
+        topic_name,
+        trainer_name,
+        trainer_email,
+        topic_status,
+        remarks,
+        date,
+        actual_date,
+        date_difference,
+        date_changed_by,
+        date_changed_at
+      `)
+      .eq("batch_no", batch_no)
+      .eq("week_no", week_no)
+      .order("date", { ascending: true });
 
-    doc.fontSize(10).font("Helvetica").text("", 5);
+    if (!topics?.length) {
+      return res.status(404).json({ error: "No data found" });
+    }
 
-    // Header info
-    doc.fontSize(11).font("Helvetica-Bold").text(`Batch: ${batch_no}`);
-    doc.fontSize(11).font("Helvetica-Bold").text(`Week: ${week_no}`);
-    doc
-      .fontSize(10)
-      .font("Helvetica")
-      .text(
-        `Generated on: ${new Date().toLocaleString("en-IN")}`,
-        { align: "right" },
-        -35
-      );
+    const topicIds = topics.map(t => t.id);
+    const { data: audits } = await supabase
+      .from("date_change_audit")
+      .select("id, topic_id, batch_no, topic_name, planned_date, actual_date, date_difference, changed_by, changed_at")
+      .in("topic_id", topicIds)
+      .order("changed_at", { ascending: false });
 
-    doc.fontSize(10).font("Helvetica").text("", 10);
-
-    // Table headers
-    const columns = [
-      "Module",
-      "Topic",
-      "Planned Date",
-      "Actual Date",
-      "Diff",
-      "Status",
-      "Changed By",
-      "Changed At",
-    ];
-    const colWidths = [70, 90, 70, 70, 45, 70, 70, 80];
-    const startY = doc.y;
-    const pageHeight = doc.page.height;
-    const bottomMargin = 30;
-    const rowHeight = 15;
-    const headerHeight = 20;
-
-    let currentY = startY;
-
-    // Helper: draw table header
-    const drawTableHeader = (y) => {
-      doc.rect(30, y, 515, headerHeight).stroke();
-      let xPos = 30;
-      doc.fontSize(9).font("Helvetica-Bold");
-      columns.forEach((col, i) => {
-        doc.text(col, xPos + 3, y + 3, {
-          width: colWidths[i],
-          height: headerHeight - 6,
-        });
-        xPos += colWidths[i];
-      });
-    };
-
-    // Helper: draw table row
-    const drawTableRow = (data, y) => {
-      doc.rect(30, y, 515, rowHeight).stroke();
-      let xPos = 30;
-      doc.fontSize(8).font("Helvetica");
-      columns.forEach((col, i) => {
-        doc.text(String(data[i] || ""), xPos + 3, y + 3, {
-          width: colWidths[i] - 6,
-          height: rowHeight - 6,
-        });
-        xPos += colWidths[i];
-      });
-    };
-
-    // Draw initial header
-    drawTableHeader(currentY);
-    currentY += headerHeight;
-
-    // Draw rows
-    result.forEach((row) => {
-      // Check if we need new page
-      if (currentY + rowHeight > pageHeight - bottomMargin) {
-        doc.addPage();
-        currentY = 30;
-        drawTableHeader(currentY);
-        currentY += headerHeight;
+    const latestAuditByTopic = {};
+    audits?.forEach(row => {
+      if (!latestAuditByTopic[row.topic_id]) {
+        latestAuditByTopic[row.topic_id] = row;
       }
-
-      const plannedDateStr = new Date(row.planned_date).toLocaleDateString(
-        "en-IN"
-      );
-      const actualDateStr = new Date(row.actual_date).toLocaleDateString(
-        "en-IN"
-      );
-      const diffStr =
-        row.date_difference > 0
-          ? `+${row.date_difference}d`
-          : row.date_difference < 0
-          ? `${row.date_difference}d`
-          : "0d";
-      const changedAtStr = row.changed_at
-        ? new Date(row.changed_at).toLocaleDateString("en-IN")
-        : "-";
-
-      drawTableRow(
-        [
-          row.module_name,
-          row.topic_name,
-          plannedDateStr,
-          actualDateStr,
-          diffStr,
-          row.topic_status,
-          row.changed_by || "N/A",
-          changedAtStr,
-        ],
-        currentY
-      );
-
-      currentY += rowHeight;
     });
 
-    // Footer
-    doc.fontSize(8).text(`Total Records: ${result.length}`, 30, pageHeight - 20);
+    const result = topics.map(t => {
+      const audit = latestAuditByTopic[t.id];
+      return {
+        module_name: t.module_name || "N/A",
+        topic_name: audit?.topic_name || t.topic_name,
+        planned_date: new Date(audit?.planned_date || t.date).toLocaleDateString("en-IN"),
+        actual_date: new Date(audit?.actual_date || t.actual_date || t.date).toLocaleDateString("en-IN"),
+        date_difference: Number(audit?.date_difference ?? t.date_difference ?? 0),
+        topic_status: t.topic_status || "N/A",
+        changed_by: audit?.changed_by || t.date_changed_by || "N/A",
+        changed_at: audit?.changed_at ? new Date(audit.changed_at).toLocaleDateString("en-IN") : "-",
+      };
+    });
+
+    // Generate PDF
+    const doc = new PDFDocument({ margin: 50 });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="Weekly_Report_${batch_no}_Week${week_no}.pdf"`);
+    doc.pipe(res);
+
+    doc.fontSize(24).font("Helvetica-Bold").text("Weekly Date Change Report", 50, 50, { align: "left" });
+    doc.fontSize(12).font("Helvetica").text(`Batch: ${batch_no} | Week: ${week_no}`, 50, 90);
+    doc.fontSize(10).text(`Generated: ${new Date().toLocaleString("en-IN")}`, 400, 90);
+
+    doc.moveDown(2);
+
+    // Table
+    const headers = ["Module", "Topic", "Planned", "Actual", "Diff", "Status", "Changed By", "Changed At"];
+    const widths = [60, 100, 60, 60, 40, 60, 70, 65];
+    
+    let y = doc.y + 20;
+    doc.rect(50, y, 515, 20).stroke();
+    headers.forEach((header, i) => {
+      doc.font("Helvetica-Bold").fontSize(9).text(header, 50 + widths.slice(0, i).reduce((a, b) => a + b, 0) + 3, y + 5);
+    });
+
+    result.forEach((row, i) => {
+      y += 25;
+      if (y > 750) {
+        doc.addPage();
+        y = 80;
+        doc.rect(50, y, 515, 20).stroke();
+        headers.forEach((header, i) => {
+          doc.font("Helvetica-Bold").fontSize(9).text(header, 50 + widths.slice(0, i).reduce((a, b) => a + b, 0) + 3, y + 5);
+        });
+        y += 25;
+      }
+      
+      doc.rect(50, y - 25, 515, 20).stroke();
+      const rowData = [
+        row.module_name,
+        row.topic_name.substring(0, 25) + (row.topic_name.length > 25 ? "..." : ""),
+        row.planned_date,
+        row.actual_date,
+        row.date_difference > 0 ? `+${row.date_difference}` : row.date_difference,
+        row.topic_status,
+        row.changed_by.substring(0, 15),
+        row.changed_at
+      ];
+      
+      rowData.forEach((cell, i) => {
+        doc.font("Helvetica").fontSize(8).text(cell, 50 + widths.slice(0, i).reduce((a, b) => a + b, 0) + 3, y - 20);
+      });
+    });
 
     doc.end();
   } catch (error) {
-    console.error("Error generating PDF:", error);
+    console.error("PDF error:", error);
     res.status(500).json({ error: error.message });
   }
 });
