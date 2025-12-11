@@ -286,7 +286,7 @@ function TrainerUnavailabilityManagerDashboard() {
   );
 }
 
-// --- Main Component
+// --- Main Component ---
 
 function TrainerDashboard({ user, token }) {
   const [batches, setBatches] = useState([]);
@@ -479,6 +479,7 @@ function TrainerDashboard({ user, token }) {
     setPendingStatusChanges((prev) => ({ ...prev, [topicId]: value }));
   }
 
+  // NEW: guard in status confirm – if there is date change but no remarks, block
   async function handleStatusConfirm(topicId) {
     const newStatus = pendingStatusChanges[topicId];
     if (!newStatus) {
@@ -486,10 +487,30 @@ function TrainerDashboard({ user, token }) {
       return;
     }
 
+    const topic = topics.find((t) => t.id === topicId);
+    const plannedDate = topic?.date;
+    const actualDate = actualDatesMap[topicId] || topic?.actual_date || plannedDate;
+    const planned = plannedDate ? new Date(plannedDate) : null;
+    const actual = actualDate ? new Date(actualDate) : null;
+    let daysDiff = 0;
+    if (planned && actual) {
+      daysDiff = Math.round(
+        (actual - planned) / (1000 * 60 * 60 * 24)
+      );
+    }
+
+    const remarks = (remarksMap[topicId] || "").trim();
+
+    // If there is any date change (non‑zero diff) and remarks empty, block
+    if (daysDiff !== 0 && !remarks) {
+      setMessage(
+        "❌ Remarks are mandatory when the actual date is changed. Please fill remarks before updating status."
+      );
+      return;
+    }
+
     setTopics((prev) =>
-      prev.map((t) =>
-        t.id === topicId ? { ...t, _pending: true } : t
-      )
+      prev.map((t) => (t.id === topicId ? { ...t, _pending: true } : t))
     );
 
     try {
@@ -559,37 +580,36 @@ function TrainerDashboard({ user, token }) {
     }
   }
 
-  async function handleRemarksSave(topicId, value) {
-    try {
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const res = await axios.post(
-        `${API_BASE}/api/update-remarks`,
-        {
-          topic_id: topicId,
-          remarks: value,
-        },
-        { headers }
-      );
-      if (res.data && res.data.success) {
-        setMessage("✅ Remarks updated");
-      } else {
-        setMessage("❌ Failed to update remarks");
-      }
-    } catch {
-      setMessage("❌ Error updating remarks");
-    }
-  }
-
-  // IMPORTANT: always write a log row and date_difference, including 0 (on time)
+  // IMPORTANT: enforce remarks when there is a date change
   async function handleActualDateSave(topicId, actualDate, plannedDate) {
     try {
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      if (!plannedDate || !actualDate) {
+        setMessage("❌ Planned date or actual date is missing");
+        return;
+      }
+
       const planned = new Date(plannedDate);
       const actual = new Date(actualDate);
       const daysDiff = Math.round(
         (actual - planned) / (1000 * 60 * 60 * 24)
       );
 
+      const remarks = (remarksMap[topicId] || "").trim();
+
+      // If date actually changed (non‑zero), require remarks
+      if (daysDiff !== 0 && !remarks) {
+        setMessage(
+          "❌ Remarks are mandatory when there is a date change. Please enter remarks before saving the actual date."
+        );
+        // reset actual date back to planned to avoid partial inconsistent state
+        setActualDatesMap((prev) => ({
+          ...prev,
+          [topicId]: plannedDate,
+        }));
+        return;
+      }
+
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
       const res = await axios.post(
         `${API_BASE}/api/update-actual-date`,
         {
@@ -625,7 +645,6 @@ function TrainerDashboard({ user, token }) {
           );
           setAlertSeverity("success");
         } else {
-          // this is the on‑time case that needs to be logged and counted
           setAlertMessage(
             "✅ Topic completed on the planned date (On time recorded)."
           );
@@ -822,8 +841,7 @@ function TrainerDashboard({ user, token }) {
                           <TableRow
                             key={t.id}
                             sx={{
-                              backgroundColor:
-                                grey[50],
+                              backgroundColor: grey[50],
                               transition: "background-color 0.3s",
                               "&:hover": {
                                 backgroundColor: "#bbdefb",
