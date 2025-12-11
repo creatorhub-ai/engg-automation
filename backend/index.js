@@ -4349,7 +4349,6 @@ app.get("/api/weekly-date-report/:batch_no/pdf", async (req, res) => {
       return res.status(400).json({ error: "week_no query parameter is required" });
     }
 
-    // Fetch data
     const { data: topics } = await supabase
       .from("course_planner_data")
       .select(`
@@ -4390,7 +4389,7 @@ app.get("/api/weekly-date-report/:batch_no/pdf", async (req, res) => {
       }
     });
 
-    const result = topics.map(t => {
+    const rows = topics.map(t => {
       const audit = latestAuditByTopic[t.id];
       return {
         module_name: t.module_name || "N/A",
@@ -4404,152 +4403,150 @@ app.get("/api/weekly-date-report/:batch_no/pdf", async (req, res) => {
       };
     });
 
-    // Generate PDF with styling
     const doc = new PDFDocument({ margin: 40 });
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename="Weekly_Report_${batch_no}_Week${week_no}.pdf"`);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="Weekly_Report_${batch_no}_Week${week_no}.pdf"`
+    );
     doc.pipe(res);
 
-    // ==================== HEADER SECTION ====================
-    // Colored background box
-    doc.rect(40, 40, 515, 80).fill("#1f5a6b"); // Teal background
-
-    // Title (white)
-    doc.fontSize(24).font("Helvetica-Bold").fillColor("white").text("Weekly Date Change Report", 50, 55);
-    
-    // Batch & Week info (light gray)
-    doc.fontSize(11).font("Helvetica").fillColor("#e8f4f8").text(`Batch: ${batch_no}  |  Week: ${week_no}`, 50, 85);
-    
-    // Generated date (light gray, right aligned)
-    doc.fontSize(9).font("Helvetica").fillColor("#e8f4f8").text(
-      `Generated: ${new Date().toLocaleString("en-IN")}`,
-      380,
-      85,
-      { align: "right" }
-    );
-
-    // Reset to black text
+    // Header band
+    doc.rect(40, 40, 515, 80).fill("#1f5a6b");
+    doc.fontSize(24).font("Helvetica-Bold").fillColor("white")
+      .text("Weekly Date Change Report", 50, 55);
+    doc.fontSize(11).font("Helvetica").fillColor("#e8f4f8")
+      .text(`Batch: ${batch_no}  |  Week: ${week_no}`, 50, 85);
+    doc.fontSize(9).font("Helvetica").fillColor("#e8f4f8")
+      .text(`Generated: ${new Date().toLocaleString("en-IN")}`, 380, 85, { align: "right" });
     doc.fillColor("#000000");
 
-    // ==================== TABLE SECTION ====================
     doc.moveDown(3);
-    
+
+    // Wider columns + wrapping for Module / Topic
     const headers = ["Module", "Topic", "Planned", "Actual", "Difference", "Status", "Changed By", "Date"];
-    const widths = [60, 100, 55, 55, 60, 60, 70, 55];
-    const pageWidth = 595;
+    const colWidths = [80, 150, 55, 55, 60, 55, 70, 50]; // wider Module/Topic
+    const tableWidth = colWidths.reduce((a, b) => a + b, 0);
     const margin = 40;
-    const tableWidth = 515;
-    
     let y = doc.y + 15;
 
-    // ===== HEADER ROW =====
-    doc.rect(margin, y, tableWidth, 22).fill("#2d7a8a"); // Dark teal header
-    doc.fontSize(10).font("Helvetica-Bold").fillColor("white");
-    
-    let xPos = margin + 5;
-    headers.forEach((header, i) => {
-      doc.text(header, xPos, y + 6, {
-        width: widths[i] - 8,
-        height: 20,
-        valign: "center"
+    const rowPaddingY = 6;
+
+    const drawHeader = () => {
+      doc.rect(margin, y, tableWidth, 22).fill("#2d7a8a");
+      doc.fontSize(10).font("Helvetica-Bold").fillColor("white");
+      let x = margin + 5;
+      headers.forEach((h, i) => {
+        doc.text(h, x, y + 6, { width: colWidths[i] - 8 });
+        x += colWidths[i];
       });
-      xPos += widths[i];
-    });
+      doc.fillColor("#000000");
+      y += 22;
+    };
 
-    y += 22;
-
-    // ===== DATA ROWS =====
-    result.forEach((row, idx) => {
-      // Check if need new page
-      if (y > 750) {
+    const ensureSpace = (rowHeight) => {
+      if (y + rowHeight > 780) {
         doc.addPage();
         y = 40;
-        
-        // Redraw header on new page
-        doc.rect(margin, y, tableWidth, 22).fill("#2d7a8a");
-        doc.fontSize(10).font("Helvetica-Bold").fillColor("white");
-        let xPos = margin + 5;
-        headers.forEach((header, i) => {
-          doc.text(header, xPos, y + 6, {
-            width: widths[i] - 8,
-            height: 20,
-            valign: "center"
-          });
-          xPos += widths[i];
-        });
-        y += 22;
+        drawHeader();
       }
+    };
 
-      // Alternating row background colors
-      const bgColor = idx % 2 === 0 ? "#f9f9f9" : "#ffffff";
-      doc.rect(margin, y, tableWidth, 20).fill(bgColor);
-      doc.stroke("#d0d0d0"); // Light border
+    drawHeader();
 
-      // Reset text color to black
-      doc.fillColor("#000000");
+    rows.forEach((row, idx) => {
+      // Estimate multi-line height for module & topic
       doc.fontSize(9).font("Helvetica");
-
-      // Row data
-      xPos = margin + 5;
-      
-      // Module
-      doc.text(row.module_name.substring(0, 12), xPos, y + 5, { width: widths[0] - 8 });
-      xPos += widths[0];
-
-      // Topic
-      doc.text(row.topic_name.substring(0, 20) + (row.topic_name.length > 20 ? "..." : ""), xPos, y + 5, { width: widths[1] - 8 });
-      xPos += widths[1];
-
-      // Planned Date
-      doc.text(row.planned_date, xPos, y + 5, { width: widths[2] - 8, align: "center" });
-      xPos += widths[2];
-
-      // Actual Date
-      doc.text(row.actual_date, xPos, y + 5, { width: widths[3] - 8, align: "center" });
-      xPos += widths[3];
-
-      // ===== DIFFERENCE WITH COLOR BADGE =====
-      const diffValue = row.date_difference;
-      const diffStr = diffValue > 0 ? `+${diffValue}` : diffValue < 0 ? `${diffValue}` : "0";
-      const badgeBgColor = diffValue > 0 ? "#ff9800" : diffValue < 0 ? "#4caf50" : "#9e9e9e"; // Orange, Green, Gray
-      const badgeTextColor = "#ffffff";
-
-      // Draw badge background
-      doc.rect(xPos + 5, y + 4, 50, 12).fill(badgeBgColor);
-      doc.fillColor(badgeTextColor);
-      doc.fontSize(8).font("Helvetica-Bold").text(diffStr + " d", xPos + 5, y + 5, {
-        width: 50,
-        align: "center",
-        valign: "center"
+      const moduleHeight = doc.heightOfString(row.module_name, {
+        width: colWidths[0] - 8,
       });
-      doc.fillColor("#000000");
-      xPos += widths[4];
+      const topicHeight = doc.heightOfString(row.topic_name, {
+        width: colWidths[1] - 8,
+      });
+      const contentHeight = Math.max(moduleHeight, topicHeight, 10);
+      const rowHeight = contentHeight + rowPaddingY * 2;
+
+      ensureSpace(rowHeight);
+
+      const bg = idx % 2 === 0 ? "#f9f9f9" : "#ffffff";
+      doc.rect(margin, y, tableWidth, rowHeight).fill(bg).stroke("#d0d0d0");
+      let x = margin + 5;
+      const textY = y + rowPaddingY;
+
+      // Module (wrapped)
+      doc.fillColor("#000000").text(row.module_name, x, textY, {
+        width: colWidths[0] - 8,
+      });
+      x += colWidths[0];
+
+      // Topic (wrapped)
+      doc.text(row.topic_name, x, textY, {
+        width: colWidths[1] - 8,
+      });
+      x += colWidths[1];
+
+      // Planned
+      doc.text(row.planned_date, x, textY, {
+        width: colWidths[2] - 8,
+        align: "center",
+      });
+      x += colWidths[2];
+
+      // Actual
+      doc.text(row.actual_date, x, textY, {
+        width: colWidths[3] - 8,
+        align: "center",
+      });
+      x += colWidths[3];
+
+      // Difference badge
+      const diff = row.date_difference;
+      const diffStr = diff > 0 ? `+${diff} d` : diff < 0 ? `${diff} d` : "0 d";
+      const badgeBg =
+        diff > 0 ? "#ff9800" : diff < 0 ? "#4caf50" : "#9e9e9e";
+      doc.rect(x + 5, textY, 50, 12).fill(badgeBg);
+      doc.fillColor("#ffffff").fontSize(8).font("Helvetica-Bold").text(
+        diffStr,
+        x + 5,
+        textY + 2,
+        { width: 50, align: "center" }
+      );
+      doc.fillColor("#000000").fontSize(9).font("Helvetica");
+      x += colWidths[4];
 
       // Status
-      doc.fontSize(9).font("Helvetica").text(row.topic_status.substring(0, 12), xPos, y + 5, { width: widths[5] - 8, align: "center" });
-      xPos += widths[5];
+      doc.text(row.topic_status, x, textY, {
+        width: colWidths[5] - 8,
+        align: "center",
+      });
+      x += colWidths[5];
 
       // Changed By
-      doc.text(row.changed_by.substring(0, 10), xPos, y + 5, { width: widths[6] - 8, align: "center" });
-      xPos += widths[6];
+      doc.text(row.changed_by, x, textY, {
+        width: colWidths[6] - 8,
+        align: "center",
+      });
+      x += colWidths[6];
 
-      // Changed At
-      doc.text(row.changed_at, xPos, y + 5, { width: widths[7] - 8, align: "center" });
+      // Date
+      doc.text(row.changed_at, x, textY, {
+        width: colWidths[7] - 8,
+        align: "center",
+      });
 
-      y += 20;
+      y += rowHeight;
     });
 
-    // ===== FOOTER =====
-    doc.fontSize(8).font("Helvetica").fillColor("#888888").text(
-      `Total Records: ${result.length}  |  Page generated on ${new Date().toLocaleString("en-IN")}`,
+    doc.fontSize(8).fillColor("#888888").text(
+      `Total Records: ${rows.length}`,
       margin,
-      750
+      780
     );
 
     doc.end();
-  } catch (error) {
-    console.error("PDF error:", error);
-    res.status(500).json({ error: error.message });
+  } catch (err) {
+    console.error("PDF error:", err);
+    res.status(500).json({ error: err.message });
   }
 });
 
