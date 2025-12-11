@@ -332,15 +332,11 @@ export default function DateChangeReport({ user, token }) {
               <Grid item xs={12} sm={6} md={3}>
                 <Card sx={{ bgcolor: "#e3f2fd", height: "100%" }}>
                   <CardContent>
-                    <Typography
-                      color="text.secondary"
-                      gutterBottom
-                      variant="body2"
-                    >
+                    <Typography color="text.secondary" gutterBottom variant="body2">
                       On Time
                     </Typography>
                     <Typography variant="h3" color="primary.main">
-                      {batchSummary.ontime_count || 0}
+                      {batchSummary?.ontime_count || 0}
                     </Typography>
                     <Typography variant="caption" color="text.secondary">
                       Completed as planned

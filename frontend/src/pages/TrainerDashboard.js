@@ -573,9 +573,14 @@ function TrainerDashboard({ user, token }) {
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
       const planned = new Date(plannedDate);
       const actual = new Date(actualDate);
-      const daysDiff = Math.round(
-        (actual - planned) / (1000 * 60 * 60 * 24)
-      );
+      const daysDiff = Math.round((actual - planned) / (1000 * 60 * 60 * 24));
+
+      // Only save if actual date differs from planned OR no actual_date exists
+      if (actualDate === plannedDate && actualDatesMap[topicId] !== undefined) {
+        setMessage("✅ No change needed - already on time");
+        return;
+      }
+
       const res = await axios.post(
         `${API_BASE}/api/update-actual-date`,
         {
@@ -585,6 +590,7 @@ function TrainerDashboard({ user, token }) {
         },
         { headers }
       );
+
       if (res.data && res.data.success) {
         setTopics((prev) =>
           prev.map((t) =>
@@ -593,21 +599,18 @@ function TrainerDashboard({ user, token }) {
               : t
           )
         );
+
         if (daysDiff > 2) {
           setAlertMessage(`⚠️ You are exceeding the topic by ${daysDiff} days!`);
           setAlertSeverity("error");
         } else if (daysDiff > 0) {
-          setAlertMessage(
-            `Topic completed ${daysDiff} day(s) later than planned.`
-          );
+          setAlertMessage(`Topic completed ${daysDiff} day(s) later than planned.`);
           setAlertSeverity("warning");
         } else if (daysDiff < 0) {
-          setAlertMessage(
-            `🎉 You finished ${Math.abs(daysDiff)} day(s) earlier!`
-          );
+          setAlertMessage(`🎉 You finished ${Math.abs(daysDiff)} day(s) earlier!`);
           setAlertSeverity("success");
         } else {
-          setAlertMessage("✅ Topic completed on the planned date.");
+          setAlertMessage("✅ Topic completed on the planned date (On time recorded).");
           setAlertSeverity("success");
         }
         setAlertOpen(true);
@@ -875,33 +878,16 @@ function TrainerDashboard({ user, token }) {
                             <TableCell align="center">
                               {daysDiff !== 0 ? (
                                 <Chip
-                                  label={
-                                    daysDiff > 0
-                                      ? `+${daysDiff} days`
-                                      : `${daysDiff} days`
-                                  }
+                                  label={daysDiff > 0 ? `+${daysDiff} days` : `${daysDiff} days`}
                                   size="small"
                                   sx={{
                                     fontWeight: "600",
-                                    bgcolor:
-                                      daysDiff > 2
-                                        ? red[100]
-                                        : daysDiff > 0
-                                        ? orange[100]
-                                        : green[100],
-                                    color:
-                                      daysDiff > 2
-                                        ? red[700]
-                                        : daysDiff > 0
-                                        ? orange[700]
-                                        : green[700],
+                                    bgcolor: daysDiff > 2 ? red[100] : daysDiff > 0 ? orange[100] : green[100],
+                                    color: daysDiff > 2 ? red[700] : daysDiff > 0 ? orange[700] : green[700],
                                   }}
                                 />
                               ) : (
-                                <Typography
-                                  variant="caption"
-                                  color="text.disabled"
-                                >
+                                <Typography variant="caption" color="success.main" fontWeight="bold">
                                   On time
                                 </Typography>
                               )}
