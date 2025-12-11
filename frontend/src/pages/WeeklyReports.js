@@ -19,7 +19,9 @@ import {
   Chip,
   CircularProgress,
   Alert,
+  Button,
 } from "@mui/material";
+import FileDownloadIcon from "@mui/icons-material/FileDownload";
 
 const API_BASE =
   process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
@@ -31,6 +33,7 @@ export default function WeeklyReports({ user, token }) {
   const [selectedWeek, setSelectedWeek] = useState("");
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState("");
 
   // load distinct batches
@@ -92,8 +95,6 @@ export default function WeeklyReports({ user, token }) {
       setError("");
       try {
         const headers = token ? { Authorization: `Bearer ${token}` } : {};
-        // reuse your weekly topics API and filter in backend by week_no
-        // create endpoint /api/weekly-date-report/:batch_no?week_no=x
         const res = await axios.get(
           `${API_BASE}/api/weekly-date-report/${selectedBatch}`,
           {
@@ -114,6 +115,45 @@ export default function WeeklyReports({ user, token }) {
     loadWeeklyReport();
   }, [selectedBatch, selectedWeek, token]);
 
+  // handle PDF download
+  const handleDownloadPDF = async () => {
+    if (!selectedBatch || !selectedWeek) {
+      alert("Please select a batch and week first");
+      return;
+    }
+
+    setDownloading(true);
+    try {
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const response = await axios.get(
+        `${API_BASE}/api/weekly-date-report/${selectedBatch}/pdf`,
+        {
+          headers,
+          params: { week_no: selectedWeek },
+          responseType: "blob",
+        }
+      );
+
+      // create blob and download
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute(
+        "download",
+        `Weekly_Report_${selectedBatch}_Week${selectedWeek}.pdf`
+      );
+      document.body.appendChild(link);
+      link.click();
+      link.parentNode.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Error downloading PDF:", err);
+      alert("Error downloading PDF");
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   const roleTitle = user?.role
     ? user.role.charAt(0).toUpperCase() + user.role.slice(1)
     : "Admin";
@@ -121,13 +161,34 @@ export default function WeeklyReports({ user, token }) {
 
   return (
     <Box sx={{ maxWidth: 1600, mx: "auto", my: 2 }}>
-      <Typography variant="h5" color="primary" gutterBottom>
-        Weekly Reports - CMS
-      </Typography>
-      <Typography variant="subtitle2" color="text.secondary" mb={2}>
-        Hello {welcomeName}, view date change statistics week‑wise for each
-        batch.
-      </Typography>
+      <Box
+        sx={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          mb: 2,
+        }}
+      >
+        <Box>
+          <Typography variant="h5" color="primary" gutterBottom>
+            Weekly Reports - CMS
+          </Typography>
+          <Typography variant="subtitle2" color="text.secondary">
+            Hello {welcomeName}, view date change statistics week‑wise for each
+            batch.
+          </Typography>
+        </Box>
+        <Button
+          variant="contained"
+          color="primary"
+          startIcon={<FileDownloadIcon />}
+          onClick={handleDownloadPDF}
+          disabled={!selectedBatch || !selectedWeek || downloading || loading}
+          sx={{ mt: 1 }}
+        >
+          {downloading ? "Downloading..." : "Download PDF"}
+        </Button>
+      </Box>
 
       <Grid container spacing={3} mb={3}>
         <Grid item xs={12} sm={6} md={4}>
@@ -209,10 +270,7 @@ export default function WeeklyReports({ user, token }) {
                 {rows.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={8} align="center" sx={{ py: 3 }}>
-                      <Typography
-                        variant="body2"
-                        color="text.secondary"
-                      >
+                      <Typography variant="body2" color="text.secondary">
                         No date changes recorded for this batch and week.
                       </Typography>
                     </TableCell>
@@ -269,10 +327,12 @@ export default function WeeklyReports({ user, token }) {
                       {row.changed_by || "N/A"}
                     </TableCell>
                     <TableCell align="center">
-                      {new Date(row.changed_at).toLocaleString("en-IN", {
-                        dateStyle: "short",
-                        timeStyle: "short",
-                      })}
+                      {row.changed_at
+                        ? new Date(row.changed_at).toLocaleString("en-IN", {
+                            dateStyle: "short",
+                            timeStyle: "short",
+                          })
+                        : "-"}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -285,8 +345,7 @@ export default function WeeklyReports({ user, token }) {
       {!loading && (!selectedBatch || !selectedWeek) && (
         <Box mt={3}>
           <Typography variant="body2" color="text.secondary">
-            Please select a batch and week to view weekly date‑change
-            details.
+            Please select a batch and week to view weekly date‑change details.
           </Typography>
         </Box>
       )}

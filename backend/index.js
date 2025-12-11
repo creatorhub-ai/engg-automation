@@ -4260,7 +4260,7 @@ app.get("/api/batch-date-summary/:batch_no", async (req, res) => {
 
 // Weekly date-change report for a batch & week
 // GET /api/weekly-date-report/:batch_no?week_no=2
-app.get("/api/weekly-date-report/:batch_no", async (req, res) => {
+app.get("/api/weekly-date-report/:batch_no/pdf", async (req, res) => {
   try {
     const { batch_no } = req.params;
     const { week_no } = req.query;
@@ -4271,7 +4271,7 @@ app.get("/api/weekly-date-report/:batch_no", async (req, res) => {
         .json({ error: "week_no query parameter is required" });
     }
 
-    // 1. topics of this batch + week from course_planner_data
+    // Fetch data same as the JSON endpoint
     const { data: topics, error: topicsError } = await supabase
       .from("course_planner_data")
       .select(
@@ -4297,17 +4297,16 @@ app.get("/api/weekly-date-report/:batch_no", async (req, res) => {
       .order("date", { ascending: true });
 
     if (topicsError) {
-      console.error("Error fetching weekly topics:", topicsError);
-      return res.json({ error: topicsError.message });
+      console.error("Error fetching weekly topics for PDF:", topicsError);
+      return res.status(500).json({ error: topicsError.message });
     }
 
     if (!topics || topics.length === 0) {
-      return res.json([]); // no topics for this batch/week
+      return res.status(404).json({ error: "No data found for this batch/week" });
     }
 
-    // 2. latest audit entry per topic from date_change_audit
+    // Fetch audits
     const topicIds = topics.map((t) => t.id);
-
     const { data: audits, error: auditsError } = await supabase
       .from("date_change_audit")
       .select(
@@ -4326,11 +4325,6 @@ app.get("/api/weekly-date-report/:batch_no", async (req, res) => {
       .in("topic_id", topicIds)
       .order("changed_at", { ascending: false });
 
-    if (auditsError) {
-      console.error("Error fetching weekly audits:", auditsError);
-      // continue with topics only
-    }
-
     const latestAuditByTopic = {};
     (audits || []).forEach((row) => {
       if (!latestAuditByTopic[row.topic_id]) {
@@ -4338,10 +4332,9 @@ app.get("/api/weekly-date-report/:batch_no", async (req, res) => {
       }
     });
 
-    // 3. merge topics + latest audit
+    // Build result data
     const result = topics.map((t) => {
       const audit = latestAuditByTopic[t.id];
-
       const plannedDate = audit?.planned_date || t.date;
       const actualDate = audit?.actual_date || t.actual_date || t.date;
       const diffRaw =
@@ -4369,10 +4362,142 @@ app.get("/api/weekly-date-report/:batch_no", async (req, res) => {
       };
     });
 
-    return res.json(result);
+    // Create PDF
+    const doc = new PDFDocument({ margin: 30, size: "A4", bufferPages: true });
+
+    // Set response headers
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="Weekly_Report_${batch_no}_Week${week_no}.pdf"`
+    );
+
+    doc.pipe(res);
+
+    // Title
+    doc
+      .fontSize(20)
+      .font("Helvetica-Bold")
+      .text("Weekly Date Change Report", { align: "center" });
+
+    doc.fontSize(10).font("Helvetica").text("", 5);
+
+    // Header info
+    doc.fontSize(11).font("Helvetica-Bold").text(`Batch: ${batch_no}`);
+    doc.fontSize(11).font("Helvetica-Bold").text(`Week: ${week_no}`);
+    doc
+      .fontSize(10)
+      .font("Helvetica")
+      .text(
+        `Generated on: ${new Date().toLocaleString("en-IN")}`,
+        { align: "right" },
+        -35
+      );
+
+    doc.fontSize(10).font("Helvetica").text("", 10);
+
+    // Table headers
+    const columns = [
+      "Module",
+      "Topic",
+      "Planned Date",
+      "Actual Date",
+      "Diff",
+      "Status",
+      "Changed By",
+      "Changed At",
+    ];
+    const colWidths = [70, 90, 70, 70, 45, 70, 70, 80];
+    const startY = doc.y;
+    const pageHeight = doc.page.height;
+    const bottomMargin = 30;
+    const rowHeight = 15;
+    const headerHeight = 20;
+
+    let currentY = startY;
+
+    // Helper: draw table header
+    const drawTableHeader = (y) => {
+      doc.rect(30, y, 515, headerHeight).stroke();
+      let xPos = 30;
+      doc.fontSize(9).font("Helvetica-Bold");
+      columns.forEach((col, i) => {
+        doc.text(col, xPos + 3, y + 3, {
+          width: colWidths[i],
+          height: headerHeight - 6,
+        });
+        xPos += colWidths[i];
+      });
+    };
+
+    // Helper: draw table row
+    const drawTableRow = (data, y) => {
+      doc.rect(30, y, 515, rowHeight).stroke();
+      let xPos = 30;
+      doc.fontSize(8).font("Helvetica");
+      columns.forEach((col, i) => {
+        doc.text(String(data[i] || ""), xPos + 3, y + 3, {
+          width: colWidths[i] - 6,
+          height: rowHeight - 6,
+        });
+        xPos += colWidths[i];
+      });
+    };
+
+    // Draw initial header
+    drawTableHeader(currentY);
+    currentY += headerHeight;
+
+    // Draw rows
+    result.forEach((row) => {
+      // Check if we need new page
+      if (currentY + rowHeight > pageHeight - bottomMargin) {
+        doc.addPage();
+        currentY = 30;
+        drawTableHeader(currentY);
+        currentY += headerHeight;
+      }
+
+      const plannedDateStr = new Date(row.planned_date).toLocaleDateString(
+        "en-IN"
+      );
+      const actualDateStr = new Date(row.actual_date).toLocaleDateString(
+        "en-IN"
+      );
+      const diffStr =
+        row.date_difference > 0
+          ? `+${row.date_difference}d`
+          : row.date_difference < 0
+          ? `${row.date_difference}d`
+          : "0d";
+      const changedAtStr = row.changed_at
+        ? new Date(row.changed_at).toLocaleDateString("en-IN")
+        : "-";
+
+      drawTableRow(
+        [
+          row.module_name,
+          row.topic_name,
+          plannedDateStr,
+          actualDateStr,
+          diffStr,
+          row.topic_status,
+          row.changed_by || "N/A",
+          changedAtStr,
+        ],
+        currentY
+      );
+
+      currentY += rowHeight;
+    });
+
+    // Footer
+    doc.fontSize(8).text(`Total Records: ${result.length}`, 30, pageHeight - 20);
+
+    doc.end();
   } catch (error) {
-    console.error("Error in weekly-date-report:", error);
-    return res.json({ error: error.message });
+    console.error("Error generating PDF:", error);
+    res.status(500).json({ error: error.message });
   }
 });
 
