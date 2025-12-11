@@ -4349,7 +4349,7 @@ app.get("/api/weekly-date-report/:batch_no/pdf", async (req, res) => {
       return res.status(400).json({ error: "week_no query parameter is required" });
     }
 
-    // Same data fetch as JSON endpoint
+    // Fetch data
     const { data: topics } = await supabase
       .from("course_planner_data")
       .select(`
@@ -4404,56 +4404,147 @@ app.get("/api/weekly-date-report/:batch_no/pdf", async (req, res) => {
       };
     });
 
-    // Generate PDF
-    const doc = new PDFDocument({ margin: 50 });
+    // Generate PDF with styling
+    const doc = new PDFDocument({ margin: 40 });
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="Weekly_Report_${batch_no}_Week${week_no}.pdf"`);
     doc.pipe(res);
 
-    doc.fontSize(24).font("Helvetica-Bold").text("Weekly Date Change Report", 50, 50, { align: "left" });
-    doc.fontSize(12).font("Helvetica").text(`Batch: ${batch_no} | Week: ${week_no}`, 50, 90);
-    doc.fontSize(10).text(`Generated: ${new Date().toLocaleString("en-IN")}`, 400, 90);
+    // ==================== HEADER SECTION ====================
+    // Colored background box
+    doc.rect(40, 40, 515, 80).fill("#1f5a6b"); // Teal background
 
-    doc.moveDown(2);
-
-    // Table
-    const headers = ["Module", "Topic", "Planned", "Actual", "Diff", "Status", "Changed By", "Changed At"];
-    const widths = [60, 100, 60, 60, 40, 60, 70, 65];
+    // Title (white)
+    doc.fontSize(24).font("Helvetica-Bold").fillColor("white").text("Weekly Date Change Report", 50, 55);
     
-    let y = doc.y + 20;
-    doc.rect(50, y, 515, 20).stroke();
+    // Batch & Week info (light gray)
+    doc.fontSize(11).font("Helvetica").fillColor("#e8f4f8").text(`Batch: ${batch_no}  |  Week: ${week_no}`, 50, 85);
+    
+    // Generated date (light gray, right aligned)
+    doc.fontSize(9).font("Helvetica").fillColor("#e8f4f8").text(
+      `Generated: ${new Date().toLocaleString("en-IN")}`,
+      380,
+      85,
+      { align: "right" }
+    );
+
+    // Reset to black text
+    doc.fillColor("#000000");
+
+    // ==================== TABLE SECTION ====================
+    doc.moveDown(3);
+    
+    const headers = ["Module", "Topic", "Planned", "Actual", "Difference", "Status", "Changed By", "Date"];
+    const widths = [60, 100, 55, 55, 60, 60, 70, 55];
+    const pageWidth = 595;
+    const margin = 40;
+    const tableWidth = 515;
+    
+    let y = doc.y + 15;
+
+    // ===== HEADER ROW =====
+    doc.rect(margin, y, tableWidth, 22).fill("#2d7a8a"); // Dark teal header
+    doc.fontSize(10).font("Helvetica-Bold").fillColor("white");
+    
+    let xPos = margin + 5;
     headers.forEach((header, i) => {
-      doc.font("Helvetica-Bold").fontSize(9).text(header, 50 + widths.slice(0, i).reduce((a, b) => a + b, 0) + 3, y + 5);
+      doc.text(header, xPos, y + 6, {
+        width: widths[i] - 8,
+        height: 20,
+        valign: "center"
+      });
+      xPos += widths[i];
     });
 
-    result.forEach((row, i) => {
-      y += 25;
+    y += 22;
+
+    // ===== DATA ROWS =====
+    result.forEach((row, idx) => {
+      // Check if need new page
       if (y > 750) {
         doc.addPage();
-        y = 80;
-        doc.rect(50, y, 515, 20).stroke();
+        y = 40;
+        
+        // Redraw header on new page
+        doc.rect(margin, y, tableWidth, 22).fill("#2d7a8a");
+        doc.fontSize(10).font("Helvetica-Bold").fillColor("white");
+        let xPos = margin + 5;
         headers.forEach((header, i) => {
-          doc.font("Helvetica-Bold").fontSize(9).text(header, 50 + widths.slice(0, i).reduce((a, b) => a + b, 0) + 3, y + 5);
+          doc.text(header, xPos, y + 6, {
+            width: widths[i] - 8,
+            height: 20,
+            valign: "center"
+          });
+          xPos += widths[i];
         });
-        y += 25;
+        y += 22;
       }
+
+      // Alternating row background colors
+      const bgColor = idx % 2 === 0 ? "#f9f9f9" : "#ffffff";
+      doc.rect(margin, y, tableWidth, 20).fill(bgColor);
+      doc.stroke("#d0d0d0"); // Light border
+
+      // Reset text color to black
+      doc.fillColor("#000000");
+      doc.fontSize(9).font("Helvetica");
+
+      // Row data
+      xPos = margin + 5;
       
-      doc.rect(50, y - 25, 515, 20).stroke();
-      const rowData = [
-        row.module_name,
-        row.topic_name.substring(0, 25) + (row.topic_name.length > 25 ? "..." : ""),
-        row.planned_date,
-        row.actual_date,
-        row.date_difference > 0 ? `+${row.date_difference}` : row.date_difference,
-        row.topic_status,
-        row.changed_by.substring(0, 15),
-        row.changed_at
-      ];
-      
-      rowData.forEach((cell, i) => {
-        doc.font("Helvetica").fontSize(8).text(cell, 50 + widths.slice(0, i).reduce((a, b) => a + b, 0) + 3, y - 20);
+      // Module
+      doc.text(row.module_name.substring(0, 12), xPos, y + 5, { width: widths[0] - 8 });
+      xPos += widths[0];
+
+      // Topic
+      doc.text(row.topic_name.substring(0, 20) + (row.topic_name.length > 20 ? "..." : ""), xPos, y + 5, { width: widths[1] - 8 });
+      xPos += widths[1];
+
+      // Planned Date
+      doc.text(row.planned_date, xPos, y + 5, { width: widths[2] - 8, align: "center" });
+      xPos += widths[2];
+
+      // Actual Date
+      doc.text(row.actual_date, xPos, y + 5, { width: widths[3] - 8, align: "center" });
+      xPos += widths[3];
+
+      // ===== DIFFERENCE WITH COLOR BADGE =====
+      const diffValue = row.date_difference;
+      const diffStr = diffValue > 0 ? `+${diffValue}` : diffValue < 0 ? `${diffValue}` : "0";
+      const badgeBgColor = diffValue > 0 ? "#ff9800" : diffValue < 0 ? "#4caf50" : "#9e9e9e"; // Orange, Green, Gray
+      const badgeTextColor = "#ffffff";
+
+      // Draw badge background
+      doc.rect(xPos + 5, y + 4, 50, 12).fill(badgeBgColor);
+      doc.fillColor(badgeTextColor);
+      doc.fontSize(8).font("Helvetica-Bold").text(diffStr + " d", xPos + 5, y + 5, {
+        width: 50,
+        align: "center",
+        valign: "center"
       });
+      doc.fillColor("#000000");
+      xPos += widths[4];
+
+      // Status
+      doc.fontSize(9).font("Helvetica").text(row.topic_status.substring(0, 12), xPos, y + 5, { width: widths[5] - 8, align: "center" });
+      xPos += widths[5];
+
+      // Changed By
+      doc.text(row.changed_by.substring(0, 10), xPos, y + 5, { width: widths[6] - 8, align: "center" });
+      xPos += widths[6];
+
+      // Changed At
+      doc.text(row.changed_at, xPos, y + 5, { width: widths[7] - 8, align: "center" });
+
+      y += 20;
     });
+
+    // ===== FOOTER =====
+    doc.fontSize(8).font("Helvetica").fillColor("#888888").text(
+      `Total Records: ${result.length}  |  Page generated on ${new Date().toLocaleString("en-IN")}`,
+      margin,
+      750
+    );
 
     doc.end();
   } catch (error) {
