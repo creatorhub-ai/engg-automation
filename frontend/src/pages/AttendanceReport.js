@@ -1,5 +1,5 @@
 // AttendanceReport.js
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import axios from "axios";
 import {
   Box,
@@ -17,6 +17,9 @@ import {
   TableCell,
   CircularProgress,
   Alert,
+  Grid,
+  Card,
+  CardContent,
 } from "@mui/material";
 import jsPDF from "jspdf";
 import "jspdf-autotable";
@@ -25,106 +28,181 @@ const API_BASE =
   process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 
 export default function AttendanceReport({ user, token }) {
-  const [batches, setBatches] = useState([]);
+  const [batches, setBatches] = useState([]); // array of batch_no strings
   const [batchNo, setBatchNo] = useState("");
-  const [rows, setRows] = useState([]); // {name,email,total_days,present_days,leave_days,absent_days,attendance_percentage}
-  const [courseStartDate, setCourseStartDate] = useState("");
-  const [courseEndDate, setCourseEndDate] = useState("");
+  const [rawAttendance, setRawAttendance] = useState([]); // rows from learner_attendance
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
 
   const authHeaders = () => (token ? { Authorization: `Bearer ${token}` } : {});
 
-  // Load distinct batch numbers once
+  // Load distinct batch numbers once from /api/batches
   useEffect(() => {
     async function loadBatches() {
       try {
-        const res = await axios.get(
-          `${API_BASE}/api/attendance/distinct_batches`,
-          {
-            headers: authHeaders(),
-          }
-        );
-        setBatches(res.data || []);
+        const res = await axios.get(`${API_BASE}/api/batches`, {
+          headers: authHeaders(),
+        });
+        const data = res.data || [];
+
+        let normalized = [];
+        if (Array.isArray(data)) {
+          normalized = data
+            .map((item) => {
+              if (!item) return null;
+              if (typeof item === "string") return item.trim();
+              if (typeof item === "object") {
+                const v =
+                  item.batch_no || item.batchNo || item.batch || "";
+                return String(v).trim();
+              }
+              return null;
+            })
+            .filter((v) => v);
+        }
+
+        normalized = Array.from(new Set(normalized)).sort();
+        setBatches(normalized);
+
+        if (normalized.length && !batchNo) {
+          setBatchNo(normalized[0]);
+        }
       } catch (e) {
         console.error("Failed to load batches", e);
         setMsg("Failed to load batches for attendance report");
+        setBatches([]);
       }
     }
     loadBatches();
-  }, []); // runs only once on mount
+  }, [token]);
 
-  // Load report when batch changes
+  // Load raw learner_attendance rows when batch changes
   useEffect(() => {
     if (!batchNo) {
-      setRows([]);
-      setCourseStartDate("");
-      setCourseEndDate("");
+      setRawAttendance([]);
       return;
     }
 
-    async function loadReport() {
+    async function loadAttendance() {
       setLoading(true);
       setMsg("");
       try {
-        // Backend should return:
-        // {
-        //   start_date, end_date,
-        //   data: [
-        //     {
-        //       name,
-        //       email,
-        //       total_days,
-        //       present_days,
-        //       leave_days,
-        //       absent_days,
-        //       attendance_percentage
-        //     }, ...
-        //   ]
-        // }
+        // CALL THE EXISTING BACKEND ENDPOINT
         const res = await axios.get(
-          `${API_BASE}/api/attendance/report_by_batch`,
+          `${API_BASE}/api/attendance/by_batch`,
           {
-            params: { batch_no: batchNo },
+            params: { batch_no: String(batchNo).trim() },   // backend reads batch_no or batchno
             headers: authHeaders(),
           }
         );
 
-        const { start_date, end_date, data } = res.data || {};
-        setCourseStartDate(start_date || "");
-        setCourseEndDate(end_date || "");
-        setRows(data || []);
+        const data = Array.isArray(res.data) ? res.data : [];
+        setRawAttendance(data);
 
-        if (!data || data.length === 0) {
+        if (!data.length) {
           setMsg("No attendance data found for this batch");
         }
       } catch (e) {
-        console.error("Failed to load attendance report", e);
-        setMsg("Failed to load attendance report");
-        setRows([]);
+        console.error("Failed to load attendance for batch", e);
+        if (e?.response?.status === 404) {
+          setMsg("No attendance data found for this batch");
+        } else {
+          setMsg("Failed to load attendance for the selected batch");
+        }
+        setRawAttendance([]);
       }
       setLoading(false);
     }
 
-    loadReport();
-  }, [batchNo]); // depends only on selected batch
+    loadAttendance();
+  }, [batchNo, token]);
+
+  // Aggregate per learner: total_days, present, leave, absent, percentage
+  const aggregatedRows = useMemo(() => {
+    if (!rawAttendance.length) return [];
+
+    const map = new Map(); // key: learner_email
+
+    rawAttendance.forEach((row) => {
+      const email = row.learner_email || row.email || "";
+      if (!email) return;
+
+      const name = row.learner_name || row.name || row.learner || "";
+      const key = email;
+
+      if (!map.has(key)) {
+        map.set(key, {
+          name,
+          email,
+          total_days: 0,
+          present_days: 0,
+          leave_days: 0,
+          absent_days: 0,
+        });
+      }
+
+      const agg = map.get(key);
+      agg.total_days += 1;
+
+      const status = (row.status || "").toLowerCase();
+      if (status === "present" || status === "p") agg.present_days += 1;
+      else if (
+        status === "leave" ||
+        status === "onleave" ||
+        status === "on_leave" ||
+        status === "l"
+      )
+        agg.leave_days += 1;
+      else if (status === "absent" || status === "a")
+        agg.absent_days += 1;
+    });
+
+    const result = Array.from(map.values()).map((r) => {
+      const pct =
+        r.total_days > 0 ? (r.present_days / r.total_days) * 100 : 0;
+      return { ...r, attendance_percentage: pct };
+    });
+
+    result.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    return result;
+  }, [rawAttendance]);
+
+  // Batch‑level summary stats
+  const batchStats = useMemo(() => {
+    if (!aggregatedRows.length) {
+      return {
+        batchPercentage: 0,
+        totalLearners: 0,
+        totalSessions: 0,
+      };
+    }
+
+    const totalLearners = aggregatedRows.length;
+    const totalSessions = aggregatedRows.reduce(
+      (sum, r) => sum + (r.total_days || 0),
+      0
+    );
+    const avgPct =
+      aggregatedRows.reduce(
+        (sum, r) => sum + (r.attendance_percentage || 0),
+        0
+      ) / totalLearners;
+
+    return {
+      batchPercentage: avgPct,
+      totalLearners,
+      totalSessions,
+    };
+  }, [aggregatedRows]);
 
   const handleDownloadPdf = () => {
-    if (!rows || rows.length === 0) return;
+    if (!aggregatedRows || !aggregatedRows.length) return;
 
     const doc = new jsPDF("landscape");
     const title = `Attendance Report - Batch ${batchNo}`;
-    const subtitle =
-      courseStartDate && courseEndDate
-        ? `Course: ${courseStartDate} to ${courseEndDate}`
-        : "";
 
     doc.setFontSize(16);
     doc.text(title, 14, 18);
-    if (subtitle) {
-      doc.setFontSize(11);
-      doc.text(subtitle, 14, 26);
-    }
 
     const head = [
       [
@@ -139,7 +217,7 @@ export default function AttendanceReport({ user, token }) {
       ],
     ];
 
-    const body = rows.map((row, idx) => [
+    const body = aggregatedRows.map((row, idx) => [
       idx + 1,
       row.name || "",
       row.email || "",
@@ -148,14 +226,14 @@ export default function AttendanceReport({ user, token }) {
       row.leave_days ?? "",
       row.absent_days ?? "",
       row.attendance_percentage != null
-        ? `${row.attendance_percentage.toFixed(2)}`
+        ? row.attendance_percentage.toFixed(2)
         : "",
     ]);
 
     doc.autoTable({
       head,
       body,
-      startY: 34,
+      startY: 28,
       styles: { fontSize: 8 },
       headStyles: { fillColor: [25, 118, 210] },
     });
@@ -170,7 +248,8 @@ export default function AttendanceReport({ user, token }) {
           Attendance Report
         </Typography>
 
-        <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap", mb: 2 }}>
+        {/* Batch selector + actions */}
+        <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap", mb: 3 }}>
           <FormControl sx={{ minWidth: 220 }}>
             <InputLabel>Select Batch</InputLabel>
             <Select
@@ -178,26 +257,25 @@ export default function AttendanceReport({ user, token }) {
               value={batchNo}
               onChange={(e) => setBatchNo(e.target.value)}
             >
-              {batches.map((b, idx) => (
-                <MenuItem key={idx} value={b.batch_no || b}>
-                  {b.batch_no || b}
+              {batches.map((b) => (
+                <MenuItem key={b} value={b}>
+                  {b}
                 </MenuItem>
               ))}
+              {batches.length === 0 && (
+                <MenuItem disabled value="">
+                  No batches found
+                </MenuItem>
+              )}
             </Select>
           </FormControl>
 
-          <Box sx={{ flexGrow: 1, display: "flex", alignItems: "center" }}>
-            {courseStartDate && courseEndDate && (
-              <Typography variant="body2" color="text.secondary">
-                Course: {courseStartDate} to {courseEndDate}
-              </Typography>
-            )}
-          </Box>
+          <Box sx={{ flexGrow: 1 }} />
 
           <Button
             variant="contained"
             color="primary"
-            disabled={!rows.length}
+            disabled={!aggregatedRows.length}
             onClick={handleDownloadPdf}
           >
             Download PDF
@@ -210,13 +288,68 @@ export default function AttendanceReport({ user, token }) {
           </Box>
         )}
 
-        {!loading && msg && (
+        {!loading && msg && !aggregatedRows.length && (
           <Alert severity="info" sx={{ mb: 2 }}>
             {msg}
           </Alert>
         )}
 
-        {!loading && rows.length > 0 && (
+        {/* Summary cards */}
+        {!loading && aggregatedRows.length > 0 && (
+          <Grid container spacing={2} sx={{ mb: 3 }}>
+            <Grid item xs={12} sm={4}>
+              <Card elevation={2}>
+                <CardContent>
+                  <Typography
+                    variant="subtitle2"
+                    color="text.secondary"
+                    gutterBottom
+                  >
+                    Batch Attendance %
+                  </Typography>
+                  <Typography variant="h5" color="primary">
+                    {batchStats.batchPercentage.toFixed(2)}%
+                  </Typography>
+                </CardContent>
+              </Card>
+            </Grid>
+            <Grid item xs={12} sm={4}>
+              <Card elevation={2}>
+                <CardContent>
+                  <Typography
+                    variant="subtitle2"
+                    color="text.secondary"
+                    gutterBottom
+                  >
+                    Total Learners
+                  </Typography>
+                  <Typography variant="h5">
+                    {batchStats.totalLearners}
+                  </Typography>
+                </CardContent>
+              </Card>
+            </Grid>
+            <Grid item xs={12} sm={4}>
+              <Card elevation={2}>
+                <CardContent>
+                  <Typography
+                    variant="subtitle2"
+                    color="text.secondary"
+                    gutterBottom
+                  >
+                    Total Sessions (rows in learner_attendance)
+                  </Typography>
+                  <Typography variant="h5">
+                    {batchStats.totalSessions}
+                  </Typography>
+                </CardContent>
+              </Card>
+            </Grid>
+          </Grid>
+        )}
+
+        {/* Per‑learner table */}
+        {!loading && aggregatedRows.length > 0 && (
           <Table size="small" sx={{ overflowX: "auto", display: "block" }}>
             <TableHead>
               <TableRow>
@@ -231,7 +364,7 @@ export default function AttendanceReport({ user, token }) {
               </TableRow>
             </TableHead>
             <TableBody>
-              {rows.map((row, idx) => (
+              {aggregatedRows.map((row, idx) => (
                 <TableRow key={row.email || idx}>
                   <TableCell>{idx + 1}</TableCell>
                   <TableCell>{row.name}</TableCell>

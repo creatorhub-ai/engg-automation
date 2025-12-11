@@ -16,12 +16,12 @@ import DateChangeReport from "./pages/DateChangeReport";
 import UsersDashboard from "./pages/UsersDashboard";
 import TutorsDashboard from "./pages/TutorsDashboard";
 import LearnersDashboard from "./pages/LearnersDashboard";
-import ClassroomMatrixDashboard from "./pages/ClassroomMatrixDashboard";
 import ClassroomScheduler from "./pages/ClassroomScheduler";
 import AttendanceDashboard from "./pages/AttendanceDashboard"; // <-- imported new attendance dashboard
 import MarkSheet from "./pages/MarkSheet";
 import ReportsDashboard from "./pages/ReportsDashboard";
 import AnnouncementDashboard from "./pages/AnnouncementDashboard";
+import ClassroomPlanner from "./pages/ClassroomPlanner";
 
 const roleMenus = {
   admin: [
@@ -37,11 +37,10 @@ const roleMenus = {
     { text: "Users Management", path: "/users" },
     { text: "Course Progress", path: "/course-progress" },
     { text: "Classroom Planner", path: "/schedule" },
-    { text: "Classroom Matrix", path: "/matrix" },
     { text: "Attendance", path: "/attendance" }, // <-- added attendance menu
     { text: "Mark Entry", path: "/marks-entry" }, 
     { text: "Announcement", path: "/announcement" }, 
-    
+    { text: "Classroom Planner-2", path: "/classroom-planner" }, 
   ],
   manager: [
     { text: "Home", path: "/home" },
@@ -56,7 +55,6 @@ const roleMenus = {
     { text: "Users Management", path: "/users" },
     { text: "Course Progress", path: "/course-progress" },
     { text: "Classroom Planner", path: "/schedule" },
-    { text: "Classroom Matrix", path: "/matrix" },
     { text: "Attendance", path: "/attendance" }, // <-- added attendance menu
     { text: "Mark Entry", path: "/marks-entry" }, 
     { text: "Announcement", path: "/announcement" }, 
@@ -131,14 +129,14 @@ function getComponentForPath(path, login) {
       return <LearnersDashboard user={login} />;
     case "/schedule":
       return <ClassroomScheduler user={login} />;
-    case "/matrix":
-      return <ClassroomMatrixDashboard user={login} />;
     case "/marks-entry":
       return <MarkSheet user={login} />;
     case "/announcement":
       return <AnnouncementDashboard user={login} />;
     case "/attendance":
       return <AttendanceDashboard user={login} />; // <-- mapped attendance route to AttendanceDashboard component
+    case "/classroom-planner":
+      return <ClassroomPlanner user={login} />;
     default:
       return <div>Page not found</div>;
   }

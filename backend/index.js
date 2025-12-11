@@ -32,6 +32,7 @@ import marksWindowsRouter from "./routes/marksWindows.js";
 import marksSaveRouter from "./routes/marksSave.js";
 import { pool } from "./db.js";
 import announceRouter from "./routes/announce.js";
+import attendanceRoutes from "./routes/attendance.js";
 
 dotenv.config();
 
@@ -70,6 +71,7 @@ app.use(
 // Mount routers
 app.use("/api/marks", marksWindowsRouter);
 app.use("/api/marks", marksSaveRouter);
+app.use("/api/attendance", attendanceRoutes);
 
 // =====================================================
 // ✅ Handle Preflight Requests (OPTIONS)
@@ -1127,6 +1129,193 @@ app.get('/api/domains', async (req, res) => {
   }
 });
 
+
+// Suggest classroom API (unchanged, your existing logic)
+app.post('/api/suggestClassroom', async (req, res) => {
+  const { batch_no, domain, students, start_date, end_date, required_tools } = req.body;
+
+  if (!batch_no || !domain || !students || !start_date || !end_date) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+
+  const { data: classrooms, error: classErr } = await supabase
+    .from('classrooms')
+    .select('*')
+    .gte('capacity', students);
+
+  if (classErr) return res.status(500).json({ error: 'Failed to fetch classrooms' });
+  if (!classrooms.length) return res.status(400).json({ error: 'No classrooms with sufficient capacity' });
+
+  const { data: occupancy, error: occErr } = await supabase
+    .from('classroom_occupancy')
+    .select('*');
+
+  if (occErr) return res.status(500).json({ error: 'Failed to fetch occupancy' });
+
+  let suggested = null;
+  for (const classroom of classrooms) {
+    for (const slot of ['morning', 'evening']) {
+      const overlap = occupancy.some(occ =>
+        occ.classroom_name === classroom.name &&
+        occ.slot === slot &&
+        !(new Date(occ.occupancy_end) < new Date(start_date) ||
+          new Date(occ.occupancy_start) > new Date(end_date))
+      );
+
+      if (!overlap) {
+        suggested = { classroom: classroom.name, slot };
+        break;
+      }
+    }
+    if (suggested) break;
+  }
+
+  if (!suggested) return res.status(400).json({ error: 'No classrooms available for the date range and capacity' });
+
+  // License details for domain from licenses table
+  const { data: licenses, error: licErr } = await supabase
+    .from('licenses')
+    .select('license_name, count, domain')
+    .eq('domain', domain);
+
+  if (licErr) return res.status(500).json({ error: 'Failed to fetch licenses' });
+
+  const licensesWithAdditional = licenses.map(lic => ({
+    license_name: lic.license_name,
+    count: lic.count,
+    additional_needed: Math.max(0, students - lic.count),
+  }));
+
+  const anyAdditionalNeeded = licensesWithAdditional.some(l => l.additional_needed > 0);
+
+  const { error: insertErr } = await supabase.from('classroom_occupancy').insert({
+    classroom_name: suggested.classroom,
+    slot: suggested.slot,          // DB column name is "slot"
+    batch_no,
+    occupancy_start: start_date,
+    occupancy_end: end_date,
+  });
+
+  if (insertErr) return res.status(500).json({ error: 'Failed to schedule batch' });
+
+  res.json({
+    message: 'Batch scheduled successfully',
+    classroom: suggested.classroom,
+    slot: suggested.slot,
+    licenses: licensesWithAdditional,
+    licensesSufficient: !anyAdditionalNeeded,
+  });
+});
+
+// Get licenses (used by ClassroomPlanner)
+app.get('/api/licenses', async (req, res) => {
+  const { data, error } = await supabase
+    .from('licenses')
+    .select('license_name, count, domain');
+
+  if (error) {
+    console.error('licenses error', error);
+    return res.status(500).json({ error: 'Failed to fetch licenses' });
+  }
+
+  res.json(data); // plain array
+});
+
+// Get classroom matrix for planner
+app.get('/api/get-classroom-matrix', async (req, res) => {
+  const { data, error } = await supabase
+    .from('classroom_occupancy')
+    .select('classroom_name, slot, batch_no, occupancy_start, occupancy_end');
+
+  if (error) {
+    console.error('get-classroom-matrix error', error);
+    return res.status(500).json({ error: 'Failed to fetch occupancy data' });
+  }
+
+  const occupancyRows = (data || []).map(row => ({
+    classroom_name: row.classroom_name,
+    slot: row.slot,                     // logical slot name
+    batch_no: row.batch_no,
+    a_start: row.occupancy_start,
+    a_end: row.occupancy_end,
+    // capacity/enrolled are not stored in this table; set to 0 so planner still works
+    capacity: 0,
+    enrolled: 0,
+    hasSufficientCapacity: true,
+    licenseNeeded: 0,
+  }));
+
+  res.json({
+    occupancyRows,
+    weeks: [],                          // frontend will recompute weeks from dates
+  });
+});
+
+// ===============================
+// SAVE CLASSROOM MATRIX (UPLOAD)
+// ===============================
+app.post("/api/save-classroom-matrix", async (req, res) => {
+  try {
+    const rows = req.body.rows;
+
+    if (!rows || !Array.isArray(rows)) {
+      return res.status(400).json({ error: "Invalid or missing rows data" });
+    }
+
+    for (const row of rows) {
+      const course = row["COURSE"];
+      const actualStart = row["A.START DATE"];
+      const actualEnd = row["A.DUE DATE"];
+
+      if (!course || !actualStart || !actualEnd) {
+        console.log("Skipping row due to missing important fields:", row);
+        continue;
+      }
+
+      // Check existing entry
+      const [existing] = await db.query(
+        "SELECT * FROM classroom_occupancy WHERE batch_no = ?",
+        [course]
+      );
+
+      if (existing.length > 0) {
+        // UPDATE existing
+        await db.query(
+          `
+          UPDATE classroom_occupancy
+          SET occupancy_start = ?, occupancy_end = ?
+          WHERE batch_no = ?
+        `,
+          [actualStart, actualEnd, course]
+        );
+        console.log(`UPDATED: ${course}`);
+      } else {
+        // INSERT new
+        await db.query(
+          `
+          INSERT INTO classroom_occupancy 
+          (batch_no, occupancy_start, occupancy_end)
+          VALUES (?, ?, ?)
+        `,
+          [course, actualStart, actualEnd]
+        );
+        console.log(`INSERTED: ${course}`);
+      }
+    }
+
+    res.json({
+      success: true,
+      message: "Classroom occupancy saved successfully",
+    });
+
+  } catch (err) {
+    console.error("❌ Error saving classroom matrix:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+
 //===Load the domain progress ===
 app.get('/api/course-progress', async (req, res) => {
   const { domain, batch_no } = req.query;
@@ -1833,6 +2022,37 @@ app.get('/api/domains', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch domains' });
   }
+});
+
+
+// Get saved classroom matrix (occupancyRows + weeks) for planner
+// If you don't have a separate weeks table, send weeks: [] and let frontend rebuild.
+app.get('/api/get-classroom-matrix', async (req, res) => {
+  const { data, error } = await supabase
+    .from('classroom_occupancy')
+    .select('classroom_name, slot, batch_no, occupancy_start, occupancy_end');
+
+  if (error) {
+    console.error('get-classroom-matrix error', error);
+    return res.status(500).json({ error: 'Failed to fetch occupancy data' });
+  }
+
+  const occupancyRows = (data || []).map((row) => ({
+    classroom_name: row.classroom_name,
+    slot: row.slot,                 // from DB
+    batch_no: row.batch_no,
+    a_start: row.occupancy_start,
+    a_end: row.occupancy_end,
+    capacity: 0,
+    enrolled: 0,
+    hasSufficientCapacity: true,
+    licenseNeeded: 0,
+  }));
+
+  res.json({
+    occupancyRows,
+    weeks: [],
+  });
 });
 
 // Suggest classroom API
@@ -4980,125 +5200,6 @@ app.get("/api/hello", (req, res) => {
   res.json({ success: true, msg: "Hello from backend!" });
 });
 
-// === UNIFIED Background Worker - Processes ALL scheduled emails ===
-const MAX_RETRIES = 5;
-
-cron.schedule("*/1 * * * *", async () => {  // run every minute
-  try {
-    const now = dayjs();
-    const startOfMinute = now.startOf("minute").toISOString();
-    const endOfMinute = now.endOf("minute").toISOString();
-
-    console.log(`Cron job running at ${now.toISOString()} - checking emails scheduled between ${startOfMinute} and ${endOfMinute}`);
-
-    // Fetch only emails scheduled exactly for this minute (scheduled or failed)
-    const { data: emails, error } = await supabase
-      .from("scheduled_emails")
-      .select("*")
-      .in("status", ["scheduled", "failed"])
-      .gte("scheduled_at", startOfMinute)
-      .lte("scheduled_at", endOfMinute)
-      .order("scheduled_at", { ascending: true })
-      .limit(500);
-
-    if (error) {
-      console.error("Error fetching due emails:", error.message);
-      return;
-    }
-
-    if (!emails || emails.length === 0) {
-      console.log("No emails scheduled for this exact minute.");
-      return;
-    }
-
-    console.log(`Processing ${emails.length} email(s)`);
-
-    for (const email of emails) {
-      console.log(`Processing mail id ${email.id} to ${email.recipient_email} with status ${email.status}`);
-
-      // Mark email as processing and increment retry count
-      const { error: markError } = await supabase
-        .from("scheduled_emails")
-        .update({
-          status: "processing",
-          retry_count: (email.retry_count || 0) + 1,
-          last_attempt_at: now.toISOString(),
-          updated_at: now.toISOString(),
-        })
-        .eq("id", email.id)
-        .in("status", ["scheduled", "failed"]);
-
-      if (markError) {
-        console.warn(`Skipping mail id ${email.id}, failed to mark as processing:`, markError.message);
-        continue;
-      }
-
-      try {
-        const html = email.body_html || "";
-        const text = html.replace(/<\/?[^>]+(>|$)/g, "");
-        const attachments = [];
-
-        if (email.attachment_name && email.attachment_data) {
-          attachments.push({
-            filename: email.attachment_name,
-            content: Buffer.from(email.attachment_data, "base64"),
-          });
-        }
-
-        if (!email.recipient_email || !email.recipient_email.includes("@")) {
-          throw new Error("Invalid recipient email address");
-        }
-
-        const sendResult = await sendRawEmail({
-          to: email.recipient_email,
-          subject: email.subject || "(No subject)",
-          html,
-          text,
-          attachments
-        });
-
-        if (sendResult?.success) {
-          await supabase
-            .from("scheduled_emails")
-            .update({
-              status: "sent",
-              sent_at: dayjs().toISOString(),
-              error: null,
-              updated_at: dayjs().toISOString(),
-            })
-            .eq("id", email.id);
-          console.log(`✅ Successfully sent email to ${email.recipient_email} (id ${email.id})`);
-        } else {
-          await supabase
-            .from("scheduled_emails")
-            .update({
-              status: "failed",
-              error: sendResult?.error || "Unknown error",
-              updated_at: dayjs().toISOString(),
-            })
-            .eq("id", email.id);
-          console.error(`❌ Failed to send email (id ${email.id}), error: ${sendResult?.error}`);
-        }
-      } catch (ex) {
-        await supabase
-          .from("scheduled_emails")
-          .update({
-            status: "failed",
-            error: ex.message || "Unknown error",
-            updated_at: dayjs().toISOString(),
-          })
-          .eq("id", email.id);
-        console.error(`⚠️ Exception sending email id ${email.id}: ${ex.message}`);
-      }
-
-      // Throttle to avoid SMTP connection flood
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-  } catch (err) {
-    console.error("Cron job failure:", err);
-  }
-});
-
 
 // === Get Scheduled Emails (Debug endpoint) ===
 app.get("/api/debug/scheduled-emails", async (req, res) => {
@@ -5557,8 +5658,47 @@ app.get('/api/learners/email/:email', async (req, res) => {
   }
 });
 
+app.get("/api/debug/routes-test", (req, res) => {
+  res.json({ ok: true, message: "Backend is deploying the correct file" });
+});
+
+// === ATTENDANCE REPORT DATA ===
+app.get("/api/attendance/by_batch", async (req, res) => {
+  const { batch_no, batchno } = req.query;
+  const batch = batch_no || batchno;
+
+  if (!batch) {
+    return res.status(400).json({ error: "batch_no query parameter is required" });
+  }
+
+  try {
+    const result = await pool.query(
+      `
+        SELECT
+          id,
+          learner_email,
+          learner_name,
+          batch_no,
+          date,
+          session,
+          status,
+          marked_by,
+          marked_at
+        FROM learner_attendance
+        WHERE batch_no = $1
+        ORDER BY date ASC, session ASC, learner_email ASC
+      `,
+      [batch]
+    );
+
+    return res.json(result.rows);
+  } catch (err) {
+    console.error("Error fetching attendance by batch:", err);
+    return res.status(500).json({ error: "Failed to fetch attendance data" });
+  }
+});
+
 
 app.listen(PORT, () => {
   console.log(`🚀 Backend listening on http://localhost:${PORT}`);
-  console.log(`✅ Email scheduler is running - checking every minute for due emails`);
 });
