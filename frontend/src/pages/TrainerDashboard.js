@@ -1,3 +1,4 @@
+// TrainerDashboard.js
 import React, { useEffect, useState } from "react";
 import axios from "axios";
 import {
@@ -24,12 +25,13 @@ import {
   Tooltip,
   Tabs,
   Tab,
-  Button
+  Button,
 } from "@mui/material";
 import CheckIcon from "@mui/icons-material/Check";
 import { green, orange, red, grey } from "@mui/material/colors";
 
-const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
+const API_BASE =
+  process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 
 const statusChipColor = {
   Completed: green[600],
@@ -38,6 +40,7 @@ const statusChipColor = {
 };
 
 // --- Component: TrainerUnavailabilityForm ---
+
 function TrainerUnavailabilityForm({ user }) {
   const [domain, setDomain] = useState(user.domain || "");
   const [start, setStart] = useState("");
@@ -51,6 +54,7 @@ function TrainerUnavailabilityForm({ user }) {
       setErr("Please fill all fields");
       return;
     }
+
     try {
       await axios.post(`${API_BASE}/api/trainer-unavailability`, {
         trainer_email: user.email,
@@ -110,13 +114,22 @@ function TrainerUnavailabilityForm({ user }) {
       <Button onClick={submitUnavailability} variant="contained" color="primary">
         Submit
       </Button>
-      {msg && <Alert severity="success" sx={{ mt: 1 }}>{msg}</Alert>}
-      {err && <Alert severity="error" sx={{ mt: 1 }}>{err}</Alert>}
+      {msg && (
+        <Alert severity="success" sx={{ mt: 1 }}>
+          {msg}
+        </Alert>
+      )}
+      {err && (
+        <Alert severity="error" sx={{ mt: 1 }}>
+          {err}
+        </Alert>
+      )}
     </Paper>
   );
 }
 
 // --- Component: TrainerUnavailabilityManagerDashboard ---
+
 function TrainerUnavailabilityManagerDashboard() {
   const [unavail, setUnavail] = useState([]);
   const [selectedReq, setSelectedReq] = useState(null);
@@ -214,13 +227,10 @@ function TrainerUnavailabilityManagerDashboard() {
           </TableBody>
         </Table>
       </TableContainer>
+
       {selectedReq && availableTrainers.length > 0 && (
         <Box>
-          <Typography
-            variant="body2"
-            color="text.secondary"
-            sx={{ mt: 2 }}
-          >
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
             Available trainers for domain "{selectedReq.domain}"
           </Typography>
           <TableContainer>
@@ -254,6 +264,7 @@ function TrainerUnavailabilityManagerDashboard() {
                           color="success"
                           size="small"
                           onClick={() => handleReassign(tr, a)}
+                          sx={{ mr: 1, mb: 0.5 }}
                         >
                           Assign "{a.topic_name}"
                         </Button>
@@ -276,6 +287,7 @@ function TrainerUnavailabilityManagerDashboard() {
 }
 
 // --- Main Component
+
 function TrainerDashboard({ user, token }) {
   const [batches, setBatches] = useState([]);
   const [selectedBatch, setSelectedBatch] = useState("");
@@ -291,7 +303,6 @@ function TrainerDashboard({ user, token }) {
   const [pendingStatusChanges, setPendingStatusChanges] = useState({});
   const [tab, setTab] = useState(0);
 
-  // NEW: full topic list for batch and computed firstIncompleteWeek
   const [allBatchTopics, setAllBatchTopics] = useState([]);
   const [firstIncompleteWeek, setFirstIncompleteWeek] = useState(null);
 
@@ -313,7 +324,7 @@ function TrainerDashboard({ user, token }) {
     })();
   }, [token]);
 
-  // Load weeks + ALL topics for the batch when batch changes
+  // Load weeks + ALL topics when batch changes
   useEffect(() => {
     if (!selectedBatch) {
       setWeeks([]);
@@ -323,15 +334,20 @@ function TrainerDashboard({ user, token }) {
       setFirstIncompleteWeek(null);
       return;
     }
+
     (async () => {
       try {
         const headers = token ? { Authorization: `Bearer ${token}` } : {};
-        // weeks
+
         const resWeeks = await axios.get(
           `${API_BASE}/api/weeks/${selectedBatch}`,
           { headers }
         );
-        if (resWeeks.data && Array.isArray(resWeeks.data) && resWeeks.data.length > 0) {
+        if (
+          resWeeks.data &&
+          Array.isArray(resWeeks.data) &&
+          resWeeks.data.length > 0
+        ) {
           const sortedWeeks = [...resWeeks.data].sort(
             (a, b) => Number(a) - Number(b)
           );
@@ -344,15 +360,15 @@ function TrainerDashboard({ user, token }) {
           setMessage("No weeks found for selected batch");
         }
 
-        // ALL topics for this batch across all weeks
         const resAllTopics = await axios.get(
           `${API_BASE}/api/topics/${selectedBatch}`,
           { headers }
         );
-        const all = Array.isArray(resAllTopics.data) ? resAllTopics.data : [];
+        const all = Array.isArray(resAllTopics.data)
+          ? resAllTopics.data
+          : [];
         setAllBatchTopics(all);
 
-        // compute first incomplete week: smallest week_no where any topic is not Completed
         if (all.length > 0) {
           const weekStatus = {};
           all.forEach((t) => {
@@ -370,8 +386,7 @@ function TrainerDashboard({ user, token }) {
           if (candidateWeeks.length > 0) {
             setFirstIncompleteWeek(Math.min(...candidateWeeks));
           } else {
-            // everything is completed; you may allow all or none
-            setFirstIncompleteWeek(null); // null => allow all
+            setFirstIncompleteWeek(null);
           }
         } else {
           setFirstIncompleteWeek(null);
@@ -387,12 +402,13 @@ function TrainerDashboard({ user, token }) {
     })();
   }, [selectedBatch, token]);
 
-  // Load topics for selectedWeek only (for display)
+  // Load topics for selectedWeek
   useEffect(() => {
     if (!selectedBatch || !selectedWeek) {
       setTopics([]);
       return;
     }
+
     (async () => {
       try {
         const headers = token ? { Authorization: `Bearer ${token}` } : {};
@@ -414,8 +430,8 @@ function TrainerDashboard({ user, token }) {
             }
             return 0;
           });
-          setTopics(sortedTopics);
 
+          setTopics(sortedTopics);
           const newRemarks = {};
           const newActualDates = {};
           sortedTopics.forEach((t) => {
@@ -437,21 +453,18 @@ function TrainerDashboard({ user, token }) {
     })();
   }, [selectedBatch, selectedWeek, token]);
 
-  // Helpers
   const getStatusForTopic = (topicId, confirmedStatus) =>
     pendingStatusChanges[topicId] ?? confirmedStatus;
 
   const isActionFrozen = (topic) => topic.topic_status === "Completed";
 
-  // week-level rule: only firstIncompleteWeek is editable; later weeks blocked
   const canEditWeek = (weekNo) => {
     const w = Number(weekNo);
     if (!w) return false;
-    if (firstIncompleteWeek == null) return true; // if we couldn't compute, allow all
+    if (firstIncompleteWeek == null) return true;
     return w === firstIncompleteWeek;
   };
 
-  // group topics by date
   const topicsByDate = topics.reduce((acc, t) => {
     const key = t.date || "No Date";
     if (!acc[key]) acc[key] = [];
@@ -462,7 +475,6 @@ function TrainerDashboard({ user, token }) {
     (a, b) => new Date(a) - new Date(b)
   );
 
-  // Handlers
   function handlePendingStatusChange(topicId, value) {
     setPendingStatusChanges((prev) => ({ ...prev, [topicId]: value }));
   }
@@ -473,11 +485,13 @@ function TrainerDashboard({ user, token }) {
       setMessage("No status change to confirm.");
       return;
     }
+
     setTopics((prev) =>
       prev.map((t) =>
         t.id === topicId ? { ...t, _pending: true } : t
       )
     );
+
     try {
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
       const res = await axios.post(
@@ -504,14 +518,12 @@ function TrainerDashboard({ user, token }) {
         });
         setMessage("✅ Status updated");
 
-        // also update allBatchTopics + recompute firstIncompleteWeek
         setAllBatchTopics((prev) =>
           prev.map((t) =>
             t.id === topicId ? { ...t, topic_status: newStatus } : t
           )
         );
-        setFirstIncompleteWeek((prev) => {
-          // recompute from updated allBatchTopics in next microtask
+        setFirstIncompleteWeek(() => {
           const all = allBatchTopics.map((t) =>
             t.id === topicId ? { ...t, topic_status: newStatus } : t
           );
@@ -568,18 +580,15 @@ function TrainerDashboard({ user, token }) {
     }
   }
 
+  // IMPORTANT: always write a log row and date_difference, including 0 (on time)
   async function handleActualDateSave(topicId, actualDate, plannedDate) {
     try {
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
       const planned = new Date(plannedDate);
       const actual = new Date(actualDate);
-      const daysDiff = Math.round((actual - planned) / (1000 * 60 * 60 * 24));
-
-      // Only save if actual date differs from planned OR no actual_date exists
-      if (actualDate === plannedDate && actualDatesMap[topicId] !== undefined) {
-        setMessage("✅ No change needed - already on time");
-        return;
-      }
+      const daysDiff = Math.round(
+        (actual - planned) / (1000 * 60 * 60 * 24)
+      );
 
       const res = await axios.post(
         `${API_BASE}/api/update-actual-date`,
@@ -601,16 +610,25 @@ function TrainerDashboard({ user, token }) {
         );
 
         if (daysDiff > 2) {
-          setAlertMessage(`⚠️ You are exceeding the topic by ${daysDiff} days!`);
+          setAlertMessage(
+            `⚠️ You are exceeding the topic by ${daysDiff} day(s)!`
+          );
           setAlertSeverity("error");
         } else if (daysDiff > 0) {
-          setAlertMessage(`Topic completed ${daysDiff} day(s) later than planned.`);
+          setAlertMessage(
+            `Topic completed ${daysDiff} day(s) later than planned.`
+          );
           setAlertSeverity("warning");
         } else if (daysDiff < 0) {
-          setAlertMessage(`🎉 You finished ${Math.abs(daysDiff)} day(s) earlier!`);
+          setAlertMessage(
+            `🎉 You finished ${Math.abs(daysDiff)} day(s) earlier!`
+          );
           setAlertSeverity("success");
         } else {
-          setAlertMessage("✅ Topic completed on the planned date (On time recorded).");
+          // this is the on‑time case that needs to be logged and counted
+          setAlertMessage(
+            "✅ Topic completed on the planned date (On time recorded)."
+          );
           setAlertSeverity("success");
         }
         setAlertOpen(true);
@@ -641,13 +659,18 @@ function TrainerDashboard({ user, token }) {
         maxWidth: 1200,
         mx: "auto",
         my: 3,
-        fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
+        fontFamily: "Segoe UI, Tahoma, Geneva, Verdana, sans-serif",
       }}
     >
-      <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 2 }}>
+      <Tabs
+        value={tab}
+        onChange={(_, v) => setTab(v)}
+        sx={{ mb: 2 }}
+      >
         <Tab label="Progress" />
         <Tab label="Trainer Management" />
       </Tabs>
+
       {tab === 0 && (
         <Paper
           elevation={6}
@@ -675,8 +698,8 @@ function TrainerDashboard({ user, token }) {
             >
               {welcomeName}
             </Box>
-            !
           </Typography>
+
           <Grid container spacing={3} alignItems="center" mb={4}>
             <Grid item xs={12} sm={6} md={5}>
               <FormControl
@@ -703,13 +726,13 @@ function TrainerDashboard({ user, token }) {
                   </MenuItem>
                   {batches.map((b) => (
                     <MenuItem key={b.batch_no} value={b.batch_no}>
-                      {b.batch_no}{" "}
-                      {b.start_date ? `(${b.start_date})` : ""}
+                      {b.batch_no} {b.start_date ? `(${b.start_date})` : ""}
                     </MenuItem>
                   ))}
                 </Select>
               </FormControl>
             </Grid>
+
             <Grid item xs={12} sm={6} md={3}>
               {weeks.length > 0 && (
                 <FormControl
@@ -737,8 +760,7 @@ function TrainerDashboard({ user, token }) {
 
           {sortedDates.map((dateKey) => {
             const dateTopics = topicsByDate[dateKey] || [];
-            const weekNoForBlock =
-              dateTopics[0]?.week_no || selectedWeek;
+            const weekNoForBlock = dateTopics[0]?.week_no || selectedWeek;
             const weekEditable = canEditWeek(weekNoForBlock);
 
             return (
@@ -767,28 +789,20 @@ function TrainerDashboard({ user, token }) {
                 >
                   {dateKey}
                 </Typography>
+
                 <TableContainer>
                   <Table size="small" sx={{ borderRadius: 2 }}>
                     <TableHead>
                       <TableRow
                         sx={{
                           bgcolor: "#1976d2",
-                          "& th": {
-                            color: "white",
-                            fontWeight: "bold",
-                          },
+                          "& th": { color: "white", fontWeight: "bold" },
                         }}
                       >
                         <TableCell>Topic</TableCell>
-                        <TableCell align="center">
-                          Planned Date
-                        </TableCell>
-                        <TableCell align="center">
-                          Actual Date
-                        </TableCell>
-                        <TableCell align="center">
-                          Difference
-                        </TableCell>
+                        <TableCell align="center">Planned Date</TableCell>
+                        <TableCell align="center">Actual Date</TableCell>
+                        <TableCell align="center">Difference</TableCell>
                         <TableCell align="center">Status</TableCell>
                         <TableCell align="center">Action</TableCell>
                         <TableCell align="center">Remarks</TableCell>
@@ -796,21 +810,20 @@ function TrainerDashboard({ user, token }) {
                     </TableHead>
                     <TableBody>
                       {dateTopics.map((t) => {
-                        const daysDiff = t.date_difference || 0;
-                        const currentStatus =
-                          getStatusForTopic(t.id, t.topic_status);
+                        const daysDiff = t.date_difference ?? 0;
+                        const currentStatus = getStatusForTopic(
+                          t.id,
+                          t.topic_status
+                        );
                         const frozen = isActionFrozen(t);
-                        const editable =
-                          weekEditable && !frozen;
+                        const editable = weekEditable && !frozen;
 
                         return (
                           <TableRow
                             key={t.id}
                             sx={{
-                              backgroundColor: (theme) =>
-                                theme.palette.mode === "light"
-                                  ? grey[50]
-                                  : grey[900],
+                              backgroundColor:
+                                grey[50],
                               transition: "background-color 0.3s",
                               "&:hover": {
                                 backgroundColor: "#bbdefb",
@@ -821,17 +834,14 @@ function TrainerDashboard({ user, token }) {
                           >
                             <TableCell
                               sx={{
-                                fontWeight: "600",
+                                fontWeight: 600,
                                 color: "#1976d2",
                                 letterSpacing: 0.4,
                               }}
                             >
                               {t.topic_name || `Topic ${t.id}`}
                             </TableCell>
-                            <TableCell
-                              align="center"
-                              sx={{ fontWeight: "medium" }}
-                            >
+                            <TableCell align="center" sx={{ fontWeight: "medium" }}>
                               {t.date}
                             </TableCell>
                             <TableCell align="center">
@@ -875,23 +885,43 @@ function TrainerDashboard({ user, token }) {
                                 disabled={!editable}
                               />
                             </TableCell>
+
                             <TableCell align="center">
                               {daysDiff !== 0 ? (
                                 <Chip
-                                  label={daysDiff > 0 ? `+${daysDiff} days` : `${daysDiff} days`}
+                                  label={
+                                    daysDiff > 0
+                                      ? `+${daysDiff} days`
+                                      : `${daysDiff} days`
+                                  }
                                   size="small"
                                   sx={{
                                     fontWeight: "600",
-                                    bgcolor: daysDiff > 2 ? red[100] : daysDiff > 0 ? orange[100] : green[100],
-                                    color: daysDiff > 2 ? red[700] : daysDiff > 0 ? orange[700] : green[700],
+                                    bgcolor:
+                                      daysDiff > 2
+                                        ? red[100]
+                                        : daysDiff > 0
+                                        ? orange[100]
+                                        : green[100],
+                                    color:
+                                      daysDiff > 2
+                                        ? red[700]
+                                        : daysDiff > 0
+                                        ? orange[700]
+                                        : green[700],
                                   }}
                                 />
                               ) : (
-                                <Typography variant="caption" color="success.main" fontWeight="bold">
+                                <Typography
+                                  variant="caption"
+                                  color="success.main"
+                                  fontWeight="bold"
+                                >
                                   On time
                                 </Typography>
                               )}
                             </TableCell>
+
                             <TableCell align="center">
                               <Chip
                                 label={t.topic_status}
@@ -899,7 +929,7 @@ function TrainerDashboard({ user, token }) {
                                 sx={{
                                   fontWeight: "bold",
                                   bgcolor:
-                                    statusChipColor[t.topic_status] ??
+                                    statusChipColor[t.topic_status] ||
                                     grey[300],
                                   color:
                                     t.topic_status === "Planned"
@@ -910,6 +940,7 @@ function TrainerDashboard({ user, token }) {
                                 }}
                               />
                             </TableCell>
+
                             <TableCell
                               align="center"
                               sx={{
@@ -918,9 +949,7 @@ function TrainerDashboard({ user, token }) {
                                 alignItems: "center",
                                 gap: 1,
                                 opacity: editable ? 1 : 0.6,
-                                pointerEvents: editable
-                                  ? "auto"
-                                  : "none",
+                                pointerEvents: editable ? "auto" : "none",
                               }}
                             >
                               <Tooltip
@@ -939,9 +968,7 @@ function TrainerDashboard({ user, token }) {
                                   >
                                     <Select
                                       value={currentStatus}
-                                      disabled={
-                                        !editable || !!t._pending
-                                      }
+                                      disabled={!editable || !!t._pending}
                                       onChange={(e) =>
                                         handlePendingStatusChange(
                                           t.id,
@@ -958,9 +985,7 @@ function TrainerDashboard({ user, token }) {
                                         fontWeight: "600",
                                       }}
                                     >
-                                      <MenuItem value="Planned">
-                                        Planned
-                                      </MenuItem>
+                                      <MenuItem value="Planned">Planned</MenuItem>
                                       <MenuItem value="In Progress">
                                         In Progress
                                       </MenuItem>
@@ -980,9 +1005,7 @@ function TrainerDashboard({ user, token }) {
                                     <IconButton
                                       size="small"
                                       color="primary"
-                                      onClick={() =>
-                                        handleStatusConfirm(t.id)
-                                      }
+                                      onClick={() => handleStatusConfirm(t.id)}
                                       disabled={t._pending}
                                       aria-label="Confirm status change"
                                     >
@@ -991,6 +1014,7 @@ function TrainerDashboard({ user, token }) {
                                   </Tooltip>
                                 )}
                             </TableCell>
+
                             <TableCell align="center">
                               <TextField
                                 size="small"
@@ -1002,10 +1026,7 @@ function TrainerDashboard({ user, token }) {
                                   }))
                                 }
                                 onBlur={() =>
-                                  handleRemarksSave(
-                                    t.id,
-                                    remarksMap[t.id]
-                                  )
+                                  handleRemarksSave(t.id, remarksMap[t.id])
                                 }
                                 placeholder="Add remarks"
                                 variant="outlined"
@@ -1032,7 +1053,11 @@ function TrainerDashboard({ user, token }) {
               <Box mt={1}>
                 <Alert
                   severity={
-                    message.startsWith("✅") ? "success" : "warning"
+                    message.startsWith("✅")
+                      ? "success"
+                      : message.startsWith("❌")
+                      ? "error"
+                      : "warning"
                   }
                   sx={{ fontWeight: "medium" }}
                 >
@@ -1043,6 +1068,7 @@ function TrainerDashboard({ user, token }) {
           )}
         </Paper>
       )}
+
       {tab === 1 && (
         <Box>
           {user?.role === "trainer" && (
@@ -1053,12 +1079,13 @@ function TrainerDashboard({ user, token }) {
           )}
           {!["trainer", "manager", "admin"].includes(user?.role) && (
             <Alert severity="warning" sx={{ mt: 3 }}>
-              Trainer Management is only available to trainers, managers,
-              or admins. Please ensure your account has the correct role.
+              Trainer Management is only available to trainers, managers, or
+              admins. Please ensure your account has the correct role.
             </Alert>
           )}
         </Box>
       )}
+
       <Snackbar
         open={alertOpen}
         autoHideDuration={6000}

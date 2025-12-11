@@ -1,3 +1,4 @@
+// DateChangeReport.js
 import React, { useEffect, useState } from "react";
 import axios from "axios";
 import {
@@ -26,7 +27,8 @@ import DownloadIcon from "@mui/icons-material/Download";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
-const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
+const API_BASE =
+  process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 
 export default function DateChangeReport({ user, token }) {
   const [batches, setBatches] = useState([]);
@@ -46,8 +48,8 @@ export default function DateChangeReport({ user, token }) {
         } else {
           setBatches([]);
         }
-      } catch (error) {
-        console.error("Error loading batches:", error);
+      } catch (err) {
+        console.error("Error loading batches:", err);
         setError("Error loading batches");
       }
     }
@@ -61,45 +63,41 @@ export default function DateChangeReport({ user, token }) {
       setReportData([]);
       setBatchSummary(null);
     }
-  }, [selectedBatch]);
 
-  async function loadReport() {
-    if (!selectedBatch) {
-      setError("Please select a batch first.");
-      return;
+    async function loadReport() {
+      if (!selectedBatch) {
+        setError("Please select a batch first.");
+        return;
+      }
+
+      setLoading(true);
+      setError("");
+      try {
+        const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+        const reportRes = await axios.get(
+          `${API_BASE}/api/date-change-report/${selectedBatch}`,
+          { headers }
+        );
+
+        const summaryRes = await axios.get(
+          `${API_BASE}/api/batch-date-summary/${selectedBatch}`,
+          { headers }
+        );
+
+        setReportData(reportRes.data || []);
+        setBatchSummary(summaryRes.data || null);
+      } catch (err) {
+        console.error("Error loading report:", err);
+        setError("Error loading report data");
+      } finally {
+        setLoading(false);
+      }
     }
+  }, [selectedBatch, token]);
 
-    setLoading(true);
-    setError("");
-
-    try {
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-
-      // Load report data
-      const reportRes = await axios.get(
-        `${API_BASE}/api/date-change-report/${selectedBatch}`,
-        { headers }
-      );
-
-      // Load summary
-      const summaryRes = await axios.get(
-        `${API_BASE}/api/batch-date-summary/${selectedBatch}`,
-        { headers }
-      );
-
-      setReportData(reportRes.data || []);
-      setBatchSummary(summaryRes.data || null);
-    } catch (error) {
-      console.error("Error loading report:", error);
-      setError("Error loading report data");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  // Download PDF function
   const downloadPDF = () => {
-    const doc = new jsPDF("l", "mm", "a4"); // Landscape orientation
+    const doc = new jsPDF("l", "mm", "a4");
     const timestamp = new Date().toLocaleString("en-IN", {
       year: "numeric",
       month: "2-digit",
@@ -109,28 +107,36 @@ export default function DateChangeReport({ user, token }) {
       second: "2-digit",
     });
 
-    // Add title
     doc.setFontSize(18);
     doc.setTextColor(40);
     doc.text("Date Change Report", 14, 20);
 
-    // Add batch info and timestamp
     doc.setFontSize(11);
     doc.setTextColor(100);
     doc.text(`Batch: ${selectedBatch}`, 14, 28);
     doc.text(`Generated: ${timestamp}`, 14, 34);
 
-    // Add summary statistics
     if (batchSummary) {
       doc.setFontSize(12);
       doc.setTextColor(40);
       doc.text("Summary Statistics", 14, 44);
-
       doc.setFontSize(10);
       doc.setTextColor(100);
-      doc.text(`Delayed Topics: ${batchSummary.delayed_count || 0}`, 14, 50);
-      doc.text(`Early Completion: ${batchSummary.early_count || 0}`, 70, 50);
-      doc.text(`On Time: ${batchSummary.ontime_count || 0}`, 126, 50);
+      doc.text(
+        `Delayed Topics: ${batchSummary.delayed_count || 0}`,
+        14,
+        50
+      );
+      doc.text(
+        `Early Completion: ${batchSummary.early_count || 0}`,
+        70,
+        50
+      );
+      doc.text(
+        `On Time: ${batchSummary.ontime_count || 0}`,
+        126,
+        50
+      );
       doc.text(
         `Avg Difference: ${
           batchSummary.avg_difference
@@ -142,7 +148,6 @@ export default function DateChangeReport({ user, token }) {
       );
     }
 
-    // Prepare table data
     const tableData = reportData.map((row) => [
       row.module_name || "N/A",
       row.topic_name || "N/A",
@@ -163,7 +168,6 @@ export default function DateChangeReport({ user, token }) {
       row.remarks || "-",
     ]);
 
-    // Add table using autoTable
     autoTable(doc, {
       startY: 56,
       head: [
@@ -199,7 +203,6 @@ export default function DateChangeReport({ user, token }) {
       },
     });
 
-    // Save with timestamp
     const filename = `DateChangeReport_${selectedBatch}_${new Date()
       .toISOString()
       .slice(0, 19)
@@ -229,13 +232,15 @@ export default function DateChangeReport({ user, token }) {
               Track and analyze training schedule changes across batches
             </Typography>
           </Box>
+
           {selectedBatch && reportData.length > 0 && (
             <Button
               variant="contained"
               startIcon={<DownloadIcon />}
               onClick={downloadPDF}
               sx={{
-                background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                background:
+                  "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
                 "&:hover": {
                   background:
                     "linear-gradient(135deg, #764ba2 0%, #667eea 100%)",
@@ -256,7 +261,7 @@ export default function DateChangeReport({ user, token }) {
             displayEmpty
           >
             <MenuItem value="">
-              <em></em>
+              <em>Select Batch</em>
             </MenuItem>
             {batches.map((b) => (
               <MenuItem key={b.batch_no} value={b.batch_no}>
@@ -280,8 +285,12 @@ export default function DateChangeReport({ user, token }) {
 
         {!loading && selectedBatch && batchSummary && (
           <>
-            {/* Summary Cards */}
-            <Typography variant="h6" color="primary" gutterBottom sx={{ mt: 2 }}>
+            <Typography
+              variant="h6"
+              color="primary"
+              gutterBottom
+              sx={{ mt: 2 }}
+            >
               Summary Statistics
             </Typography>
             <Grid container spacing={3} mb={4}>
@@ -299,7 +308,10 @@ export default function DateChangeReport({ user, token }) {
                       {batchSummary.delayed_count || 0}
                     </Typography>
                     {batchSummary.max_delay > 0 && (
-                      <Typography variant="caption" color="text.secondary">
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                      >
                         Max delay: {batchSummary.max_delay} days
                       </Typography>
                     )}
@@ -321,7 +333,10 @@ export default function DateChangeReport({ user, token }) {
                       {batchSummary.early_count || 0}
                     </Typography>
                     {batchSummary.max_early < 0 && (
-                      <Typography variant="caption" color="text.secondary">
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                      >
                         Max early: {Math.abs(batchSummary.max_early)} days
                       </Typography>
                     )}
@@ -332,13 +347,20 @@ export default function DateChangeReport({ user, token }) {
               <Grid item xs={12} sm={6} md={3}>
                 <Card sx={{ bgcolor: "#e3f2fd", height: "100%" }}>
                   <CardContent>
-                    <Typography color="text.secondary" gutterBottom variant="body2">
+                    <Typography
+                      color="text.secondary"
+                      gutterBottom
+                      variant="body2"
+                    >
                       On Time
                     </Typography>
                     <Typography variant="h3" color="primary.main">
-                      {batchSummary?.ontime_count || 0}
+                      {batchSummary.ontime_count || 0}
                     </Typography>
-                    <Typography variant="caption" color="text.secondary">
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                    >
                       Completed as planned
                     </Typography>
                   </CardContent>
@@ -357,12 +379,15 @@ export default function DateChangeReport({ user, token }) {
                     </Typography>
                     <Typography variant="h3" color="text.primary">
                       {batchSummary.avg_difference
-                        ? `${parseFloat(batchSummary.avg_difference).toFixed(
-                            1
-                          )}`
+                        ? `${parseFloat(
+                            batchSummary.avg_difference
+                          ).toFixed(1)}`
                         : "0"}
                     </Typography>
-                    <Typography variant="caption" color="text.secondary">
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                    >
                       days (+ delayed / - early)
                     </Typography>
                   </CardContent>
@@ -370,8 +395,12 @@ export default function DateChangeReport({ user, token }) {
               </Grid>
             </Grid>
 
-            {/* Detailed Report Table */}
-            <Typography variant="h6" color="primary" gutterBottom sx={{ mt: 4 }}>
+            <Typography
+              variant="h6"
+              color="primary"
+              gutterBottom
+              sx={{ mt: 4 }}
+            >
               Detailed Change Log
             </Typography>
             <TableContainer component={Paper} elevation={2}>
@@ -414,31 +443,37 @@ export default function DateChangeReport({ user, token }) {
                   {reportData.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={10} align="center" sx={{ py: 4 }}>
-                        <Typography variant="body1" color="text.secondary">
+                        <Typography
+                          variant="body1"
+                          color="text.secondary"
+                        >
                           No date changes recorded for this batch yet.
                         </Typography>
-                        <Typography variant="caption" color="text.secondary">
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                        >
                           Date changes will appear here once trainers update
                           actual dates.
                         </Typography>
                       </TableCell>
                     </TableRow>
                   )}
+
                   {reportData.map((row, idx) => (
                     <TableRow
                       key={idx}
                       sx={{
-                        "&:hover": { bgcolor: "#f9f9f9" },
-                        bgcolor: idx % 2 === 0 ? "#ffffff" : "#fafafa",
+                        "&:nth-of-type(2n)": { bgcolor: "#fafafa" },
                       }}
                     >
                       <TableCell>
-                        <Typography variant="body2" fontWeight="500">
+                        <Typography variant="body2" fontWeight={500}>
                           {row.module_name || "N/A"}
                         </Typography>
                       </TableCell>
                       <TableCell>
-                        <Typography variant="body2" fontWeight="500">
+                        <Typography variant="body2" fontWeight={500}>
                           {row.topic_name}
                         </Typography>
                       </TableCell>
@@ -448,10 +483,14 @@ export default function DateChangeReport({ user, token }) {
                         </Typography>
                       </TableCell>
                       <TableCell align="center">
-                        {new Date(row.planned_date).toLocaleDateString("en-IN")}
+                        {new Date(
+                          row.planned_date
+                        ).toLocaleDateString("en-IN")}
                       </TableCell>
                       <TableCell align="center">
-                        {new Date(row.actual_date).toLocaleDateString("en-IN")}
+                        {new Date(
+                          row.actual_date
+                        ).toLocaleDateString("en-IN")}
                       </TableCell>
                       <TableCell align="center">
                         <Chip
@@ -524,19 +563,16 @@ export default function DateChangeReport({ user, token }) {
           </>
         )}
 
-        {!loading &&
-          selectedBatch &&
-          !batchSummary &&
-          reportData.length === 0 && (
-            <Box textAlign="center" py={4}>
-              <Typography variant="h6" color="text.secondary">
-                No data available for this batch
-              </Typography>
-              <Typography variant="body2" color="text.secondary" mt={1}>
-                Select a different batch or wait for trainers to update dates
-              </Typography>
-            </Box>
-          )}
+        {!loading && selectedBatch && !batchSummary && reportData.length === 0 && (
+          <Box textAlign="center" py={4}>
+            <Typography variant="h6" color="text.secondary">
+              No data available for this batch
+            </Typography>
+            <Typography variant="body2" color="text.secondary" mt={1}>
+              Select a different batch or wait for trainers to update dates
+            </Typography>
+          </Box>
+        )}
 
         {!selectedBatch && !loading && (
           <Box textAlign="center" py={6}>

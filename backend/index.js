@@ -4055,87 +4055,90 @@ app.post('/api/mail/update-email', async (req, res) => {
 });
 
 // Update actual date - Supabase version
-app.post('/api/update-actual-date', async (req, res) => {
+app.post("/api/update-actual-date", async (req, res) => {
   try {
     const { topic_id, actual_date, changed_by } = req.body;
-    
-    // First get the planned date and topic info
+
+    // 1. Get planned date and batch/topic info
     const { data: topicData, error: topicError } = await supabase
-      .from('course_planner_data')
-      .select('date, topic_name, batch_no')
-      .eq('id', topic_id)
+      .from("course_planner_data")
+      .select("date, topic_name, batch_no")
+      .eq("id", topic_id)
       .single();
-    
+
     if (topicError || !topicData) {
-      console.error('Error fetching topic:', topicError);
-      return res.json({ success: false, error: 'Topic not found' });
+      console.error("Error fetching topic:", topicError);
+      return res.json({ success: false, error: "Topic not found" });
     }
-    
+
     const plannedDate = new Date(topicData.date);
     const actualDateObj = new Date(actual_date);
-    
-    // Calculate difference in days
+
+    // 2. Calculate difference in days (can be +, -, or 0)
     const timeDiff = actualDateObj - plannedDate;
     const daysDiff = Math.round(timeDiff / (1000 * 60 * 60 * 24));
-    
-    // Update course_planner_data table
+
+    // 3. Update course_planner_data
     const { error: updateError } = await supabase
-      .from('course_planner_data')
+      .from("course_planner_data")
       .update({
         actual_date: actual_date,
-        date_difference: daysDiff,
+        date_difference: daysDiff,          // important: store 0 for on-time
         date_changed_by: changed_by,
-        date_changed_at: new Date().toISOString()
+        date_changed_at: new Date().toISOString(),
       })
-      .eq('id', topic_id);
-    
+      .eq("id", topic_id);
+
     if (updateError) {
-      console.error('Error updating course_planner_data:', updateError);
+      console.error("Error updating course_planner_data:", updateError);
       return res.json({ success: false, error: updateError.message });
     }
-    
-    // Insert into audit table
+
+    // 4. Insert into audit table (for detailed report)
     const { error: auditError } = await supabase
-      .from('date_change_audit')
+      .from("date_change_audit")
       .insert({
         topic_id: topic_id,
         batch_no: topicData.batch_no,
         topic_name: topicData.topic_name,
         planned_date: topicData.date,
         actual_date: actual_date,
-        date_difference: daysDiff,
+        date_difference: daysDiff,          // again, 0 is stored for on-time
         changed_by: changed_by,
-        changed_at: new Date().toISOString()
+        changed_at: new Date().toISOString(),
       });
-    
+
     if (auditError) {
-      console.error('Error inserting audit record:', auditError);
-      // Don't fail the request if audit fails, just log it
+      console.error("Error inserting audit record:", auditError);
+      // Do not fail the main request if audit logging fails
     }
-    
-    res.json({ 
-      success: true, 
-      date_difference: daysDiff,
-      message: daysDiff > 0 
+
+    // 5. Human‑readable message
+    const message =
+      daysDiff > 0
         ? `Topic completed ${daysDiff} day(s) later than planned`
-        : daysDiff < 0 
+        : daysDiff < 0
         ? `Topic completed ${Math.abs(daysDiff)} day(s) earlier than planned`
-        : 'Topic completed on planned date'
+        : "Topic completed on planned date (On time)";
+
+    return res.json({
+      success: true,
+      date_difference: daysDiff,
+      message,
     });
-    
   } catch (error) {
-    console.error('Error updating actual date:', error);
-    res.json({ success: false, error: error.message });
+    console.error("Error updating actual date:", error);
+    return res.json({ success: false, error: error.message });
   }
 });
 
 // Get date change report for a batch - Supabase version
-app.get('/api/date-change-report/:batch_no', async (req, res) => {
+app.get("/api/date-change-report/:batch_no", async (req, res) => {
   try {
     const { batch_no } = req.params;
-    
+
     const { data, error } = await supabase
-      .from('date_change_audit')
+      .from("date_change_audit")
       .select(`
         id,
         topic_name,
@@ -4146,103 +4149,112 @@ app.get('/api/date-change-report/:batch_no', async (req, res) => {
         changed_at,
         topic_id
       `)
-      .eq('batch_no', batch_no)
-      .order('changed_at', { ascending: false });
-    
+      .eq("batch_no", batch_no)
+      .order("changed_at", { ascending: false });
+
     if (error) {
-      console.error('Error fetching report:', error);
+      console.error("Error fetching report:", error);
       return res.json({ error: error.message });
     }
-    
-    // Fetch additional details from course_planner_data
+
     const enrichedData = await Promise.all(
-      data.map(async (item) => {
+      (data || []).map(async (item) => {
         const { data: topicData, error: topicError } = await supabase
-          .from('course_planner_data')
-          .select('module_name, trainer_name, trainer_email, topic_status, remarks')
-          .eq('id', item.topic_id)
+          .from("course_planner_data")
+          .select(
+            "module_name, trainer_name, trainer_email, topic_status, remarks"
+          )
+          .eq("id", item.topic_id)
           .single();
-        
+
+        if (topicError) {
+          console.error("Error fetching topic details:", topicError);
+        }
+
         return {
           id: item.id,
           topic_name: item.topic_name,
           planned_date: item.planned_date,
           actual_date: item.actual_date,
-          date_difference: item.date_difference,
+          date_difference: item.date_difference, // +, -, or 0
           changed_by: item.changed_by,
           changed_at: item.changed_at,
-          module_name: topicData?.module_name || 'N/A',
-          trainer_name: topicData?.trainer_name || 'N/A',
-          trainer_email: topicData?.trainer_email || 'N/A',
-          topic_status: topicData?.topic_status || 'N/A',
-          remarks: topicData?.remarks || ''
+          module_name: topicData?.module_name || "N/A",
+          trainer_name: topicData?.trainer_name || "N/A",
+          trainer_email: topicData?.trainer_email || "N/A",
+          topic_status: topicData?.topic_status || "N/A",
+          remarks: topicData?.remarks || "",
         };
       })
     );
-    
-    res.json(enrichedData);
-    
+
+    return res.json(enrichedData);
   } catch (error) {
-    console.error('Error fetching date change report:', error);
-    res.json({ error: error.message });
+    console.error("Error fetching date change report:", error);
+    return res.json({ error: error.message });
   }
 });
 
 
 // Get summary statistics for a batch - Supabase version
-app.get('/api/batch-date-summary/:batch_no', async (req, res) => {
+app.get("/api/batch-date-summary/:batch_no", async (req, res) => {
   try {
     const { batch_no } = req.params;
-    
+
+    // Only topics where actual_date is set are considered "completed"
     const { data, error } = await supabase
-      .from('course_planner_data')
-      .select('date_difference')
-      .eq('batch_no', batch_no)
-      .not('actual_date', 'is', null);
-    
+      .from("course_planner_data")
+      .select("date_difference")
+      .eq("batch_no", batch_no)
+      .not("actual_date", "is", null);
+
     if (error) {
-      console.error('Error fetching summary:', error);
+      console.error("Error fetching summary:", error);
       return res.json({ error: error.message });
     }
-    
-    // Calculate statistics manually
+
     let delayed_count = 0;
     let early_count = 0;
     let ontime_count = 0;
     let sum_difference = 0;
     let max_delay = 0;
     let max_early = 0;
-    
-    data.forEach(item => {
-      const diff = item.date_difference || 0;
-      
+
+    (data || []).forEach((item) => {
+      // If date_difference is NULL in DB, treat as 0 (on time)
+      const diff =
+        typeof item.date_difference === "number"
+          ? item.date_difference
+          : 0;
+
       if (diff > 0) {
-        delayed_count++;
+        delayed_count += 1;
         if (diff > max_delay) max_delay = diff;
       } else if (diff < 0) {
-        early_count++;
+        early_count += 1;
         if (diff < max_early) max_early = diff;
       } else {
-        ontime_count++;
+        // diff === 0 → on time
+        ontime_count += 1;
       }
-      
+
       sum_difference += diff;
     });
-    
-    const avg_difference = data.length > 0 ? sum_difference / data.length : 0;
-    
-    res.json({
+
+    const avg_difference =
+      data && data.length > 0 ? sum_difference / data.length : 0;
+
+    return res.json({
       delayed_count,
       early_count,
-      ontime_count,
+      ontime_count,                 // this drives the "On Time" card
       avg_difference: avg_difference.toFixed(2),
       max_delay,
-      max_early
+      max_early,
     });
-    
   } catch (error) {
-    console.error('Error fetching batch summary:', error);
-    res.json({ error: error.message });
+    console.error("Error fetching batch summary:", error);
+    return res.json({ error: error.message });
   }
 });
 
