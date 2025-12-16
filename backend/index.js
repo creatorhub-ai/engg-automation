@@ -2105,7 +2105,7 @@ app.get('/api/get-classroom-matrix', async (req, res) => {
 });
 
 // POST /api/leave/apply  (create new leave)
-app.post("/api/leave/apply", authMiddleware, async (req, res) => {
+app.post("/api/leave/apply", async (req, res) => {
   try {
     const { id: userId, role, name, email } = req.user;
 

@@ -131,7 +131,6 @@ export default function TrainerLeaveDashboard() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${sessionUser.token}`,
         },
         body: JSON.stringify({
           from_date: form.from_date,
