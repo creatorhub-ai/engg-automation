@@ -85,7 +85,7 @@ export default function TrainerLeaveDashboard() {
 
         if (!isMounted) return;
 
-        if (data[0].role !== "trainer") {
+        if (data[0].role !== "Trainer") {
           throw new Error("Access denied. Trainer role required.");
         }
 
