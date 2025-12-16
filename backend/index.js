@@ -2105,8 +2105,6 @@ app.get('/api/get-classroom-matrix', async (req, res) => {
   });
 });
 
-// POST /api/leave/apply  (trainer creates leave)
-// ❌ DO NOT USE authMiddleware; read trainer_id from body
 // POST /api/leave/apply  (trainer creates leave WITHOUT JWT)
 app.post("/api/leave/apply", async (req, res) => {
   try {
@@ -2189,6 +2187,7 @@ app.post("/api/leave/apply", async (req, res) => {
     return res.status(500).json({ error: err.message || "Failed to apply leave" });
   }
 });
+
 
 // GET /api/leave/list?view=month&date=YYYY-MM-DD
 // ⬇️ KEEP using manager dashboard logic, but remove req.user dependency
