@@ -152,40 +152,36 @@ export default function ManagerLeaveDashboard() {
   async function decide(leaveId, decision) {
     setError("");
     setSuccess("");
-
-    if (!["approved", "rejected", "revoked"].includes(decision)) {
-      setError("Invalid decision");
-      return;
-    }
-
     setLoading(true);
 
     try {
-      const res = await fetch(`${API_BASE}/api/leave/${leaveId}/decision`, {
+        const res = await fetch(`${API_BASE}/api/leave/${leaveId}/decision`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${sessionUser.token}`,
-        },
-        body: JSON.stringify({ decision }),
-      });
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            decision,
+            manager_id: internalUser.id,
+            manager_name: internalUser.name,
+            manager_email: internalUser.email,
+        }),
+        });
 
-      const data = await res.json();
-      if (!res.ok || !data.success) {
+        const data = await res.json();
+
+        if (!res.ok || !data.success) {
         setError(data.error || "Failed to update leave status");
-      } else {
-        const label =
-          decision === "revoked" ? "approval revoked" : ` ${decision}`;
-        setSuccess(`✅ Leave ${label}`);
+        } else {
+        setSuccess(`✅ Leave ${decision}`);
         await loadLeaves();
-      }
+        }
     } catch (err) {
-      console.error("decide error", err);
-      setError("Failed to update leave status (network error)");
+        console.error(err);
+        setError("Network error");
     } finally {
-      setLoading(false);
+        setLoading(false);
     }
-  }
+    }
+
 
   const welcomeName = sessionUser?.name || "User";
   const roleTitle = sessionUser?.role

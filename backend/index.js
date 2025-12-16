@@ -2113,80 +2113,66 @@ app.post("/api/leave/apply", async (req, res) => {
     const { trainer_id, from_date, to_date, reason } = req.body;
 
     if (!trainer_id || !from_date || !to_date) {
-      return res
-        .status(400)
-        .json({ error: "trainer_id, from_date and to_date are required" });
+      return res.status(400).json({
+        error: "trainer_id, from_date and to_date are required",
+      });
     }
 
-    // Make sure trainer_id is numeric (your internal_users.id is bigint)
-    const trainerIdNum = Number(trainer_id);
-    if (!Number.isFinite(trainerIdNum)) {
-      return res.status(400).json({ error: "Invalid trainer_id" });
-    }
-
-    // Fetch trainer basic info from internal_users
+    // ⚠️ DO NOT convert bigint dangerously
     const trainerResult = await pool.query(
-      "select id, name, email from internal_users where id = $1",
-      [trainerIdNum]
+      "SELECT id, name, email FROM internal_users WHERE id = $1",
+      [trainer_id]
     );
-    console.log("trainerResult.rowCount:", trainerResult.rowCount);
 
     if (!trainerResult.rowCount) {
       return res.status(404).json({ error: "Trainer not found" });
     }
+
     const trainer = trainerResult.rows[0];
 
-    // Insert leave in trainer_leaves
-    const insertSql = `
-      insert into trainer_leaves (trainer_id, from_date, to_date, reason, status)
-      values ($1, $2, $3, $4, 'pending')
-      returning *
-    `;
-    const result = await pool.query(insertSql, [
-      trainer.id,
-      from_date,
-      to_date,
-      reason || null,
-    ]);
-    console.log("inserted leave rows:", result.rowCount);
-
-    const leave = result.rows[0];
-
-    // Fetch managers/admins for notification
-    const mgrRes = await pool.query(
-      "select name, email from internal_users where role = 'manager' or role = 'admin'"
+    // 1️⃣ INSERT LEAVE FIRST (guaranteed)
+    const insertResult = await pool.query(
+      `
+      INSERT INTO trainer_leaves (trainer_id, from_date, to_date, reason, status)
+      VALUES ($1, $2, $3, $4, 'pending')
+      RETURNING *
+      `,
+      [trainer.id, from_date, to_date, reason || null]
     );
-    const managers = mgrRes.rows || [];
 
-    if (managers.length) {
-      const toList = managers.map((m) => m.email).join(",");
-      const subject = `New leave request from ${trainer.name}`;
-      const text = [
-        `A new leave request has been submitted.`,
-        "",
-        `Trainer: ${trainer.name} (${trainer.email})`,
-        `Leave ID: ${leave.id}`,
-        `From: ${leave.from_date}`,
-        `To: ${leave.to_date}`,
-        `Reason: ${leave.reason || "-"}`,
-        "",
-        `Please review this request in the Manager Leave Dashboard.`,
-      ].join("\n");
+    const leave = insertResult.rows[0];
 
-      try {
-        await sendEmail({ to: toList, subject, text });
-      } catch (mailErr) {
-        // Do not fail the API if email fails
-        console.error("sendEmail error (leave apply):", mailErr);
+    // 2️⃣ RESPOND SUCCESS IMMEDIATELY
+    res.json({ success: true, leave });
+
+    // 3️⃣ EMAIL ASYNC (FAIL SAFE)
+    try {
+      const mgrRes = await pool.query(
+        "SELECT email FROM internal_users WHERE role IN ('manager','admin')"
+      );
+
+      if (mgrRes.rowCount) {
+        const toList = mgrRes.rows.map((m) => m.email).join(",");
+        await sendEmail({
+          to: toList,
+          subject: `New leave request from ${trainer.name}`,
+          text: `
+Trainer: ${trainer.name}
+From: ${leave.from_date}
+To: ${leave.to_date}
+Reason: ${leave.reason || "-"}
+          `,
+        });
       }
+    } catch (mailErr) {
+      console.error("⚠️ Email failed (ignored):", mailErr.message);
     }
-
-    return res.json({ success: true, leave });
   } catch (err) {
-    console.error("apply leave error:", err);
-    return res.status(500).json({ error: err.message || "Failed to apply leave" });
+    console.error("❌ apply leave error:", err);
+    res.status(500).json({ error: "Failed to apply leave" });
   }
 });
+
 
 
 // GET /api/leave/list?view=month&date=YYYY-MM-DD
