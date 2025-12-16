@@ -2107,8 +2107,11 @@ app.get('/api/get-classroom-matrix', async (req, res) => {
 
 // POST /api/leave/apply  (trainer creates leave)
 // ❌ DO NOT USE authMiddleware; read trainer_id from body
+// POST /api/leave/apply  (trainer creates leave WITHOUT JWT)
 app.post("/api/leave/apply", async (req, res) => {
   try {
+    console.log("▶ /api/leave/apply body:", req.body);
+
     const { trainer_id, from_date, to_date, reason } = req.body;
 
     if (!trainer_id || !from_date || !to_date) {
@@ -2117,30 +2120,43 @@ app.post("/api/leave/apply", async (req, res) => {
         .json({ error: "trainer_id, from_date and to_date are required" });
     }
 
-    // Fetch trainer basic info from internal_users using Supabase or pool
+    // Make sure trainer_id is numeric (your internal_users.id is bigint)
+    const trainerIdNum = Number(trainer_id);
+    if (!Number.isFinite(trainerIdNum)) {
+      return res.status(400).json({ error: "Invalid trainer_id" });
+    }
+
+    // Fetch trainer basic info from internal_users
     const trainerResult = await pool.query(
-      `select id, name, email from internal_users where id = $1`,
-      [trainer_id]
+      "select id, name, email from internal_users where id = $1",
+      [trainerIdNum]
     );
+    console.log("trainerResult.rowCount:", trainerResult.rowCount);
+
     if (!trainerResult.rowCount) {
       return res.status(404).json({ error: "Trainer not found" });
     }
     const trainer = trainerResult.rows[0];
 
-    // Insert leave in Postgres
-    const result = await pool.query(
-      `
-        insert into trainer_leaves (trainer_id, from_date, to_date, reason, status)
-        values ($1, $2, $3, $4, 'pending')
-        returning *
-      `,
-      [trainer.id, from_date, to_date, reason || null]
-    );
+    // Insert leave in trainer_leaves
+    const insertSql = `
+      insert into trainer_leaves (trainer_id, from_date, to_date, reason, status)
+      values ($1, $2, $3, $4, 'pending')
+      returning *
+    `;
+    const result = await pool.query(insertSql, [
+      trainer.id,
+      from_date,
+      to_date,
+      reason || null,
+    ]);
+    console.log("inserted leave rows:", result.rowCount);
+
     const leave = result.rows[0];
 
     // Fetch managers/admins for notification
     const mgrRes = await pool.query(
-      `select name, email from internal_users where role = 'manager' or role = 'admin'`
+      "select name, email from internal_users where role = 'manager' or role = 'admin'"
     );
     const managers = mgrRes.rows || [];
 
@@ -2159,77 +2175,18 @@ app.post("/api/leave/apply", async (req, res) => {
         `Please review this request in the Manager Leave Dashboard.`,
       ].join("\n");
 
-      await sendEmail({ to: toList, subject, text });
+      try {
+        await sendEmail({ to: toList, subject, text });
+      } catch (mailErr) {
+        // Do not fail the API if email fails
+        console.error("sendEmail error (leave apply):", mailErr);
+      }
     }
 
     return res.json({ success: true, leave });
   } catch (err) {
     console.error("apply leave error:", err);
-    return res.status(500).json({ error: "Failed to apply leave" });
-  }
-});
-
-// PUT /api/leave/:id  (trainer updates own leave while pending)
-// ❌ Do NOT use req.user; frontend must send trainer_id
-app.put("/api/leave/:id", async (req, res) => {
-  try {
-    const leaveId = Number(req.params.id);
-    const { trainer_id, from_date, to_date, reason } = req.body;
-
-    if (!trainer_id) {
-      return res.status(400).json({ error: "trainer_id is required" });
-    }
-
-    const existing = await pool.query(
-      `select * from trainer_leaves where id = $1`,
-      [leaveId]
-    );
-    if (!existing.rowCount) {
-      return res.status(404).json({ error: "Leave not found" });
-    }
-    const leave = existing.rows[0];
-
-    if (leave.trainer_id !== Number(trainer_id)) {
-      return res
-        .status(403)
-        .json({ error: "Not allowed to modify this leave" });
-    }
-    if (leave.status !== "pending") {
-      return res
-        .status(400)
-        .json({ error: "Only pending leaves can be updated" });
-    }
-
-    const updated = await pool.query(
-      `
-        update trainer_leaves
-        set from_date = coalesce($2, from_date),
-            to_date   = coalesce($3, to_date),
-            reason    = coalesce($4, reason),
-            updated_at = now()
-        where id = $1
-        returning *
-      `,
-      [leaveId, from_date, to_date, reason]
-    );
-
-    const leaveUpdated = updated.rows[0];
-
-    // Optional: notify managers about update
-    await pool.query(
-      `
-        insert into leave_notifications (recipient_id, leave_id, type)
-        select id, $1, 'updated'
-        from internal_users
-        where role = 'manager'
-      `,
-      [leaveId]
-    );
-
-    res.json(leaveUpdated);
-  } catch (err) {
-    console.error("update leave error:", err);
-    res.status(500).json({ error: "Failed to update leave" });
+    return res.status(500).json({ error: err.message || "Failed to apply leave" });
   }
 });
 

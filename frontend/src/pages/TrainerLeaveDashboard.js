@@ -127,21 +127,31 @@ export default function TrainerLeaveDashboard() {
     setLoading(true);
 
     try {
+      const payload = {
+        trainer_id: internalUser.id, // must match backend
+        from_date: form.from_date,
+        to_date: form.to_date,
+        reason: form.reason || null,
+      };
+      console.log("▶ handleApply payload:", payload);
+
       const res = await fetch(`${API_BASE}/api/leave/apply`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          trainer_id: internalUser.id,          // ✅ send trainer_id
-          from_date: form.from_date,
-          to_date: form.to_date,
-          reason: form.reason || null,
-        }),
+        body: JSON.stringify(payload),
       });
 
-      const data = await res.json();
+      let data;
+      try {
+        data = await res.json();
+      } catch {
+        data = {};
+      }
+
       if (!res.ok || !data.success) {
+        console.error("apply leave error response:", data);
         setError(data.error || "❌ Failed to apply for leave");
       } else {
         setSuccess("✅ Leave applied successfully");
