@@ -2107,10 +2107,12 @@ app.get('/api/get-classroom-matrix', async (req, res) => {
 
 // POST /api/leave/apply  (trainer creates leave WITHOUT JWT)
 app.post("/api/leave/apply", async (req, res) => {
-  try {
-    console.log("▶ /api/leave/apply body:", req.body);
+  console.log("▶ /api/leave/apply START");
 
+  try {
     const { trainer_id, from_date, to_date, reason } = req.body;
+
+    console.log("▶ Payload:", req.body);
 
     if (!trainer_id || !from_date || !to_date) {
       return res.status(400).json({
@@ -2118,11 +2120,13 @@ app.post("/api/leave/apply", async (req, res) => {
       });
     }
 
-    // ⚠️ DO NOT convert bigint dangerously
+    // ✅ DO NOT cast bigint
     const trainerResult = await pool.query(
-      "SELECT id, name, email FROM internal_users WHERE id = $1",
+      "SELECT id, name, email FROM internal_users WHERE id = $1::bigint",
       [trainer_id]
     );
+
+    console.log("▶ trainerResult.rowCount:", trainerResult.rowCount);
 
     if (!trainerResult.rowCount) {
       return res.status(404).json({ error: "Trainer not found" });
@@ -2130,11 +2134,11 @@ app.post("/api/leave/apply", async (req, res) => {
 
     const trainer = trainerResult.rows[0];
 
-    // 1️⃣ INSERT LEAVE FIRST (guaranteed)
+    // ✅ Insert leave (fast operation)
     const insertResult = await pool.query(
       `
       INSERT INTO trainer_leaves (trainer_id, from_date, to_date, reason, status)
-      VALUES ($1, $2, $3, $4, 'pending')
+      VALUES ($1::bigint, $2::date, $3::date, $4, 'pending')
       RETURNING *
       `,
       [trainer.id, from_date, to_date, reason || null]
@@ -2142,37 +2146,38 @@ app.post("/api/leave/apply", async (req, res) => {
 
     const leave = insertResult.rows[0];
 
-    // 2️⃣ RESPOND SUCCESS IMMEDIATELY
+    console.log("✅ Leave inserted:", leave.id);
+
+    // ✅ Respond immediately (NO WAIT)
     res.json({ success: true, leave });
 
-    // 3️⃣ EMAIL ASYNC (FAIL SAFE)
-    try {
-      const mgrRes = await pool.query(
-        "SELECT email FROM internal_users WHERE role IN ('manager','admin')"
-      );
+    // 📨 Email is BEST-EFFORT (async, non-blocking)
+    setImmediate(async () => {
+      try {
+        const mgrRes = await pool.query(
+          "SELECT email FROM internal_users WHERE role IN ('manager','admin')"
+        );
 
-      if (mgrRes.rowCount) {
-        const toList = mgrRes.rows.map((m) => m.email).join(",");
-        await sendEmail({
-          to: toList,
-          subject: `New leave request from ${trainer.name}`,
-          text: `
-Trainer: ${trainer.name}
-From: ${leave.from_date}
-To: ${leave.to_date}
-Reason: ${leave.reason || "-"}
-          `,
-        });
+        if (mgrRes.rowCount) {
+          const toList = mgrRes.rows.map((m) => m.email).join(",");
+          await sendEmail({
+            to: toList,
+            subject: `New leave request from ${trainer.name}`,
+            text: `Trainer: ${trainer.name}
+From: ${from_date}
+To: ${to_date}
+Reason: ${reason || "-"}`,
+          });
+        }
+      } catch (e) {
+        console.error("⚠️ Email ignored:", e.message);
       }
-    } catch (mailErr) {
-      console.error("⚠️ Email failed (ignored):", mailErr.message);
-    }
+    });
   } catch (err) {
     console.error("❌ apply leave error:", err);
     res.status(500).json({ error: "Failed to apply leave" });
   }
 });
-
 
 
 // GET /api/leave/list?view=month&date=YYYY-MM-DD

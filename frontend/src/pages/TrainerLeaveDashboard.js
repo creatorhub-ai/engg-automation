@@ -1,6 +1,6 @@
 // src/pages/TrainerLeaveDashboard.js
 import React, { useEffect, useState } from "react";
-import { supabase } from "../supabaseClient"; // DB only for reads
+import { supabase } from "../supabaseClient";
 import {
   Paper,
   Typography,
@@ -9,6 +9,7 @@ import {
   TextField,
   Alert,
   Fade,
+  CircularProgress,
 } from "@mui/material";
 
 const API_BASE =
@@ -18,104 +19,94 @@ const API_BASE =
 function formatDateDDMMYYYY(dateStr) {
   if (!dateStr) return "";
   const [y, m, d] = dateStr.split("-");
-  if (!y || !m || !d) return dateStr;
   return `${d}/${m}/${y}`;
 }
 
 export default function TrainerLeaveDashboard() {
-  const [sessionUser, setSessionUser] = useState(null); // from localStorage
+  const [sessionUser, setSessionUser] = useState(null);
   const [internalUser, setInternalUser] = useState(null);
   const [leaves, setLeaves] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
   const [form, setForm] = useState({
     from_date: "",
     to_date: "",
     reason: "",
   });
+
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  // 1. Load userSession from localStorage
+  /* ---------------- Load Session ---------------- */
   useEffect(() => {
     const stored = localStorage.getItem("userSession");
-    if (!stored) {
-      setSessionUser(null);
-      return;
-    }
-    try {
-      const parsed = JSON.parse(stored);
-      setSessionUser(parsed);
-    } catch {
-      setSessionUser(null);
+    if (stored) {
+      try {
+        setSessionUser(JSON.parse(stored));
+      } catch {
+        setSessionUser(null);
+      }
     }
   }, []);
 
-  // 2. Map to internal_users row (by email)
+  /* ---------------- Load Internal User ---------------- */
   useEffect(() => {
     async function loadInternalUser() {
       if (!sessionUser) return;
 
-      setError("");
-      const { data, error: qError } = await supabase
+      const { data, error } = await supabase
         .from("internal_users")
         .select("*")
         .eq("email", sessionUser.email)
         .single();
 
-      if (qError) {
-        console.error("loadInternalUser error", qError);
-        setError("Failed to load internal user profile");
+      if (error) {
+        console.error(error);
+        setError("Failed to load trainer profile");
         return;
       }
 
       if (data.role !== "trainer") {
-        setError("You are not a trainer. Trainer dashboard only.");
+        setError("Access denied: Trainer only");
+        return;
       }
 
       setInternalUser(data);
     }
 
-    if (sessionUser) {
-      loadInternalUser();
-    }
+    loadInternalUser();
   }, [sessionUser]);
 
-  // 3. Load this trainer's leaves
+  /* ---------------- Load Leaves ---------------- */
   useEffect(() => {
-    if (!internalUser) return;
-    loadLeaves();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (internalUser) loadLeaves();
   }, [internalUser]);
 
   async function loadLeaves() {
-    if (!internalUser) return;
     setLoading(true);
     setError("");
-    setSuccess("");
 
-    const { data, error: qError } = await supabase
+    const { data, error } = await supabase
       .from("trainer_leaves")
       .select("*")
       .eq("trainer_id", internalUser.id)
       .order("from_date", { ascending: true });
 
-    if (qError) {
-      console.error("loadLeaves error", qError);
-      setError("Failed to load your leaves");
+    if (error) {
+      console.error(error);
+      setError("Failed to load leaves");
     } else {
       setLeaves(data || []);
     }
+
     setLoading(false);
   }
 
-  function handleChange(e) {
-    const { name, value } = e.target;
-    setForm((prev) => ({ ...prev, [name]: value }));
-  }
-
-  // use backend API so emails are sent
+  /* ---------------- Apply Leave (FIXED) ---------------- */
   async function handleApply() {
-    if (!internalUser) return;
+    if (!internalUser || submitting) return;
+
     setError("");
     setSuccess("");
 
@@ -124,337 +115,177 @@ export default function TrainerLeaveDashboard() {
       return;
     }
 
-    setLoading(true);
+    setSubmitting(true);
+
+    const payload = {
+      trainer_id: internalUser.id,
+      from_date: form.from_date,
+      to_date: form.to_date,
+      reason: form.reason || null,
+    };
+
+    console.log("▶ APPLY LEAVE PAYLOAD:", payload);
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s
 
     try {
-      const payload = {
-        trainer_id: internalUser.id, // must match backend
-        from_date: form.from_date,
-        to_date: form.to_date,
-        reason: form.reason || null,
-      };
-      console.log("▶ handleApply payload:", payload);
-
       const res = await fetch(`${API_BASE}/api/leave/apply`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
+        signal: controller.signal,
       });
 
-      let data;
-      try {
-        data = await res.json();
-      } catch {
-        data = {};
-      }
+      const data = await res.json().catch(() => ({}));
+      console.log("⬅ BACKEND RESPONSE:", data);
 
       if (!res.ok || !data.success) {
-        console.error("apply leave error response:", data);
-        setError(data.error || "❌ Failed to apply for leave");
+        setError(data.error || "❌ Failed to apply leave");
       } else {
         setSuccess("✅ Leave applied successfully");
         setForm({ from_date: "", to_date: "", reason: "" });
         await loadLeaves();
       }
     } catch (err) {
-      console.error("handleApply error", err);
-      setError("❌ Network error while applying leave");
+      console.error("APPLY ERROR:", err);
+
+      if (err.name === "AbortError") {
+        setError(
+          "⏳ Server took too long to respond. Please try again."
+        );
+      } else {
+        setError("❌ Network / server error");
+      }
     } finally {
-      setLoading(false);
+      clearTimeout(timeoutId);
+      setSubmitting(false);
     }
   }
 
-  // purely DB update, no email needed
-  async function handleUpdate(leaveId, newFrom, newTo, newReason) {
-    setError("");
-    setSuccess("");
+  /* ---------------- Update Leave ---------------- */
+  async function handleUpdate(id, from, to, reason) {
     setLoading(true);
+    setError("");
 
-    const payload = {};
-    if (newFrom) payload.from_date = newFrom;
-    if (newTo) payload.to_date = newTo;
-    if (newReason !== undefined) payload.reason = newReason;
-
-    const { data, error: upError } = await supabase
+    const { data, error } = await supabase
       .from("trainer_leaves")
-      .update(payload)
-      .eq("id", leaveId)
+      .update({ from_date: from, to_date: to, reason })
+      .eq("id", id)
       .eq("trainer_id", internalUser.id)
       .eq("status", "pending")
       .select()
       .single();
 
-    if (upError) {
-      console.error("handleUpdate error", upError);
-      setError("❌ Failed to update leave (only pending leaves can be updated)");
+    if (error) {
+      setError("Failed to update leave");
     } else {
-      setSuccess("✅ Leave updated successfully");
-      setLeaves((prev) =>
-        prev.map((l) => (l.id === leaveId ? data : l))
-      );
+      setLeaves((prev) => prev.map((l) => (l.id === id ? data : l)));
+      setSuccess("✅ Leave updated");
     }
 
     setLoading(false);
   }
 
-  // no email needed on delete
-  async function handleDelete(leaveId) {
-    setError("");
-    setSuccess("");
+  /* ---------------- Delete Leave ---------------- */
+  async function handleDelete(id) {
     setLoading(true);
+    setError("");
 
-    const { error: delError } = await supabase
+    const { error } = await supabase
       .from("trainer_leaves")
       .delete()
-      .eq("id", leaveId)
+      .eq("id", id)
       .eq("trainer_id", internalUser.id);
 
-    if (delError) {
-      console.error("handleDelete error", delError);
-      setError("❌ Failed to delete leave");
+    if (error) {
+      setError("Failed to delete leave");
     } else {
-      setSuccess("✅ Leave deleted successfully");
-      setLeaves((prev) => prev.filter((l) => l.id !== leaveId));
+      setLeaves((prev) => prev.filter((l) => l.id !== id));
+      setSuccess("✅ Leave deleted");
     }
 
     setLoading(false);
   }
 
-  const welcomeName = sessionUser?.name || "User";
-  const roleTitle = sessionUser?.role
-    ? sessionUser.role.charAt(0).toUpperCase() + sessionUser.role.slice(1)
-    : "Dashboard";
-
-  if (!sessionUser) {
-    return (
-      <Box sx={{ maxWidth: 520, mx: "auto", my: 3 }}>
-        <Paper elevation={5} sx={{ p: 4, borderRadius: 3 }}>
-          <Typography variant="h5">
-            Please login to access trainer leave dashboard.
-          </Typography>
-        </Paper>
-      </Box>
-    );
-  }
-  if (sessionUser.role !== "trainer") {
-    return (
-      <Box sx={{ maxWidth: 520, mx: "auto", my: 3 }}>
-        <Paper elevation={5} sx={{ p: 4, borderRadius: 3 }}>
-          <Typography variant="h5">
-            Access denied. Only trainers can view this page.
-          </Typography>
-        </Paper>
-      </Box>
-    );
-  }
-  if (!internalUser) {
-    return (
-      <Box sx={{ maxWidth: 520, mx: "auto", my: 3 }}>
-        <Paper elevation={5} sx={{ p: 4, borderRadius: 3 }}>
-          <Typography variant="h5">Loading trainer profile...</Typography>
-        </Paper>
-      </Box>
-    );
-  }
-
-  const message = error || success;
+  /* ---------------- UI ---------------- */
+  if (!sessionUser) return <Typography>Please login</Typography>;
+  if (!internalUser) return <Typography>Loading profile...</Typography>;
 
   return (
     <Box sx={{ maxWidth: 900, mx: "auto", my: 3 }}>
-      <Paper elevation={5} sx={{ p: 4, borderRadius: 3 }}>
-        <Typography variant="h4" color="primary" gutterBottom>
-          {roleTitle} Dashboard
-        </Typography>
-        <Typography variant="subtitle1" color="text.secondary" mb={2}>
-          Welcome, {welcomeName}!
+      <Paper sx={{ p: 4 }}>
+        <Typography variant="h4" gutterBottom>
+          Trainer Leave Dashboard
         </Typography>
 
-        <Typography variant="h6" color="primary" sx={{ mb: 3 }}>
-          📝 Leave Management
-        </Typography>
-
-        {/* Apply Leave UI */}
-        <Box sx={{ display: "flex", flexDirection: "column", gap: 2, mb: 3 }}>
+        {/* APPLY FORM */}
+        <Box sx={{ display: "flex", gap: 2, flexDirection: "column", mb: 3 }}>
           <TextField
-            label="From Date"
             type="date"
+            label="From Date"
             InputLabelProps={{ shrink: true }}
             value={form.from_date}
             onChange={(e) =>
-              setForm((prev) => ({ ...prev, from_date: e.target.value }))
+              setForm((p) => ({ ...p, from_date: e.target.value }))
             }
-            fullWidth
           />
           <TextField
-            label="To Date"
             type="date"
+            label="To Date"
             InputLabelProps={{ shrink: true }}
             value={form.to_date}
             onChange={(e) =>
-              setForm((prev) => ({ ...prev, to_date: e.target.value }))
+              setForm((p) => ({ ...p, to_date: e.target.value }))
             }
-            fullWidth
           />
           <TextField
             label="Reason"
             value={form.reason}
             onChange={(e) =>
-              setForm((prev) => ({ ...prev, reason: e.target.value }))
+              setForm((p) => ({ ...p, reason: e.target.value }))
             }
-            fullWidth
           />
+
           <Button
             variant="contained"
-            color="primary"
-            fullWidth
             onClick={handleApply}
-            sx={{ py: 1.5, fontWeight: "bold", fontSize: "1rem", boxShadow: 4 }}
-            disabled={loading}
+            disabled={submitting}
           >
-            📤 Apply for Leave
+            {submitting ? (
+              <>
+                <CircularProgress size={18} sx={{ mr: 1 }} />
+                Applying...
+              </>
+            ) : (
+              "Apply Leave"
+            )}
           </Button>
         </Box>
 
-        {/* Feedback message */}
-        <Fade in={!!message}>
-          <Box sx={{ mb: 3 }}>
-            {message && (
-              <Alert
-                severity={
-                  message.startsWith("✅")
-                    ? "success"
-                    : message.startsWith("⚠️")
-                    ? "warning"
-                    : "error"
-                }
-              >
-                {message}
-              </Alert>
-            )}
-          </Box>
+        {/* MESSAGE */}
+        <Fade in={!!(error || success)}>
+          <Alert severity={error ? "error" : "success"}>
+            {error || success}
+          </Alert>
         </Fade>
 
-        {/* Existing leaves list */}
-        <Typography variant="h6" sx={{ mb: 2 }}>
-          📚 My Leaves
+        {/* LEAVES */}
+        <Typography variant="h6" sx={{ mt: 3 }}>
+          My Leaves
         </Typography>
 
-        {loading && !leaves.length ? (
-          <Typography>Loading leaves...</Typography>
-        ) : !leaves.length ? (
-          <Typography>No leaves found.</Typography>
+        {loading ? (
+          <Typography>Loading...</Typography>
         ) : (
-          <Box sx={{ overflowX: "auto" }}>
-            <table
-              style={{
-                width: "100%",
-                borderCollapse: "collapse",
-                marginTop: 8,
-              }}
-            >
-              <thead>
-                <tr>
-                  <th style={thStyle}>ID</th>
-                  <th style={thStyle}>From</th>
-                  <th style={thStyle}>To</th>
-                  <th style={thStyle}>Reason</th>
-                  <th style={thStyle}>Status</th>
-                  <th style={thStyle}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {leaves.map((leave) => (
-                  <LeaveRow
-                    key={leave.id}
-                    leave={leave}
-                    onUpdate={handleUpdate}
-                    onDelete={handleDelete}
-                  />
-                ))}
-              </tbody>
-            </table>
-          </Box>
+          leaves.map((l) => (
+            <Box key={l.id} sx={{ borderBottom: "1px solid #ddd", py: 1 }}>
+              {formatDateDDMMYYYY(l.from_date)} →{" "}
+              {formatDateDDMMYYYY(l.to_date)} | {l.status}
+            </Box>
+          ))
         )}
       </Paper>
     </Box>
-  );
-}
-
-const thStyle = {
-  borderBottom: "1px solid #ddd",
-  padding: "8px",
-  textAlign: "left",
-  backgroundColor: "#f5f5f5",
-};
-
-const tdStyle = {
-  borderBottom: "1px solid #eee",
-  padding: "8px",
-  verticalAlign: "top",
-};
-
-function LeaveRow({ leave, onUpdate, onDelete }) {
-  const [editFrom, setEditFrom] = useState(leave.from_date || "");
-  const [editTo, setEditTo] = useState(leave.to_date || "");
-  const [editReason, setEditReason] = useState(leave.reason || "");
-  const isPending = leave.status === "pending";
-
-  return (
-    <tr>
-      <td style={tdStyle}>{leave.id}</td>
-      <td style={tdStyle}>{formatDateDDMMYYYY(leave.from_date)}</td>
-      <td style={tdStyle}>{formatDateDDMMYYYY(leave.to_date)}</td>
-      <td style={tdStyle}>{leave.reason}</td>
-      <td style={tdStyle}>{leave.status}</td>
-      <td style={tdStyle}>
-        <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-          {isPending && (
-            <>
-              <TextField
-                type="date"
-                label="From"
-                InputLabelProps={{ shrink: true }}
-                value={editFrom}
-                onChange={(e) => setEditFrom(e.target.value)}
-                size="small"
-              />
-              <TextField
-                type="date"
-                label="To"
-                InputLabelProps={{ shrink: true }}
-                value={editTo}
-                onChange={(e) => setEditTo(e.target.value)}
-                size="small"
-              />
-              <TextField
-                label="Reason"
-                value={editReason}
-                onChange={(e) => setEditReason(e.target.value)}
-                size="small"
-              />
-              <Button
-                variant="outlined"
-                size="small"
-                onClick={() =>
-                  onUpdate(leave.id, editFrom, editTo, editReason)
-                }
-              >
-                Save changes
-              </Button>
-            </>
-          )}
-          <Button
-            variant="contained"
-            color="error"
-            size="small"
-            onClick={() => onDelete(leave.id)}
-          >
-            Delete
-          </Button>
-        </Box>
-      </td>
-    </tr>
   );
 }
