@@ -133,6 +133,7 @@ export default function TrainerLeaveDashboard() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
+          trainer_id: internalUser.id,          // ✅ send trainer_id
           from_date: form.from_date,
           to_date: form.to_date,
           reason: form.reason || null,
