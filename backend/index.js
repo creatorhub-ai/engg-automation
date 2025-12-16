@@ -33,6 +33,7 @@ import marksSaveRouter from "./routes/marksSave.js";
 import { pool } from "./db.js";
 import announceRouter from "./routes/announce.js";
 import attendanceRoutes from "./routes/attendance.js";
+import jwt from "jsonwebtoken";
 
 dotenv.config();
 
@@ -104,7 +105,15 @@ const transporter = nodemailer.createTransport({
   secure: false,
   auth: {
     user: "coordinator@chipedge.com",
-    pass: "hbicmhnchaohxeok",
+    pass: "rjtjpkclsqgnafgs",
+  },
+});
+
+const mailTransporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.LEAVE_EMAIL_USER || "coordinator@chipedge.com",
+    pass: process.env.LEAVE_EMAIL_PASS || "rjtjpkclsqgnafgs"
   },
 });
 
@@ -116,6 +125,27 @@ const TRAINER_SOFT_SKILLS_REMINDER_TIME = "17:08"; // HH:mm
 const LEARNER_SOFT_SKILLS_REMINDER_TIME = "17:10"; // HH:mm
 
 app.use(bodyParser.json());
+
+function authMiddleware(req, res, next) {
+  const authHeader = req.headers.authorization || "";
+  const token = authHeader.startsWith("Bearer ")
+    ? authHeader.slice(7)
+    : null;
+
+  if (!token) {
+    return res.status(401).json({ error: "No token provided" });
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET); // same secret as /api/login
+    // decoded should include { id, role, name, email }
+    req.user = decoded;
+    next();
+  } catch (err) {
+    console.error("authMiddleware error:", err);
+    return res.status(401).json({ error: "Invalid or expired token" });
+  }
+}
 
 // === Helpers ===
 function formatDate(dateStr) {
@@ -178,6 +208,25 @@ function computeScheduledAtISO(startDateStr, offsetDays = 0, sendTime = "09:00")
   } catch (error) {
     console.error('Error in computeScheduledAtISO:', error);
     throw error;
+  }
+}
+
+async function sendEmail({ to, subject, text, html }) {
+  const fromAddress = process.env.LEAVE_EMAIL_USER || "coordinator@chipedge.com";
+
+  const mailOptions = {
+    from: `Leave Management <${fromAddress}>`,
+    to,
+    subject,
+    text,
+    html: html || text,
+  };
+
+  try {
+    const info = await mailTransporter.sendMail(mailOptions);
+    console.log("Email sent:", info.response);
+  } catch (err) {
+    console.error("Error sending email:", err);
   }
 }
 
@@ -2054,6 +2103,302 @@ app.get('/api/get-classroom-matrix', async (req, res) => {
     weeks: [],
   });
 });
+
+// POST /api/leave/apply  (create new leave)
+app.post("/api/leave/apply", authMiddleware, async (req, res) => {
+  try {
+    const { id: userId, role, name, email } = req.user;
+
+    if (role !== "trainer") {
+      return res
+        .status(403)
+        .json({ error: "Only trainers can apply for leave" });
+    }
+
+    const { from_date, to_date, reason } = req.body;
+
+    if (!from_date || !to_date) {
+      return res
+        .status(400)
+        .json({ error: "from_date and to_date are required" });
+    }
+
+    // Insert leave
+    const result = await pool.query(
+      `
+        insert into trainer_leaves (trainer_id, from_date, to_date, reason, status)
+        values ($1, $2, $3, $4, 'pending')
+        returning *
+      `,
+      [userId, from_date, to_date, reason || null]
+    );
+    const leave = result.rows[0];
+
+    // Fetch managers/admins
+    const mgrRes = await pool.query(
+      `select name, email from internal_users where role = 'manager' or role = 'admin'`
+    );
+    const managers = mgrRes.rows || [];
+
+    if (managers.length) {
+      const toList = managers.map((m) => m.email).join(",");
+      const subject = `New leave request from ${name}`;
+      const text = [
+        `A new leave request has been submitted.`,
+        "",
+        `Trainer: ${name} (${email})`,
+        `Leave ID: ${leave.id}`,
+        `From: ${leave.from_date}`,
+        `To: ${leave.to_date}`,
+        `Reason: ${leave.reason || "-"}`,
+        "",
+        `Please review this request in the Manager Leave Dashboard.`,
+      ].join("\n");
+
+      await sendEmail({ to: toList, subject, text });
+    }
+
+    return res.json({ success: true, leave });
+  } catch (err) {
+    console.error("apply leave error:", err);
+    return res.status(500).json({ error: "Failed to apply leave" });
+  }
+});
+
+// PUT /api/leave/:id  (trainer updates dates/reason while pending)
+app.put("/api/leave/:id", async (req, res) => {
+  try {
+    const { id: userId, role } = req.user;
+    const leaveId = Number(req.params.id);
+    const { from_date, to_date, reason } = req.body;
+
+    const existing = await pool.query(
+      `select * from trainer_leaves where id = $1`,
+      [leaveId]
+    );
+    if (!existing.rowCount) {
+      return res.status(404).json({ error: "Leave not found" });
+    }
+    const leave = existing.rows[0];
+
+    if (role !== "trainer" || leave.trainer_id !== userId) {
+      return res.status(403).json({ error: "Not allowed to modify this leave" });
+    }
+    if (leave.status !== "pending") {
+      return res.status(400).json({ error: "Only pending leaves can be updated" });
+    }
+
+    const updated = await pool.query(
+      `
+        update trainer_leaves
+        set from_date = coalesce($2, from_date),
+            to_date   = coalesce($3, to_date),
+            reason    = coalesce($4, reason),
+            updated_at = now()
+        where id = $1
+        returning *
+      `,
+      [leaveId, from_date, to_date, reason]
+    );
+
+    const leaveUpdated = updated.rows[0];
+
+    // notify managers that dates changed
+    await pool.query(
+      `
+        insert into leave_notifications (recipient_id, leave_id, type)
+        select id, $1, 'updated'
+        from internal_users
+        where role = 'manager'
+      `,
+      [leaveId]
+    );
+
+    res.json(leaveUpdated);
+  } catch (err) {
+    console.error("update leave error:", err);
+    res.status(500).json({ error: "Failed to update leave" });
+  }
+});
+
+// GET /api/leave/list?view=month&date=2025-12-01
+app.get("/api/leave/list", async (req, res) => {
+  try {
+    const { role } = req.user;
+    if (role !== "manager") {
+      return res.status(403).json({ error: "Only managers can view leaves dashboard" });
+    }
+
+    const { view = "month", date } = req.query;
+    const baseDate = date || new Date().toISOString().slice(0, 10);
+
+    let whereClause = "";
+    const params = [baseDate];
+
+    if (view === "day") {
+      whereClause = `from_date <= $1::date and to_date >= $1::date`;
+    } else if (view === "week") {
+      // from Monday to Sunday containing baseDate
+      whereClause = `
+        from_date <= ($1::date + interval '6 day')
+        and to_date >= ($1::date - extract(dow from $1::date)::int * interval '1 day')
+      `;
+    } else {
+      // month view: any overlap with that month
+      whereClause = `
+        date_trunc('month', from_date) <= date_trunc('month', $1::date)
+        and date_trunc('month', to_date) >= date_trunc('month', $1::date)
+      `;
+    }
+
+    const result = await pool.query(
+      `
+        select l.*, u.name as trainer_name, u.email as trainer_email
+        from trainer_leaves l
+        join internal_users u on u.id = l.trainer_id
+        where ${whereClause}
+        order by from_date asc, trainer_name asc
+      `,
+      params
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error("list leaves error:", err);
+    res.status(500).json({ error: "Failed to fetch leaves" });
+  }
+});
+
+// POST /api/leave/:id/decision  { decision: 'approved' | 'rejected' }
+app.post(
+  "/api/leave/:id/decision",
+  authMiddleware,
+  async (req, res) => {
+    try {
+      const {
+        id: managerId,
+        role,
+        name: managerName,
+        email: managerEmail,
+      } = req.user;
+
+      if (role !== "manager" && role !== "admin") {
+        return res.status(403).json({
+          error: "Only manager/admin can approve/reject/revoke leaves",
+        });
+      }
+
+      const leaveId = Number(req.params.id);
+      const { decision } = req.body; // 'approved' | 'rejected' | 'revoked'
+
+      if (!["approved", "rejected", "revoked"].includes(decision)) {
+        return res.status(400).json({ error: "Invalid decision" });
+      }
+
+      // load leave + trainer
+      const existing = await pool.query(
+        `
+          select l.*, u.name as trainer_name, u.email as trainer_email
+          from trainer_leaves l
+          join internal_users u on u.id = l.trainer_id
+          where l.id = $1
+        `,
+        [leaveId]
+      );
+      if (!existing.rowCount) {
+        return res.status(404).json({ error: "Leave not found" });
+      }
+      const leaveRow = existing.rows[0];
+
+      const newStatus =
+        decision === "revoked" ? "pending" : decision;
+      const newManagerId =
+        decision === "revoked" ? null : managerId;
+
+      const updated = await pool.query(
+        `
+          update trainer_leaves
+          set status = $2,
+              manager_id = $3,
+              updated_at = now()
+          where id = $1
+          returning *
+        `,
+        [leaveId, newStatus, newManagerId]
+      );
+      const leave = updated.rows[0];
+
+      // Email to trainer
+      const subject =
+        decision === "revoked"
+          ? `Leave approval revoked (ID ${leave.id})`
+          : `Your leave request has been ${decision} (ID ${leave.id})`;
+
+      const textLines = [];
+
+      textLines.push(`Hi ${leaveRow.trainer_name},`, "");
+      if (decision === "revoked") {
+        textLines.push(
+          `Your previously ${leaveRow.status} leave has been set back to pending by ${managerName}.`
+        );
+      } else {
+        textLines.push(
+          `Your leave request has been ${decision} by ${managerName}.`
+        );
+      }
+      textLines.push(
+        "",
+        `Leave details:`,
+        `From: ${leave.from_date}`,
+        `To: ${leave.to_date}`,
+        `Reason: ${leave.reason || "-"}`,
+        "",
+        `Regards,`,
+        managerName,
+        managerEmail || ""
+      );
+
+      await sendEmail({
+        to: leaveRow.trainer_email,
+        subject,
+        text: textLines.join("\n"),
+      });
+
+      return res.json({ success: true, leave });
+    } catch (err) {
+      console.error("decision error:", err);
+      return res
+        .status(500)
+        .json({ error: "Failed to update leave status" });
+    }
+  }
+);
+
+// GET /api/leave/notifications
+app.get("/api/leave/notifications", async (req, res) => {
+  try {
+    const { id: userId } = req.user;
+
+    const result = await pool.query(
+      `
+        select n.*, l.from_date, l.to_date, l.status, u.name as trainer_name
+        from leave_notifications n
+        join trainer_leaves l on l.id = n.leave_id
+        join internal_users u on u.id = l.trainer_id
+        where n.recipient_id = $1
+        order by n.created_at desc
+        limit 50
+      `,
+      [userId]
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error("notifications error:", err);
+    res.status(500).json({ error: "Failed to fetch notifications" });
+  }
+});
+
 
 // Suggest classroom API
 app.post('/api/suggestClassroom', async (req, res) => {
@@ -5505,6 +5850,140 @@ app.get("/api/hello", (req, res) => {
   res.json({ success: true, msg: "Hello from backend!" });
 });
 
+// === UNIFIED Background Worker (FIXED) ===
+const MAX_RETRIES = 5;
+
+cron.schedule("*/1 * * * *", async () => {  // every minute
+  try {
+    const now = dayjs();
+
+    // Expand time window by 1 minute backward and forward
+    const windowStart = now.subtract(1, "minute").startOf("minute").toISOString();
+    const windowEnd = now.add(1, "minute").endOf("minute").toISOString();
+
+    console.log(`⏱ Cron running at ${now.toISOString()}`);
+    console.log(`Checking emails between ${windowStart} and ${windowEnd}`);
+
+    // Fetch emails that must be processed
+    const { data: emails, error } = await supabase
+      .from("scheduled_emails")
+      .select("*")
+      .or("status.eq.scheduled,status.eq.failed")
+      .gte("scheduled_at", windowStart)
+      .lte("scheduled_at", windowEnd)
+      .order("scheduled_at", { ascending: true })
+      .limit(1000);
+
+    if (error) {
+      console.error("❌ Error fetching emails:", error.message);
+      return;
+    }
+
+    if (!emails || emails.length === 0) {
+      console.log("📭 No scheduled emails in this window.");
+      return;
+    }
+
+    console.log(`📨 Processing ${emails.length} email(s)...`);
+
+    for (const email of emails) {
+      console.log(`➡️ Processing email ID ${email.id} (${email.recipient_email}) status=${email.status}`);
+
+      // STOP if reached max retries
+      if ((email.retry_count || 0) >= MAX_RETRIES) {
+        console.log(`🚫 Email ID ${email.id} reached MAX_RETRIES. Skipping.`);
+        continue;
+      }
+
+      // Mark as processing
+      const { error: markError } = await supabase
+        .from("scheduled_emails")
+        .update({
+          status: "processing",
+          retry_count: (email.retry_count || 0) + 1,
+          last_attempt_at: now.toISOString(),
+          updated_at: now.toISOString(),
+        })
+        .eq("id", email.id);   // ❗ FIX: remove status condition
+
+      if (markError) {
+        console.error(`⚠️ Cannot mark email ${email.id} as processing:`, markError.message);
+        continue;
+      }
+
+      try {
+        const html = email.body_html || "";
+        const text = html.replace(/<\/?[^>]+(>|$)/g, "");
+        const attachments = [];
+
+        if (email.attachment_name && email.attachment_data) {
+          attachments.push({
+            filename: email.attachment_name,
+            content: Buffer.from(email.attachment_data, "base64")
+          });
+        }
+
+        if (!email.recipient_email?.includes("@")) {
+          throw new Error("Invalid email address");
+        }
+
+        const sendResult = await sendRawEmail({
+          to: email.recipient_email,
+          subject: email.subject || "(No subject)",
+          html,
+          text,
+          attachments
+        });
+
+        if (sendResult?.success) {
+          console.log(`✅ SENT: email ID ${email.id}`);
+
+          await supabase
+            .from("scheduled_emails")
+            .update({
+              status: "sent",
+              sent_at: dayjs().toISOString(),
+              error: null,
+              updated_at: dayjs().toISOString()
+            })
+            .eq("id", email.id);
+
+        } else {
+          console.error(`❌ FAILED email ID ${email.id}:`, sendResult?.error);
+
+          await supabase
+            .from("scheduled_emails")
+            .update({
+              status: "failed",
+              error: sendResult?.error || "Unknown error",
+              updated_at: dayjs().toISOString()
+            })
+            .eq("id", email.id);
+        }
+
+      } catch (err) {
+        console.error(`⚠️ Exception email ID ${email.id}:`, err.message);
+
+        await supabase
+          .from("scheduled_emails")
+          .update({
+            status: "failed",
+            error: err.message,
+            updated_at: dayjs().toISOString()
+          })
+          .eq("id", email.id);
+      }
+
+      // Avoid SMTP throttling
+      await new Promise(r => setTimeout(r, 150));
+    }
+
+  } catch (e) {
+    console.error("🚨 CRON FATAL ERROR:", e);
+  }
+});
+
+
 
 // === Get Scheduled Emails (Debug endpoint) ===
 app.get("/api/debug/scheduled-emails", async (req, res) => {
@@ -6006,4 +6485,5 @@ app.get("/api/attendance/by_batch", async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`🚀 Backend listening on http://localhost:${PORT}`);
+  console.log(`✅ Email scheduler is running - checking every minute for due emails`);
 });

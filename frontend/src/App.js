@@ -22,6 +22,8 @@ import MarkSheet from "./pages/MarkSheet";
 import ReportsDashboard from "./pages/ReportsDashboard";
 import AnnouncementDashboard from "./pages/AnnouncementDashboard";
 import ClassroomPlanner from "./pages/ClassroomPlanner";
+import TrainerLeaveDashboard from "./pages/TrainerLeaveDashboard";
+import ManagerLeaveDashboard from "./pages/ManagerLeaveDashboard";
 
 const roleMenus = {
   admin: [
@@ -41,6 +43,8 @@ const roleMenus = {
     { text: "Mark Entry", path: "/marks-entry" }, 
     { text: "Announcement", path: "/announcement" }, 
     { text: "Classroom Planner-2", path: "/classroom-planner" }, 
+    { text: "Trainer Leave Dashboard", path: "/trainer/leaves" }, 
+    { text: "Manager Leave Dashboard", path: "/manager/leaves" }, 
   ],
   manager: [
     { text: "Home", path: "/home" },
@@ -58,6 +62,7 @@ const roleMenus = {
     { text: "Attendance", path: "/attendance" }, // <-- added attendance menu
     { text: "Mark Entry", path: "/marks-entry" }, 
     { text: "Announcement", path: "/announcement" }, 
+    { text: "Manager Leave Dashboard", path: "/manager/leaves" }, 
   ],
   trainer: [
     { text: "Trainer Dashboard", path: "/dashboard" },
@@ -65,6 +70,7 @@ const roleMenus = {
     { text: "Soft Skill Announcement", path: "/soft-skill-announcement" },
     { text: "Attendance", path: "/attendance" }, // <-- added attendance menu
     { text: "Mark Entry", path: "/marks-entry" },
+    { text: "Trainer Leave Dashboard", path: "/trainer/leaves" }, 
   ],
   coordinator: [
     { text: "Home", path: "/home" },
@@ -137,6 +143,10 @@ function getComponentForPath(path, login) {
       return <AttendanceDashboard user={login} />; // <-- mapped attendance route to AttendanceDashboard component
     case "/classroom-planner":
       return <ClassroomPlanner user={login} />;
+    case "/trainer/leaves":
+      return <TrainerLeaveDashboard user={login} />;
+    case "/manager/leaves":
+      return <ManagerLeaveDashboard user={login} />;
     default:
       return <div>Page not found</div>;
   }
