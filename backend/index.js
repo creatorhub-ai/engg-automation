@@ -2108,33 +2108,27 @@ app.get('/api/get-classroom-matrix', async (req, res) => {
 // ================= APPLY LEAVE (TRAINER) =================
 app.post('/api/leave/apply', async (req, res) => {
   try {
+    console.log('Apply leave body:', req.body);
+
     const { trainer_id, from_date, to_date, reason, manager_id } = req.body;
 
-    const leave = await pool.query(
+    if (!trainer_id || !from_date || !to_date || !manager_id) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    const result = await pool.query(
       `INSERT INTO trainer_leaves
        (trainer_id, from_date, to_date, reason, manager_id)
        VALUES ($1,$2,$3,$4,$5)
        RETURNING *`,
-      [trainer_id, from_date, to_date, reason, manager_id]
+      [trainer_id, from_date, to_date, reason || null, manager_id]
     );
 
-    // notification
-    await pool.query(
-      `INSERT INTO leave_notifications (recipient_id, leave_id, type)
-       VALUES ($1,$2,'leave_applied')`,
-      [manager_id, leave.rows[0].id]
-    );
+    console.log('Inserted leave:', result.rows[0]);
 
-    // email
-    await mailTransporter.sendMail({
-      from: process.env.LEAVE_EMAIL_USER,
-      to: process.env.LEAVE_EMAIL_USER,
-      subject: 'New Leave Request',
-      text: `Trainer ${trainer_id} applied leave from ${from_date} to ${to_date}`
-    });
-
-    res.json({ success: true, leave: leave.rows[0] });
+    res.json(result.rows[0]);
   } catch (err) {
+    console.error('Apply leave error:', err);
     res.status(500).json({ error: err.message });
   }
 });
