@@ -2179,6 +2179,113 @@ Reason: ${reason || "-"}`,
   }
 });
 
+// ------------------------------------
+// APPROVE LEAVE (MANAGER) ✅ FIXED
+// ------------------------------------
+app.post("/api/leave/approve", async (req, res) => {
+  const { leave_id, manager_id } = req.body;
+
+  if (!leave_id) {
+    return res.status(400).json({
+      success: false,
+      error: "leave_id required",
+    });
+  }
+
+  try {
+    // 1️⃣ UPDATE STATUS FIRST (CRITICAL)
+    const { data, error } = await supabase
+      .from("trainer_leaves")
+      .update({
+        status: "approved",
+        approved_at: new Date(),
+        approved_by: manager_id || null,
+      })
+      .eq("id", leave_id)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    // 2️⃣ SEND EMAIL (NON-BLOCKING)
+    sendApprovalEmail(data).catch((err) =>
+      console.error("Email failed:", err)
+    );
+
+    // 3️⃣ RETURN SUCCESS IMMEDIATELY
+    return res.json({
+      success: true,
+      message: "Leave approved",
+      leave: data,
+    });
+  } catch (err) {
+    console.error("Approve leave error:", err);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to approve leave",
+    });
+  }
+});
+
+// ------------------------------------
+// REJECT LEAVE (OPTIONAL)
+// ------------------------------------
+app.post("/api/leave/reject", async (req, res) => {
+  const { leave_id, manager_id, reason } = req.body;
+
+  if (!leave_id) {
+    return res.status(400).json({
+      success: false,
+      error: "leave_id required",
+    });
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from("trainer_leaves")
+      .update({
+        status: "rejected",
+        rejected_at: new Date(),
+        rejected_by: manager_id || null,
+        rejection_reason: reason || null,
+      })
+      .eq("id", leave_id)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    return res.json({
+      success: true,
+      message: "Leave rejected",
+      leave: data,
+    });
+  } catch (err) {
+    console.error("Reject leave error:", err);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to reject leave",
+    });
+  }
+});
+
+// ------------------------------------
+// EMAIL FUNCTION (SAFE)
+// ------------------------------------
+async function sendApprovalEmail(leave) {
+  try {
+    if (!leave) return;
+
+    await transporter.sendMail({
+      to: process.env.TEST_EMAIL,
+      subject: "Leave Approved",
+      text: `Your leave from ${leave.from_date} to ${leave.to_date} has been approved.`,
+    });
+  } catch (err) {
+    console.error("Email send failed:", err);
+  }
+}
+
 
 // GET /api/leave/list?view=month&date=YYYY-MM-DD
 // ⬇️ KEEP using manager dashboard logic, but remove req.user dependency
