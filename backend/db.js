@@ -1,7 +1,9 @@
-// db.js
-import pkg from "pg";
-const { Pool } = pkg;
+const { Pool } = require('pg');
+require('dotenv').config();
 
-export const pool = new Pool({
-  connectionString: process.env.SUPABASE_URL,
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
 });
+
+module.exports = pool;

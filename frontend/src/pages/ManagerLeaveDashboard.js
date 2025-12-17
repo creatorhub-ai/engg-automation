@@ -1,96 +1,44 @@
-import React, { useEffect, useState } from "react";
-import { supabase } from "../supabaseClient";
-import {
-  Box,
-  Paper,
-  Typography,
-  Button,
-  Alert,
-  CircularProgress,
-} from "@mui/material";
-
-const API = "https://engg-automation.onrender.com";
+import { useState } from 'react';
+import axios from 'axios';
 
 export default function ManagerLeaveDashboard() {
-  const [user, setUser] = useState(null);
+  const [type, setType] = useState('');
+  const [value, setValue] = useState('');
   const [leaves, setLeaves] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
 
-  useEffect(() => {
-    const s = localStorage.getItem("userSession");
-    if (!s) {
-      setError("Login required");
-      setLoading(false);
-      return;
-    }
-    setUser(JSON.parse(s));
-  }, []);
+  const fetchLeaves = async () => {
+    const res = await axios.post('/api/leave/manager/filter', { type, value });
+    setLeaves(res.data);
+  };
 
-  useEffect(() => {
-    if (!user) return;
-
-    async function loadLeaves() {
-      try {
-        const res = await fetch(`${API}/api/leave/list`);
-        setLeaves(await res.json());
-      } catch {
-        setError("Failed to load leaves");
-      }
-      setLoading(false);
-    }
-
-    loadLeaves();
-  }, [user]);
-
-  async function decide(id, decision) {
-    await fetch(`${API}/api/leave/${id}/decision`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ decision }),
-    });
-
-    const reload = await fetch(`${API}/api/leave/list`);
-    setLeaves(await reload.json());
-  }
-
-  if (loading) {
-    return (
-      <Box sx={{ textAlign: "center", mt: 10 }}>
-        <CircularProgress />
-      </Box>
-    );
-  }
-
-  if (error) return <Alert severity="error">{error}</Alert>;
+  const updateStatus = async (id, status) => {
+    await axios.put('/api/leave/update', { leave_id: id, status });
+    fetchLeaves();
+  };
 
   return (
-    <Box sx={{ maxWidth: 1000, mx: "auto", mt: 4 }}>
-      <Paper sx={{ p: 4 }}>
-        <Typography variant="h4">Manager Leave Dashboard</Typography>
+    <>
+      <select onChange={e => setType(e.target.value)}>
+        <option value="">Select</option>
+        <option value="date">Date</option>
+        <option value="week">Week</option>
+        <option value="month">Month</option>
+      </select>
 
-        {leaves.map((l) => (
-          <Paper key={l.id} sx={{ p: 2, my: 1 }}>
-            <Typography>
-              {l.trainer_name} | {l.from_date} → {l.to_date} | {l.status}
-            </Typography>
+      <input
+        type={type === 'month' ? 'number' : 'date'}
+        onChange={e => setValue(e.target.value)}
+      />
 
-            {l.status === "pending" && (
-              <>
-                <Button onClick={() => decide(l.id, "approved")}>
-                  Approve
-                </Button>
-                <Button
-                  color="error"
-                  onClick={() => decide(l.id, "rejected")}
-                >
-                  Reject
-                </Button>
-              </>
-            )}
-          </Paper>
-        ))}
-      </Paper>
-    </Box>
+      <button onClick={fetchLeaves}>Filter</button>
+
+      {leaves.map(l => (
+        <div key={l.id}>
+          {l.from_date} → {l.to_date}
+          <button onClick={() => updateStatus(l.id, 'approved')}>Approve</button>
+          <button onClick={() => updateStatus(l.id, 'rejected')}>Reject</button>
+        </div>
+      ))}
+    </>
   );
 }

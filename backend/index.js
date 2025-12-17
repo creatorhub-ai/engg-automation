@@ -2105,379 +2105,123 @@ app.get('/api/get-classroom-matrix', async (req, res) => {
   });
 });
 
-// POST /api/leave/apply  (trainer creates leave WITHOUT JWT)
-app.post("/api/leave/apply", async (req, res) => {
+// ================= APPLY LEAVE (TRAINER) =================
+app.post('/api/leave/apply', async (req, res) => {
   try {
-    const { trainer_id, from_date, to_date, reason } = req.body;
+    const { trainer_id, from_date, to_date, reason, manager_id } = req.body;
 
-    if (!trainer_id || !from_date || !to_date) {
-      return res.status(400).json({ error: "Missing fields" });
-    }
-
-    const trainerRes = await pool.query(
-      "SELECT id, name, email FROM internal_users WHERE id = $1",
-      [trainer_id]
-    );
-    if (!trainerRes.rowCount) {
-      return res.status(404).json({ error: "Trainer not found" });
-    }
-
-    const trainer = trainerRes.rows[0];
-
-    const insert = await pool.query(
-      `
-      INSERT INTO trainer_leaves
-      (trainer_id, from_date, to_date, reason, status, created_at)
-      VALUES ($1,$2,$3,$4,'pending',now())
-      RETURNING *
-      `,
-      [trainer.id, from_date, to_date, reason || null]
+    const leave = await pool.query(
+      `INSERT INTO trainer_leaves
+       (trainer_id, from_date, to_date, reason, manager_id)
+       VALUES ($1,$2,$3,$4,$5)
+       RETURNING *`,
+      [trainer_id, from_date, to_date, reason, manager_id]
     );
 
-    const leave = insert.rows[0];
+    // notification
+    await pool.query(
+      `INSERT INTO leave_notifications (recipient_id, leave_id, type)
+       VALUES ($1,$2,'leave_applied')`,
+      [manager_id, leave.rows[0].id]
+    );
 
-    // ✅ RESPOND IMMEDIATELY
-    res.json({ success: true, leave });
-
-    // ✅ EMAIL MANAGERS (NON-BLOCKING)
-    setImmediate(async () => {
-      const mgrs = await pool.query(
-        "SELECT email FROM internal_users WHERE role IN ('manager','admin')"
-      );
-      if (!mgrs.rowCount) return;
-
-      await mailTransporter.sendMail({
-        to: mgrs.rows.map(m => m.email).join(","),
-        subject: `Leave Request: ${trainer.name}`,
-        text: `
-Trainer: ${trainer.name}
-From: ${from_date}
-To: ${to_date}
-Reason: ${reason || "-"}
-        `,
-      });
+    // email
+    await mailTransporter.sendMail({
+      from: process.env.LEAVE_EMAIL_USER,
+      to: process.env.LEAVE_EMAIL_USER,
+      subject: 'New Leave Request',
+      text: `Trainer ${trainer_id} applied leave from ${from_date} to ${to_date}`
     });
 
+    res.json({ success: true, leave: leave.rows[0] });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to apply leave" });
+    res.status(500).json({ error: err.message });
   }
 });
 
-// ------------------------------------
-// APPROVE LEAVE (MANAGER) ✅ FIXED
-// ------------------------------------
-app.post("/api/leave/approve", async (req, res) => {
-  const { leave_id, manager_id } = req.body;
-
-  if (!leave_id) {
-    return res.status(400).json({
-      success: false,
-      error: "leave_id required",
-    });
-  }
-
+// ================= TRAINER LEAVES =================
+app.get('/api/leave/trainer/:trainerId', async (req, res) => {
   try {
-    // 1️⃣ UPDATE STATUS FIRST (CRITICAL)
-    const { data, error } = await supabase
-      .from("trainer_leaves")
-      .update({
-        status: "approved",
-        approved_at: new Date(),
-        approved_by: manager_id || null,
-      })
-      .eq("id", leave_id)
-      .select()
-      .single();
+    const { trainerId } = req.params;
 
-    if (error) throw error;
-
-    // 2️⃣ SEND EMAIL (NON-BLOCKING)
-    sendApprovalEmail(data).catch((err) =>
-      console.error("Email failed:", err)
+    const leaves = await pool.query(
+      `SELECT * FROM trainer_leaves
+       WHERE trainer_id = $1
+       ORDER BY created_at DESC`,
+      [trainerId]
     );
 
-    // 3️⃣ RETURN SUCCESS IMMEDIATELY
-    return res.json({
-      success: true,
-      message: "Leave approved",
-      leave: data,
-    });
+    res.json(leaves.rows);
   } catch (err) {
-    console.error("Approve leave error:", err);
-    return res.status(500).json({
-      success: false,
-      error: "Failed to approve leave",
-    });
+    res.status(500).json({ error: err.message });
   }
 });
 
-// ------------------------------------
-// REJECT LEAVE (OPTIONAL)
-// ------------------------------------
-app.post("/api/leave/reject", async (req, res) => {
-  const { leave_id, manager_id, reason } = req.body;
-
-  if (!leave_id) {
-    return res.status(400).json({
-      success: false,
-      error: "leave_id required",
-    });
-  }
-
+// ================= MANAGER FILTER =================
+app.post('/api/leave/manager/filter', async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from("trainer_leaves")
-      .update({
-        status: "rejected",
-        rejected_at: new Date(),
-        rejected_by: manager_id || null,
-        rejection_reason: reason || null,
-      })
-      .eq("id", leave_id)
-      .select()
-      .single();
+    const { type, value } = req.body;
 
-    if (error) throw error;
+    let query = '';
+    let params = [];
 
-    return res.json({
-      success: true,
-      message: "Leave rejected",
-      leave: data,
-    });
-  } catch (err) {
-    console.error("Reject leave error:", err);
-    return res.status(500).json({
-      success: false,
-      error: "Failed to reject leave",
-    });
-  }
-});
-
-// ------------------------------------
-// EMAIL FUNCTION (SAFE)
-// ------------------------------------
-async function sendApprovalEmail(leave) {
-  try {
-    if (!leave) return;
-
-    await transporter.sendMail({
-      to: process.env.TEST_EMAIL,
-      subject: "Leave Approved",
-      text: `Your leave from ${leave.from_date} to ${leave.to_date} has been approved.`,
-    });
-  } catch (err) {
-    console.error("Email send failed:", err);
-  }
-}
-
-
-// GET /api/leave/list?view=month&date=YYYY-MM-DD
-// ⬇️ KEEP using manager dashboard logic, but remove req.user dependency
-app.get("/api/leave/list", async (req, res) => {
-  try {
-    const { view = "month", date } = req.query;
-    const base = date || new Date().toISOString().slice(0,10);
-
-    let where = "";
-    if (view === "date") {
-      where = `from_date <= $1::date AND to_date >= $1::date`;
-    } else if (view === "week") {
-      where = `
-        from_date <= ($1::date + interval '6 day')
-        AND to_date >= ($1::date - extract(dow from $1::date)::int * interval '1 day')
-      `;
-    } else {
-      where = `
-        date_trunc('month', from_date) <= date_trunc('month', $1::date)
-        AND date_trunc('month', to_date) >= date_trunc('month', $1::date)
-      `;
+    if (type === 'date') {
+      query = `SELECT * FROM trainer_leaves WHERE from_date <= $1 AND to_date >= $1`;
+      params = [value];
     }
 
-    const result = await pool.query(
-      `
-      SELECT l.*, u.name AS trainer_name, u.email AS trainer_email
-      FROM trainer_leaves l
-      JOIN internal_users u ON u.id = l.trainer_id
-      WHERE ${where}
-      ORDER BY from_date
-      `,
-      [base]
-    );
+    if (type === 'week') {
+      query = `
+        SELECT * FROM trainer_leaves
+        WHERE from_date <= ($1::date + interval '6 day')
+        AND to_date >= $1`;
+      params = [value];
+    }
 
+    if (type === 'month') {
+      query = `
+        SELECT * FROM trainer_leaves
+        WHERE EXTRACT(MONTH FROM from_date) = $1`;
+      params = [value];
+    }
+
+    const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to load leaves" });
+    res.status(500).json({ error: err.message });
   }
 });
 
-//=== leave decition approve/reject ===
-app.post("/api/leave/decision", async (req, res) => {
+// ================= APPROVE / REJECT =================
+app.put('/api/leave/update', async (req, res) => {
   try {
-    const { leave_id, decision, manager_name, manager_email } = req.body;
+    const { leave_id, status } = req.body;
 
-    if (!leave_id || !["approved","rejected"].includes(decision)) {
-      return res.status(400).json({ error: "Invalid request" });
-    }
-
-    const updated = await pool.query(
-      `
-      UPDATE trainer_leaves
-      SET status=$2, updated_at=now()
-      WHERE id=$1
-      RETURNING *
-      `,
-      [leave_id, decision]
+    const leave = await pool.query(
+      `UPDATE trainer_leaves
+       SET status=$1, updated_at=now()
+       WHERE id=$2 RETURNING *`,
+      [status, leave_id]
     );
 
-    if (!updated.rowCount) {
-      return res.status(404).json({ error: "Leave not found" });
-    }
+    const trainerId = leave.rows[0].trainer_id;
 
-    const leave = updated.rows[0];
-
-    const trainer = await pool.query(
-      "SELECT name,email FROM internal_users WHERE id=$1",
-      [leave.trainer_id]
+    await pool.query(
+      `INSERT INTO leave_notifications (recipient_id, leave_id, type)
+       VALUES ($1,$2,$3)`,
+      [trainerId, leave_id, status]
     );
 
-    res.json({ success: true, leave });
-
-    // EMAIL TRAINER (NON-BLOCKING)
-    setImmediate(async () => {
-      await mailTransporter.sendMail({
-        to: trainer.rows[0].email,
-        subject: `Leave ${decision.toUpperCase()}`,
-        text: `
-Hi ${trainer.rows[0].name},
-
-Your leave from ${leave.from_date} to ${leave.to_date}
-has been ${decision} by ${manager_name}.
-
-Regards
-        `,
-      });
+    await mailTransporter.sendMail({
+      from: process.env.LEAVE_EMAIL_USER,
+      to: process.env.LEAVE_EMAIL_USER,
+      subject: `Leave ${status}`,
+      text: `Your leave has been ${status}`
     });
 
+    res.json({ success: true });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Decision failed" });
-  }
-});
-
-// POST /api/leave/:id/decision  { decision: 'approved' | 'rejected' | 'revoked' }
-// ❌ REMOVE authMiddleware; frontend must send manager info in body
-app.post("/api/leave/:id/decision", async (req, res) => {
-  try {
-    const leaveId = Number(req.params.id);
-    const { decision, manager_id, manager_name, manager_email } = req.body;
-
-    if (!["approved", "rejected", "revoked"].includes(decision)) {
-      return res.status(400).json({ error: "Invalid decision" });
-    }
-    if (!manager_id || !manager_name) {
-      return res
-        .status(400)
-        .json({ error: "manager_id and manager_name are required" });
-    }
-
-    const existing = await pool.query(
-      `
-        select l.*, u.name as trainer_name, u.email as trainer_email
-        from trainer_leaves l
-        join internal_users u on u.id = l.trainer_id
-        where l.id = $1
-      `,
-      [leaveId]
-    );
-    if (!existing.rowCount) {
-      return res.status(404).json({ error: "Leave not found" });
-    }
-    const leaveRow = existing.rows[0];
-
-    const newStatus = decision === "revoked" ? "pending" : decision;
-    const newManagerId = decision === "revoked" ? null : manager_id;
-
-    const updated = await pool.query(
-      `
-        update trainer_leaves
-        set status = $2,
-            manager_id = $3,
-            updated_at = now()
-        where id = $1
-        returning *
-      `,
-      [leaveId, newStatus, newManagerId]
-    );
-    const leave = updated.rows[0];
-
-    const subject =
-      decision === "revoked"
-        ? `Leave approval revoked (ID ${leave.id})`
-        : `Your leave request has been ${decision} (ID ${leave.id})`;
-
-    const textLines = [];
-    textLines.push(`Hi ${leaveRow.trainer_name},`, "");
-    if (decision === "revoked") {
-      textLines.push(
-        `Your previously ${leaveRow.status} leave has been set back to pending by ${manager_name}.`
-      );
-    } else {
-      textLines.push(
-        `Your leave request has been ${decision} by ${manager_name}.`
-      );
-    }
-    textLines.push(
-      "",
-      `Leave details:`,
-      `From: ${leave.from_date}`,
-      `To: ${leave.to_date}`,
-      `Reason: ${leave.reason || "-"}`,
-      "",
-      `Regards,`,
-      manager_name,
-      manager_email || ""
-    );
-
-    await sendEmail({
-      to: leaveRow.trainer_email,
-      subject,
-      text: textLines.join("\n"),
-    });
-
-    return res.json({ success: true, leave });
-  } catch (err) {
-    console.error("decision error:", err);
-    return res.status(500).json({ error: "Failed to update leave status" });
-  }
-});
-
-// GET /api/leave/notifications (optional – still needs auth if you use it)
-app.get("/api/leave/notifications", async (req, res) => {
-  try {
-    const { id: userId } = req.user || {};
-    if (!userId) {
-      return res.status(400).json({ error: "userId missing" });
-    }
-
-    const result = await pool.query(
-      `
-        select n.*, l.from_date, l.to_date, l.status, u.name as trainer_name
-        from leave_notifications n
-        join trainer_leaves l on l.id = n.leave_id
-        join internal_users u on u.id = l.trainer_id
-        where n.recipient_id = $1
-        order by n.created_at desc
-        limit 50
-      `,
-      [userId]
-    );
-
-    res.json(result.rows);
-  } catch (err) {
-    console.error("notifications error:", err);
-    res.status(500).json({ error: "Failed to fetch notifications" });
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -5044,7 +4788,7 @@ app.post('/api/mail/resend', async (req, res) => {
   
   try {
     // Send email using nodemailer
-    await transporter.sendMail({
+    await mailTransporter.sendMail({
       from: process.env.EMAIL_USER,
       to: recipient_email,
       subject: subject,
@@ -5861,7 +5605,7 @@ app.post("/api/internal/feedback-share", upload.single("file"), async (req, res)
     for (const user of recipients) {
       try {
         // Use your preferred email SMTP method here (Nodemailer, SendGrid, etc.)
-        await transporter.sendMail({
+        await mailTransporter.sendMail({
           from: process.env.MAIL_FROM,
           to: user.email,
           subject: `${feedbackType} for Batch: ${batchNo}`,
