@@ -2,14 +2,24 @@ import React, { useEffect, useState } from "react";
 import api from "../api";
 
 export default function TrainerLeaveDashboard() {
+  // ✅ SAFE READ
   const trainerId = localStorage.getItem("trainer_id");
 
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [reason, setReason] = useState("");
   const [leaves, setLeaves] = useState([]);
+  const [error, setError] = useState("");
 
-  // 🔹 Fetch leaves
+  // 🚨 STOP if trainerId missing
+  useEffect(() => {
+    if (!trainerId) {
+      setError("Trainer not logged in. Please login again.");
+      return;
+    }
+    loadLeaves();
+  }, []);
+
   const loadLeaves = async () => {
     try {
       const res = await api.get(`/api/leave/trainer/${trainerId}`);
@@ -20,12 +30,12 @@ export default function TrainerLeaveDashboard() {
     }
   };
 
-  useEffect(() => {
-    loadLeaves();
-  }, []);
-
-  // 🔹 Apply leave
   const applyLeave = async () => {
+    if (!trainerId) {
+      alert("Trainer ID missing. Please login again.");
+      return;
+    }
+
     if (!fromDate || !toDate || !reason) {
       alert("Missing required fields");
       return;
@@ -33,22 +43,27 @@ export default function TrainerLeaveDashboard() {
 
     try {
       await api.post("/api/leave/apply", {
-        trainer_id: trainerId,
+        trainer_id: Number(trainerId), // ✅ FORCE NUMBER
         from_date: fromDate,
         to_date: toDate,
-        reason,
+        reason: reason.trim(),
       });
 
       alert("Leave applied successfully");
+
       setFromDate("");
       setToDate("");
       setReason("");
       loadLeaves();
     } catch (err) {
+      console.error("Apply Leave Error:", err.response?.data || err.message);
       alert("Failed to apply leave");
-      console.error(err);
     }
   };
+
+  if (error) {
+    return <h3 style={{ color: "red" }}>{error}</h3>;
+  }
 
   return (
     <div style={{ padding: 20 }}>
@@ -72,6 +87,7 @@ export default function TrainerLeaveDashboard() {
         onChange={(e) => setReason(e.target.value)}
       />
 
+      <br />
       <button onClick={applyLeave}>Apply Leave</button>
 
       <hr />
