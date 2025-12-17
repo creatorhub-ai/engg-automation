@@ -2107,74 +2107,59 @@ app.get('/api/get-classroom-matrix', async (req, res) => {
 
 // POST /api/leave/apply  (trainer creates leave WITHOUT JWT)
 app.post("/api/leave/apply", async (req, res) => {
-  console.log("▶ /api/leave/apply START");
-
   try {
     const { trainer_id, from_date, to_date, reason } = req.body;
 
-    console.log("▶ Payload:", req.body);
-
     if (!trainer_id || !from_date || !to_date) {
-      return res.status(400).json({
-        error: "trainer_id, from_date and to_date are required",
-      });
+      return res.status(400).json({ error: "Missing fields" });
     }
 
-    // ✅ DO NOT cast bigint
-    const trainerResult = await pool.query(
-      "SELECT id, name, email FROM internal_users WHERE id = $1::bigint",
+    const trainerRes = await pool.query(
+      "SELECT id, name, email FROM internal_users WHERE id = $1",
       [trainer_id]
     );
-
-    console.log("▶ trainerResult.rowCount:", trainerResult.rowCount);
-
-    if (!trainerResult.rowCount) {
+    if (!trainerRes.rowCount) {
       return res.status(404).json({ error: "Trainer not found" });
     }
 
-    const trainer = trainerResult.rows[0];
+    const trainer = trainerRes.rows[0];
 
-    // ✅ Insert leave (fast operation)
-    const insertResult = await pool.query(
+    const insert = await pool.query(
       `
-      INSERT INTO trainer_leaves (trainer_id, from_date, to_date, reason, status)
-      VALUES ($1::bigint, $2::date, $3::date, $4, 'pending')
+      INSERT INTO trainer_leaves
+      (trainer_id, from_date, to_date, reason, status, created_at)
+      VALUES ($1,$2,$3,$4,'pending',now())
       RETURNING *
       `,
       [trainer.id, from_date, to_date, reason || null]
     );
 
-    const leave = insertResult.rows[0];
+    const leave = insert.rows[0];
 
-    console.log("✅ Leave inserted:", leave.id);
-
-    // ✅ Respond immediately (NO WAIT)
+    // ✅ RESPOND IMMEDIATELY
     res.json({ success: true, leave });
 
-    // 📨 Email is BEST-EFFORT (async, non-blocking)
+    // ✅ EMAIL MANAGERS (NON-BLOCKING)
     setImmediate(async () => {
-      try {
-        const mgrRes = await pool.query(
-          "SELECT email FROM internal_users WHERE role IN ('manager','admin')"
-        );
+      const mgrs = await pool.query(
+        "SELECT email FROM internal_users WHERE role IN ('manager','admin')"
+      );
+      if (!mgrs.rowCount) return;
 
-        if (mgrRes.rowCount) {
-          const toList = mgrRes.rows.map((m) => m.email).join(",");
-          await sendEmail({
-            to: toList,
-            subject: `New leave request from ${trainer.name}`,
-            text: `Trainer: ${trainer.name}
+      await mailTransporter.sendMail({
+        to: mgrs.rows.map(m => m.email).join(","),
+        subject: `Leave Request: ${trainer.name}`,
+        text: `
+Trainer: ${trainer.name}
 From: ${from_date}
 To: ${to_date}
-Reason: ${reason || "-"}`,
-          });
-        }
-      } catch (e) {
-        console.error("⚠️ Email ignored:", e.message);
-      }
+Reason: ${reason || "-"}
+        `,
+      });
     });
+
   } catch (err) {
-    console.error("❌ apply leave error:", err);
+    console.error(err);
     res.status(500).json({ error: "Failed to apply leave" });
   }
 });
@@ -2291,43 +2276,93 @@ async function sendApprovalEmail(leave) {
 // ⬇️ KEEP using manager dashboard logic, but remove req.user dependency
 app.get("/api/leave/list", async (req, res) => {
   try {
-    // if you do not want auth here, just remove role check completely
     const { view = "month", date } = req.query;
-    const baseDate = date || new Date().toISOString().slice(0, 10);
+    const base = date || new Date().toISOString().slice(0,10);
 
-    let whereClause = "";
-    const params = [baseDate];
-
-    if (view === "day") {
-      whereClause = `from_date <= $1::date and to_date >= $1::date`;
+    let where = "";
+    if (view === "date") {
+      where = `from_date <= $1::date AND to_date >= $1::date`;
     } else if (view === "week") {
-      whereClause = `
+      where = `
         from_date <= ($1::date + interval '6 day')
-        and to_date >= ($1::date - extract(dow from $1::date)::int * interval '1 day')
+        AND to_date >= ($1::date - extract(dow from $1::date)::int * interval '1 day')
       `;
     } else {
-      // month
-      whereClause = `
+      where = `
         date_trunc('month', from_date) <= date_trunc('month', $1::date)
-        and date_trunc('month', to_date) >= date_trunc('month', $1::date)
+        AND date_trunc('month', to_date) >= date_trunc('month', $1::date)
       `;
     }
 
     const result = await pool.query(
       `
-        select l.*, u.name as trainer_name, u.email as trainer_email
-        from trainer_leaves l
-        join internal_users u on u.id = l.trainer_id
-        where ${whereClause}
-        order by from_date asc, trainer_name asc
+      SELECT l.*, u.name AS trainer_name, u.email AS trainer_email
+      FROM trainer_leaves l
+      JOIN internal_users u ON u.id = l.trainer_id
+      WHERE ${where}
+      ORDER BY from_date
       `,
-      params
+      [base]
     );
 
     res.json(result.rows);
   } catch (err) {
-    console.error("list leaves error:", err);
-    res.status(500).json({ error: "Failed to fetch leaves" });
+    console.error(err);
+    res.status(500).json({ error: "Failed to load leaves" });
+  }
+});
+
+//=== leave decition approve/reject ===
+app.post("/api/leave/decision", async (req, res) => {
+  try {
+    const { leave_id, decision, manager_name, manager_email } = req.body;
+
+    if (!leave_id || !["approved","rejected"].includes(decision)) {
+      return res.status(400).json({ error: "Invalid request" });
+    }
+
+    const updated = await pool.query(
+      `
+      UPDATE trainer_leaves
+      SET status=$2, updated_at=now()
+      WHERE id=$1
+      RETURNING *
+      `,
+      [leave_id, decision]
+    );
+
+    if (!updated.rowCount) {
+      return res.status(404).json({ error: "Leave not found" });
+    }
+
+    const leave = updated.rows[0];
+
+    const trainer = await pool.query(
+      "SELECT name,email FROM internal_users WHERE id=$1",
+      [leave.trainer_id]
+    );
+
+    res.json({ success: true, leave });
+
+    // EMAIL TRAINER (NON-BLOCKING)
+    setImmediate(async () => {
+      await mailTransporter.sendMail({
+        to: trainer.rows[0].email,
+        subject: `Leave ${decision.toUpperCase()}`,
+        text: `
+Hi ${trainer.rows[0].name},
+
+Your leave from ${leave.from_date} to ${leave.to_date}
+has been ${decision} by ${manager_name}.
+
+Regards
+        `,
+      });
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Decision failed" });
   }
 });
 

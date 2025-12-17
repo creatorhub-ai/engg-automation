@@ -1,4 +1,3 @@
-// src/pages/TrainerLeaveDashboard.js
 import React, { useEffect, useState } from "react";
 import { supabase } from "../supabaseClient";
 import {
@@ -8,39 +7,19 @@ import {
   Box,
   TextField,
   Alert,
-  Fade,
   CircularProgress,
 } from "@mui/material";
 
 const API_BASE =
   process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 
-// ---------------- UTILS ----------------
-function formatDateDDMMYYYY(dateStr) {
+// ---------- UTILS ----------
+function formatDate(dateStr) {
   if (!dateStr) return "";
   const [y, m, d] = dateStr.split("-");
   return `${d}/${m}/${y}`;
 }
 
-// fetch with timeout (CRITICAL)
-async function fetchWithTimeout(url, options = {}, timeout = 10000) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeout);
-
-  try {
-    const res = await fetch(url, {
-      ...options,
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-    return res;
-  } catch (err) {
-    clearTimeout(timer);
-    throw err;
-  }
-}
-
-// ---------------- COMPONENT ----------------
 export default function TrainerLeaveDashboard() {
   const [sessionUser, setSessionUser] = useState(null);
   const [internalUser, setInternalUser] = useState(null);
@@ -59,74 +38,61 @@ export default function TrainerLeaveDashboard() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  // ---------------- LOAD SESSION ----------------
+  // ---------- LOAD SESSION ----------
   useEffect(() => {
     const stored = localStorage.getItem("userSession");
-    if (!stored) {
-      setLoadingProfile(false);
-      return;
-    }
-
-    try {
+    if (stored) {
       setSessionUser(JSON.parse(stored));
-    } catch {
-      setLoadingProfile(false);
     }
+    setLoadingProfile(false);
   }, []);
 
-  // ---------------- LOAD INTERNAL USER ----------------
+  // ---------- LOAD INTERNAL USER ----------
   useEffect(() => {
     if (!sessionUser) return;
 
-    let mounted = true;
-
-    async function loadInternalUser() {
+    async function loadUser() {
       setLoadingProfile(true);
-      try {
-        const { data, error } = await supabase
-          .from("internal_users")
-          .select("*")
-          .eq("email", sessionUser.email)
-          .limit(1);
+      const { data, error } = await supabase
+        .from("internal_users")
+        .select("*")
+        .eq("email", sessionUser.email)
+        .single();
 
-        if (error || !data?.length) {
-          throw new Error("Trainer profile not found");
-        }
-
-        if (mounted) setInternalUser(data[0]);
-      } catch (err) {
-        if (mounted) setError(err.message);
-      } finally {
-        if (mounted) setLoadingProfile(false);
+      if (error || !data) {
+        setError("Trainer profile not found");
+      } else {
+        setInternalUser(data);
       }
+      setLoadingProfile(false);
     }
 
-    loadInternalUser();
-    return () => (mounted = false);
+    loadUser();
   }, [sessionUser]);
 
-  // ---------------- LOAD LEAVES ----------------
+  // ---------- LOAD LEAVES ----------
   useEffect(() => {
-    if (!internalUser) return;
-    loadLeaves();
+    if (internalUser) loadLeaves();
   }, [internalUser]);
 
   async function loadLeaves() {
     setLoadingLeaves(true);
-    const { data } = await supabase
-      .from("trainer_leaves")
-      .select("*")
-      .eq("trainer_id", internalUser.id)
-      .order("from_date");
-
-    setLeaves(data || []);
+    const res = await fetch(
+      `${API_BASE}/api/leave/list?view=month&date=${new Date()
+        .toISOString()
+        .slice(0, 10)}`
+    );
+    const data = await res.json();
+    setLeaves(
+      data.filter((l) => l.trainer_id === internalUser.id) || []
+    );
     setLoadingLeaves(false);
   }
 
-  // ---------------- APPLY LEAVE (FIXED) ----------------
+  // ---------- APPLY LEAVE ----------
   async function handleApply() {
     if (!form.from_date || !form.to_date) {
-      setError("⚠️ From and To dates are required");
+      setError("From and To dates are required");
       return;
     }
 
@@ -134,96 +100,56 @@ export default function TrainerLeaveDashboard() {
     setError("");
     setSuccess("");
 
-    const payload = {
-      trainer_id: internalUser.id,
-      from_date: form.from_date,
-      to_date: form.to_date,
-      reason: form.reason || null,
-    };
-
     try {
-      // 1️⃣ TRY BACKEND (EMAIL FLOW)
-      const res = await fetchWithTimeout(
-        `${API_BASE}/api/leave/apply`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        },
-        10000
-      );
+      const res = await fetch(`${API_BASE}/api/leave/apply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          trainer_id: internalUser.id,
+          from_date: form.from_date,
+          to_date: form.to_date,
+          reason: form.reason,
+        }),
+      });
 
       const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
 
-      if (!res.ok || !data.success) {
-        throw new Error("Backend failed");
-      }
-
-      setSuccess("✅ Leave applied successfully");
-    } catch (err) {
-      console.warn("Backend unavailable. Saving directly…");
-
-      // 2️⃣ FALLBACK — DIRECT DB INSERT (DEMO SAFE)
-      const { error: dbError } = await supabase
-        .from("trainer_leaves")
-        .insert([
-          {
-            ...payload,
-            status: "pending",
-          },
-        ]);
-
-      if (dbError) {
-        setError("❌ Failed to apply leave");
-        setSubmitting(false);
-        return;
-      }
-
-      setSuccess("✅ Leave applied successfully");
+      setSuccess("Leave applied successfully");
+      setForm({ from_date: "", to_date: "", reason: "" });
+      loadLeaves();
+    } catch {
+      setError("Failed to apply leave");
     }
 
-    setForm({ from_date: "", to_date: "", reason: "" });
-    await loadLeaves();
     setSubmitting(false);
   }
 
-  // ---------------- DELETE LEAVE ----------------
-  async function handleDelete(id) {
-    await supabase
-      .from("trainer_leaves")
-      .delete()
-      .eq("id", id)
-      .eq("trainer_id", internalUser.id);
-
-    loadLeaves();
-  }
-
-  // ---------------- UI STATES ----------------
+  // ---------- UI ----------
   if (loadingProfile) {
     return (
-      <Box sx={{ textAlign: "center", mt: 10 }}>
+      <Box sx={{ textAlign: "center", mt: 8 }}>
         <CircularProgress />
-        <Typography mt={2}>Loading trainer profile…</Typography>
+        <Typography mt={2}>Loading profile…</Typography>
       </Box>
     );
   }
 
   if (!sessionUser) return <Alert severity="error">Please login</Alert>;
-  if (error && !internalUser)
-    return <Alert severity="error">{error}</Alert>;
+  if (error && !internalUser) return <Alert severity="error">{error}</Alert>;
 
-  // ---------------- MAIN UI ----------------
   return (
     <Box sx={{ maxWidth: 900, mx: "auto", my: 4 }}>
       <Paper sx={{ p: 4 }}>
-        <Typography variant="h4">Trainer Leave Dashboard</Typography>
+        <Typography variant="h4" gutterBottom>
+          Trainer Leave Dashboard
+        </Typography>
 
-        <Fade in={!!(error || success)}>
-          <Box sx={{ my: 2 }}>
-            {error && <Alert severity="error">{error}</Alert>}
-            {success && <Alert severity="success">{success}</Alert>}
-          </Box>
-        </Fade>
+        {(error || success) && (
+          <Alert severity={error ? "error" : "success"} sx={{ mb: 2 }}>
+            {error || success}
+          </Alert>
+        )}
 
         <Box sx={{ display: "flex", gap: 2, mb: 3 }}>
           <TextField
@@ -266,15 +192,9 @@ export default function TrainerLeaveDashboard() {
           leaves.map((l) => (
             <Paper key={l.id} sx={{ p: 2, mb: 1 }}>
               <Typography>
-                {formatDateDDMMYYYY(l.from_date)} →{" "}
-                {formatDateDDMMYYYY(l.to_date)} | {l.status}
+                {formatDate(l.from_date)} → {formatDate(l.to_date)} |{" "}
+                {l.status}
               </Typography>
-              <Button
-                color="error"
-                onClick={() => handleDelete(l.id)}
-              >
-                Delete
-              </Button>
             </Paper>
           ))
         )}
