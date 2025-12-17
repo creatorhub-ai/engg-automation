@@ -1,109 +1,69 @@
-import { useState } from 'react';
-import api from '../api';
+import React, { useEffect, useState } from "react";
+import api from "../api";
+
+const MONTHS = [
+  "January","February","March","April","May","June",
+  "July","August","September","October","November","December"
+];
 
 export default function ManagerLeaveDashboard() {
-  const [filterType, setFilterType] = useState('');
-  const [filterValue, setFilterValue] = useState('');
+  const [month, setMonth] = useState("");
   const [leaves, setLeaves] = useState([]);
-  const [loading, setLoading] = useState(false);
 
-  const months = [
-    { label: 'January', value: 1 },
-    { label: 'February', value: 2 },
-    { label: 'March', value: 3 },
-    { label: 'April', value: 4 },
-    { label: 'May', value: 5 },
-    { label: 'June', value: 6 },
-    { label: 'July', value: 7 },
-    { label: 'August', value: 8 },
-    { label: 'September', value: 9 },
-    { label: 'October', value: 10 },
-    { label: 'November', value: 11 },
-    { label: 'December', value: 12 }
-  ];
-
-  const fetchLeaves = async () => {
-    if (!filterType || !filterValue) {
-      alert('Select filter');
-      return;
-    }
-
+  const loadLeaves = async () => {
     try {
-      setLoading(true);
-      const res = await api.post('/api/leave/manager/filter', {
-        type: filterType,
-        value: filterValue
+      const res = await api.get("/api/leave/all", {
+        params: { month }
       });
       setLeaves(Array.isArray(res.data) ? res.data : []);
     } catch {
       setLeaves([]);
-    } finally {
-      setLoading(false);
     }
   };
 
-  const updateStatus = async (id, status) => {
-    await api.put('/api/leave/update', {
-      leave_id: id,
-      status
-    });
-    fetchLeaves();
-  };
+  useEffect(() => {
+    loadLeaves();
+  }, [month]);
 
   return (
     <div style={{ padding: 20 }}>
       <h2>Manager Leave Dashboard</h2>
 
-      <select
-        value={filterType}
-        onChange={e => {
-          setFilterType(e.target.value);
-          setFilterValue('');
-          setLeaves([]);
-        }}
-      >
-        <option value="">Select</option>
-        <option value="date">Date</option>
-        <option value="week">Week</option>
-        <option value="month">Month</option>
+      <select value={month} onChange={(e) => setMonth(e.target.value)}>
+        <option value="">Select Month</option>
+        {MONTHS.map((m, i) => (
+          <option key={i} value={i + 1}>
+            {m}
+          </option>
+        ))}
       </select>
-
-      {filterType === 'date' && (
-        <input type="date" value={filterValue} onChange={e => setFilterValue(e.target.value)} />
-      )}
-
-      {filterType === 'week' && (
-        <input type="date" value={filterValue} onChange={e => setFilterValue(e.target.value)} />
-      )}
-
-      {filterType === 'month' && (
-        <select value={filterValue} onChange={e => setFilterValue(e.target.value)}>
-          <option value="">Select Month</option>
-          {months.map(m => (
-            <option key={m.value} value={m.value}>{m.label}</option>
-          ))}
-        </select>
-      )}
-
-      <br /><br />
-      <button onClick={fetchLeaves}>Apply Filter</button>
 
       <hr />
 
-      {loading && <p>Loading...</p>}
-      {leaves.length === 0 && !loading && <p>No leaves found</p>}
-
-      {leaves.map(l => (
-        <div key={l.id}>
-          {l.from_date} → {l.to_date} | {l.status}
-          {l.status === 'pending' && (
-            <>
-              <button onClick={() => updateStatus(l.id, 'approved')}>Approve</button>
-              <button onClick={() => updateStatus(l.id, 'rejected')}>Reject</button>
-            </>
-          )}
-        </div>
-      ))}
+      {leaves.length === 0 ? (
+        <p>No leaves found</p>
+      ) : (
+        <table border="1">
+          <thead>
+            <tr>
+              <th>Trainer</th>
+              <th>From</th>
+              <th>To</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {leaves.map((l, i) => (
+              <tr key={i}>
+                <td>{l.trainer_name}</td>
+                <td>{l.from_date}</td>
+                <td>{l.to_date}</td>
+                <td>{l.status}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }

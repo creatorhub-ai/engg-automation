@@ -1,50 +1,52 @@
-import { useEffect, useState } from 'react';
-import api from '../api';
+import React, { useEffect, useState } from "react";
+import api from "../api";
 
-export default function TrainerLeaveDashboard({ trainerId, managerId }) {
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
-  const [reason, setReason] = useState('');
+export default function TrainerLeaveDashboard() {
+  const trainerId = localStorage.getItem("trainer_id");
+
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [reason, setReason] = useState("");
   const [leaves, setLeaves] = useState([]);
-  const [loading, setLoading] = useState(false);
 
-  const fetchLeaves = async () => {
+  // 🔹 Fetch leaves
+  const loadLeaves = async () => {
     try {
       const res = await api.get(`/api/leave/trainer/${trainerId}`);
       setLeaves(Array.isArray(res.data) ? res.data : []);
-    } catch {
+    } catch (err) {
+      console.error(err);
       setLeaves([]);
     }
   };
 
   useEffect(() => {
-    if (trainerId) fetchLeaves();
-  }, [trainerId]);
+    loadLeaves();
+  }, []);
 
+  // 🔹 Apply leave
   const applyLeave = async () => {
-    if (!from || !to || !trainerId || !managerId) {
-      alert('Missing required fields');
+    if (!fromDate || !toDate || !reason) {
+      alert("Missing required fields");
       return;
     }
 
     try {
-      setLoading(true);
-      await api.post('/api/leave/apply', {
+      await api.post("/api/leave/apply", {
         trainer_id: trainerId,
-        manager_id: managerId,
-        from_date: from,
-        to_date: to,
-        reason
+        from_date: fromDate,
+        to_date: toDate,
+        reason,
       });
 
-      setFrom('');
-      setTo('');
-      setReason('');
-      fetchLeaves();
-    } catch {
-      alert('Failed to apply leave');
-    } finally {
-      setLoading(false);
+      alert("Leave applied successfully");
+      setFromDate("");
+      setToDate("");
+      setReason("");
+      loadLeaves();
+    } catch (err) {
+      alert("Failed to apply leave");
+      console.error(err);
     }
   };
 
@@ -52,26 +54,54 @@ export default function TrainerLeaveDashboard({ trainerId, managerId }) {
     <div style={{ padding: 20 }}>
       <h2>Apply Leave</h2>
 
-      <input type="date" value={from} onChange={e => setFrom(e.target.value)} />
-      <input type="date" value={to} onChange={e => setTo(e.target.value)} />
-      <textarea value={reason} onChange={e => setReason(e.target.value)} />
+      <input
+        type="date"
+        value={fromDate}
+        onChange={(e) => setFromDate(e.target.value)}
+      />
 
-      <br />
-      <button onClick={applyLeave} disabled={loading}>
-        {loading ? 'Applying...' : 'Apply Leave'}
-      </button>
+      <input
+        type="date"
+        value={toDate}
+        onChange={(e) => setToDate(e.target.value)}
+      />
+
+      <textarea
+        placeholder="Reason"
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+      />
+
+      <button onClick={applyLeave}>Apply Leave</button>
 
       <hr />
 
       <h3>My Leaves</h3>
 
-      {leaves.length === 0 && <p>No leaves applied</p>}
-
-      {leaves.map(l => (
-        <div key={l.id}>
-          {l.from_date} → {l.to_date} | <b>{l.status}</b>
-        </div>
-      ))}
+      {leaves.length === 0 ? (
+        <p>No leaves applied</p>
+      ) : (
+        <table border="1">
+          <thead>
+            <tr>
+              <th>From</th>
+              <th>To</th>
+              <th>Reason</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {leaves.map((l, i) => (
+              <tr key={i}>
+                <td>{l.from_date}</td>
+                <td>{l.to_date}</td>
+                <td>{l.reason}</td>
+                <td>{l.status}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }
