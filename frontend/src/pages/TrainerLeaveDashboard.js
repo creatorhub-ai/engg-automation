@@ -8,13 +8,11 @@ export default function TrainerLeaveDashboard({ trainerId, managerId }) {
   const [leaves, setLeaves] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  // ================= FETCH LEAVES =================
   const fetchLeaves = async () => {
     try {
       const res = await api.get(`/api/leave/trainer/${trainerId}`);
       setLeaves(Array.isArray(res.data) ? res.data : []);
-    } catch (err) {
-      console.error(err);
+    } catch {
       setLeaves([]);
     }
   };
@@ -23,7 +21,6 @@ export default function TrainerLeaveDashboard({ trainerId, managerId }) {
     if (trainerId) fetchLeaves();
   }, [trainerId]);
 
-  // ================= APPLY LEAVE =================
   const applyLeave = async () => {
     if (!from || !to || !trainerId || !managerId) {
       alert('Missing required fields');
@@ -32,8 +29,7 @@ export default function TrainerLeaveDashboard({ trainerId, managerId }) {
 
     try {
       setLoading(true);
-
-      const res = await api.post('/api/leave/apply', {
+      await api.post('/api/leave/apply', {
         trainer_id: trainerId,
         manager_id: managerId,
         from_date: from,
@@ -41,15 +37,11 @@ export default function TrainerLeaveDashboard({ trainerId, managerId }) {
         reason
       });
 
-      console.log('Leave applied:', res.data);
-
       setFrom('');
       setTo('');
       setReason('');
-
       fetchLeaves();
-    } catch (err) {
-      console.error(err);
+    } catch {
       alert('Failed to apply leave');
     } finally {
       setLoading(false);
@@ -62,11 +54,7 @@ export default function TrainerLeaveDashboard({ trainerId, managerId }) {
 
       <input type="date" value={from} onChange={e => setFrom(e.target.value)} />
       <input type="date" value={to} onChange={e => setTo(e.target.value)} />
-      <textarea
-        placeholder="Reason"
-        value={reason}
-        onChange={e => setReason(e.target.value)}
-      />
+      <textarea value={reason} onChange={e => setReason(e.target.value)} />
 
       <br />
       <button onClick={applyLeave} disabled={loading}>
@@ -81,7 +69,7 @@ export default function TrainerLeaveDashboard({ trainerId, managerId }) {
 
       {leaves.map(l => (
         <div key={l.id}>
-          {l.from_date} → {l.to_date} | {l.status}
+          {l.from_date} → {l.to_date} | <b>{l.status}</b>
         </div>
       ))}
     </div>
