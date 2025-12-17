@@ -1,170 +1,95 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState } from "react";
 import { supabase } from "../supabaseClient";
 import {
+  Box,
   Paper,
   Typography,
   Button,
-  Box,
   Alert,
-  Select,
-  MenuItem,
-  TextField,
   CircularProgress,
 } from "@mui/material";
 
-const API_BASE =
-  process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
-
-function formatDate(d) {
-  if (!d) return "";
-  const [y, m, day] = d.split("-");
-  return `${day}/${m}/${y}`;
-}
+const API = "https://engg-automation.onrender.com";
 
 export default function ManagerLeaveDashboard() {
-  const [sessionUser, setSessionUser] = useState(null);
-  const [internalUser, setInternalUser] = useState(null);
+  const [user, setUser] = useState(null);
   const [leaves, setLeaves] = useState([]);
-
-  const [view, setView] = useState("month");
-  const [baseDate, setBaseDate] = useState(
-    new Date().toISOString().slice(0, 10)
-  );
-
-  const [loadingProfile, setLoadingProfile] = useState(true);
-  const [loadingLeaves, setLoadingLeaves] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const loadedRef = useRef(false);
-
-  // ---------- session ----------
   useEffect(() => {
     const s = localStorage.getItem("userSession");
-    if (s) setSessionUser(JSON.parse(s));
-    setLoadingProfile(false);
+    if (!s) {
+      setError("Login required");
+      setLoading(false);
+      return;
+    }
+    setUser(JSON.parse(s));
   }, []);
 
-  // ---------- manager profile ----------
   useEffect(() => {
-    if (!sessionUser) return;
+    if (!user) return;
 
-    async function loadUser() {
-      setLoadingProfile(true);
-      const { data, error } = await supabase
-        .from("internal_users")
-        .select("id,name,email,role")
-        .eq("email", sessionUser.email)
-        .single();
-
-      if (error || !["manager", "admin"].includes(data.role)) {
-        setError("Access denied");
-      } else {
-        setInternalUser(data);
+    async function loadLeaves() {
+      try {
+        const res = await fetch(`${API}/api/leave/list`);
+        setLeaves(await res.json());
+      } catch {
+        setError("Failed to load leaves");
       }
-      setLoadingProfile(false);
+      setLoading(false);
     }
 
-    loadUser();
-  }, [sessionUser]);
-
-  // ---------- load leaves ----------
-  useEffect(() => {
-    if (!internalUser) return;
-    loadedRef.current = false;
     loadLeaves();
-  }, [internalUser, view, baseDate]);
-
-  async function loadLeaves() {
-    if (loadedRef.current) return;
-    loadedRef.current = true;
-
-    setLoadingLeaves(true);
-    try {
-      const res = await fetch(
-        `${API_BASE}/api/leave/list?view=${view}&date=${baseDate}`
-      );
-      setLeaves(await res.json());
-    } catch {
-      setError("Failed to load leaves");
-    }
-    setLoadingLeaves(false);
-  }
+  }, [user]);
 
   async function decide(id, decision) {
-    await fetch(`${API_BASE}/api/leave/${id}/decision`, {
+    await fetch(`${API}/api/leave/${id}/decision`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        decision,
-        manager_id: internalUser.id,
-        manager_name: internalUser.name,
-        manager_email: internalUser.email,
-      }),
+      body: JSON.stringify({ decision }),
     });
-    loadedRef.current = false;
-    loadLeaves();
+
+    const reload = await fetch(`${API}/api/leave/list`);
+    setLeaves(await reload.json());
   }
 
-  // ---------- UI ----------
-  if (loadingProfile)
+  if (loading) {
     return (
       <Box sx={{ textAlign: "center", mt: 10 }}>
         <CircularProgress />
-        <Typography mt={2}>Loading profile…</Typography>
       </Box>
     );
+  }
 
   if (error) return <Alert severity="error">{error}</Alert>;
 
   return (
-    <Box sx={{ maxWidth: 1100, mx: "auto", my: 4 }}>
+    <Box sx={{ maxWidth: 1000, mx: "auto", mt: 4 }}>
       <Paper sx={{ p: 4 }}>
         <Typography variant="h4">Manager Leave Dashboard</Typography>
 
-        <Box sx={{ display: "flex", gap: 2, my: 2 }}>
-          <Select value={view} onChange={(e) => setView(e.target.value)}>
-            <MenuItem value="day">Day</MenuItem>
-            <MenuItem value="week">Week</MenuItem>
-            <MenuItem value="month">Month</MenuItem>
-          </Select>
+        {leaves.map((l) => (
+          <Paper key={l.id} sx={{ p: 2, my: 1 }}>
+            <Typography>
+              {l.trainer_name} | {l.from_date} → {l.to_date} | {l.status}
+            </Typography>
 
-          <TextField
-            type="date"
-            value={baseDate}
-            onChange={(e) => setBaseDate(e.target.value)}
-          />
-        </Box>
-
-        {loadingLeaves ? (
-          <CircularProgress />
-        ) : (
-          leaves.map((l) => (
-            <Paper key={l.id} sx={{ p: 2, mb: 1 }}>
-              <Typography>
-                {l.trainer_name} | {formatDate(l.from_date)} →{" "}
-                {formatDate(l.to_date)} | {l.status}
-              </Typography>
-
-              {l.status === "pending" && (
-                <>
-                  <Button
-                    size="small"
-                    onClick={() => decide(l.id, "approved")}
-                  >
-                    Approve
-                  </Button>
-                  <Button
-                    size="small"
-                    color="error"
-                    onClick={() => decide(l.id, "rejected")}
-                  >
-                    Reject
-                  </Button>
-                </>
-              )}
-            </Paper>
-          ))
-        )}
+            {l.status === "pending" && (
+              <>
+                <Button onClick={() => decide(l.id, "approved")}>
+                  Approve
+                </Button>
+                <Button
+                  color="error"
+                  onClick={() => decide(l.id, "rejected")}
+                >
+                  Reject
+                </Button>
+              </>
+            )}
+          </Paper>
+        ))}
       </Paper>
     </Box>
   );

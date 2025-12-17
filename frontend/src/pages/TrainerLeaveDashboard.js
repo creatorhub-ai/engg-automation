@@ -1,220 +1,187 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState } from "react";
 import { supabase } from "../supabaseClient";
 import {
+  Box,
   Paper,
   Typography,
-  Button,
-  Box,
   TextField,
+  Button,
   Alert,
   CircularProgress,
 } from "@mui/material";
 
-const API_BASE =
-  process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
-
-// ---------- utils ----------
-function formatDate(d) {
-  if (!d) return "";
-  const [y, m, day] = d.split("-");
-  return `${day}/${m}/${y}`;
-}
-
-async function fetchWithTimeout(url, options = {}, timeout = 8000) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeout);
-  try {
-    const res = await fetch(url, { ...options, signal: controller.signal });
-    clearTimeout(timer);
-    return res;
-  } catch (e) {
-    clearTimeout(timer);
-    throw e;
-  }
-}
+const API = "https://engg-automation.onrender.com";
 
 export default function TrainerLeaveDashboard() {
-  const [sessionUser, setSessionUser] = useState(null);
-  const [internalUser, setInternalUser] = useState(null);
+  const [user, setUser] = useState(null);
+  const [trainer, setTrainer] = useState(null);
   const [leaves, setLeaves] = useState([]);
 
-  const [loadingProfile, setLoadingProfile] = useState(true);
-  const [loadingLeaves, setLoadingLeaves] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [reason, setReason] = useState("");
 
-  const [form, setForm] = useState({
-    from_date: "",
-    to_date: "",
-    reason: "",
-  });
-
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  const leavesLoadedRef = useRef(false);
-
-  // ---------- load session ----------
+  // 1️⃣ Load session
   useEffect(() => {
     const s = localStorage.getItem("userSession");
-    if (s) setSessionUser(JSON.parse(s));
-    setLoadingProfile(false);
+    if (!s) {
+      setError("Please login again");
+      setLoading(false);
+      return;
+    }
+    setUser(JSON.parse(s));
   }, []);
 
-  // ---------- load trainer profile ----------
+  // 2️⃣ Load trainer profile
   useEffect(() => {
-    if (!sessionUser) return;
+    if (!user) return;
 
-    async function loadUser() {
-      setLoadingProfile(true);
+    async function loadProfile() {
       const { data, error } = await supabase
         .from("internal_users")
         .select("id,name,email")
-        .eq("email", sessionUser.email)
+        .eq("email", user.email)
         .single();
 
       if (error || !data) {
         setError("Trainer profile not found");
-      } else {
-        setInternalUser(data);
+        setLoading(false);
+        return;
       }
-      setLoadingProfile(false);
+
+      setTrainer(data);
+      setLoading(false);
     }
 
-    loadUser();
-  }, [sessionUser]);
+    loadProfile();
+  }, [user]);
 
-  // ---------- load leaves (FAST API ONLY) ----------
+  // 3️⃣ Load leaves (NO FILTERING)
   useEffect(() => {
-    if (!internalUser || leavesLoadedRef.current) return;
-    leavesLoadedRef.current = true;
+    if (!trainer) return;
+
+    async function loadLeaves() {
+      try {
+        const res = await fetch(`${API}/api/leave/list`);
+        const data = await res.json();
+
+        const myLeaves = data.filter(
+          (l) => l.trainer_id === trainer.id
+        );
+
+        setLeaves(myLeaves);
+      } catch {
+        setError("Failed to load leaves");
+      }
+    }
+
     loadLeaves();
-  }, [internalUser]);
+  }, [trainer]);
 
-  async function loadLeaves() {
-    setLoadingLeaves(true);
-    try {
-      const res = await fetchWithTimeout(
-        `${API_BASE}/api/leave/list?view=month`
-      );
-      const data = await res.json();
-
-      setLeaves(
-        (data || []).filter((l) => l.trainer_id === internalUser.id)
-      );
-    } catch {
-      setError("Failed to load leaves");
-    }
-    setLoadingLeaves(false);
-  }
-
-  // ---------- apply leave ----------
-  async function handleApply() {
-    if (!form.from_date || !form.to_date) {
-      setError("From & To dates required");
-      return;
-    }
-
-    setSubmitting(true);
+  // 4️⃣ Apply leave (FIXED PAYLOAD)
+  async function applyLeave() {
     setError("");
     setSuccess("");
 
+    if (!fromDate || !toDate || !reason) {
+      setError("All fields are required");
+      return;
+    }
+
+    setSaving(true);
+
     try {
-      const res = await fetchWithTimeout(
-        `${API_BASE}/api/leave/apply`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            trainer_id: internalUser.id,
-            ...form,
-          }),
-        },
-        8000
-      );
+      const res = await fetch(`${API}/api/leave/apply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          trainer_id: trainer.id,
+          from_date: fromDate,
+          to_date: toDate,
+          reason: reason,
+        }),
+      });
 
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+
+      if (!res.ok) {
+        throw new Error(data.error || "Apply failed");
+      }
 
       setSuccess("Leave applied successfully");
-      setForm({ from_date: "", to_date: "", reason: "" });
-      leavesLoadedRef.current = false;
-      loadLeaves();
-    } catch {
-      setError("Failed to apply leave");
+      setFromDate("");
+      setToDate("");
+      setReason("");
+
+      // Reload leaves
+      const reload = await fetch(`${API}/api/leave/list`);
+      const allLeaves = await reload.json();
+      setLeaves(allLeaves.filter(l => l.trainer_id === trainer.id));
+    } catch (e) {
+      setError(e.message);
     }
-    setSubmitting(false);
+
+    setSaving(false);
   }
 
-  // ---------- UI ----------
-  if (loadingProfile)
+  if (loading) {
     return (
       <Box sx={{ textAlign: "center", mt: 10 }}>
         <CircularProgress />
-        <Typography mt={2}>Loading profile…</Typography>
+        <Typography>Loading profile…</Typography>
       </Box>
     );
-
-  if (!sessionUser) return <Alert severity="error">Please login</Alert>;
-  if (error && !internalUser) return <Alert severity="error">{error}</Alert>;
+  }
 
   return (
-    <Box sx={{ maxWidth: 900, mx: "auto", my: 4 }}>
+    <Box sx={{ maxWidth: 900, mx: "auto", mt: 4 }}>
       <Paper sx={{ p: 4 }}>
         <Typography variant="h4">Trainer Leave Dashboard</Typography>
 
-        {(error || success) && (
-          <Alert severity={error ? "error" : "success"} sx={{ my: 2 }}>
-            {error || success}
-          </Alert>
-        )}
+        {error && <Alert severity="error" sx={{ my: 2 }}>{error}</Alert>}
+        {success && <Alert severity="success" sx={{ my: 2 }}>{success}</Alert>}
 
-        <Box sx={{ display: "flex", gap: 2, mb: 3 }}>
+        <Box sx={{ display: "flex", gap: 2, my: 3 }}>
           <TextField
             type="date"
             label="From"
             InputLabelProps={{ shrink: true }}
-            value={form.from_date}
-            onChange={(e) =>
-              setForm({ ...form, from_date: e.target.value })
-            }
+            value={fromDate}
+            onChange={(e) => setFromDate(e.target.value)}
           />
           <TextField
             type="date"
             label="To"
             InputLabelProps={{ shrink: true }}
-            value={form.to_date}
-            onChange={(e) =>
-              setForm({ ...form, to_date: e.target.value })
-            }
+            value={toDate}
+            onChange={(e) => setToDate(e.target.value)}
           />
           <TextField
             label="Reason"
-            value={form.reason}
-            onChange={(e) =>
-              setForm({ ...form, reason: e.target.value })
-            }
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
           />
           <Button
             variant="contained"
-            disabled={submitting}
-            onClick={handleApply}
+            disabled={saving}
+            onClick={applyLeave}
           >
-            {submitting ? "Applying…" : "Apply"}
+            {saving ? "Applying…" : "Apply"}
           </Button>
         </Box>
 
-        {loadingLeaves ? (
-          <CircularProgress />
-        ) : (
-          leaves.map((l) => (
-            <Paper key={l.id} sx={{ p: 2, mb: 1 }}>
-              <Typography>
-                {formatDate(l.from_date)} → {formatDate(l.to_date)} |{" "}
-                {l.status}
-              </Typography>
-            </Paper>
-          ))
-        )}
+        {leaves.map((l) => (
+          <Paper key={l.id} sx={{ p: 2, mb: 1 }}>
+            <Typography>
+              {l.from_date} → {l.to_date} | {l.status}
+            </Typography>
+          </Paper>
+        ))}
       </Paper>
     </Box>
   );
