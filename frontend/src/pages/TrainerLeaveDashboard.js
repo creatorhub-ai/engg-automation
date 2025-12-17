@@ -2,8 +2,11 @@ import React, { useEffect, useState } from "react";
 import api from "../api";
 
 export default function TrainerLeaveDashboard() {
-  // ✅ SAFE READ
-  const trainerId = localStorage.getItem("trainer_id");
+  // ✅ READ LOGIN SESSION (CORRECT SOURCE)
+  const session = JSON.parse(localStorage.getItem("userSession"));
+
+  const trainerId = session?.id;
+  const role = session?.role;
 
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -11,31 +14,34 @@ export default function TrainerLeaveDashboard() {
   const [leaves, setLeaves] = useState([]);
   const [error, setError] = useState("");
 
-  // 🚨 STOP if trainerId missing
+  // ===============================
+  // AUTH CHECK
+  // ===============================
   useEffect(() => {
-    if (!trainerId) {
-      setError("Trainer not logged in. Please login again.");
+    if (!session || role !== "Trainer") {
+      setError("Please login as Trainer");
       return;
     }
     loadLeaves();
   }, []);
 
+  // ===============================
+  // LOAD LEAVES
+  // ===============================
   const loadLeaves = async () => {
     try {
       const res = await api.get(`/api/leave/trainer/${trainerId}`);
       setLeaves(Array.isArray(res.data) ? res.data : []);
     } catch (err) {
-      console.error(err);
+      console.error("Load leaves error:", err);
       setLeaves([]);
     }
   };
 
+  // ===============================
+  // APPLY LEAVE
+  // ===============================
   const applyLeave = async () => {
-    if (!trainerId) {
-      alert("Trainer ID missing. Please login again.");
-      return;
-    }
-
     if (!fromDate || !toDate || !reason) {
       alert("Missing required fields");
       return;
@@ -43,7 +49,7 @@ export default function TrainerLeaveDashboard() {
 
     try {
       await api.post("/api/leave/apply", {
-        trainer_id: Number(trainerId), // ✅ FORCE NUMBER
+        trainer_id: trainerId,   // ✅ CORRECT ID
         from_date: fromDate,
         to_date: toDate,
         reason: reason.trim(),
@@ -56,13 +62,20 @@ export default function TrainerLeaveDashboard() {
       setReason("");
       loadLeaves();
     } catch (err) {
-      console.error("Apply Leave Error:", err.response?.data || err.message);
+      console.error("Apply leave error:", err.response?.data || err.message);
       alert("Failed to apply leave");
     }
   };
 
+  // ===============================
+  // UI
+  // ===============================
   if (error) {
-    return <h3 style={{ color: "red" }}>{error}</h3>;
+    return (
+      <div style={{ padding: 20 }}>
+        <h3 style={{ color: "red" }}>{error}</h3>
+      </div>
+    );
   }
 
   return (
@@ -97,7 +110,7 @@ export default function TrainerLeaveDashboard() {
       {leaves.length === 0 ? (
         <p>No leaves applied</p>
       ) : (
-        <table border="1">
+        <table border="1" cellPadding="6">
           <thead>
             <tr>
               <th>From</th>
@@ -107,8 +120,8 @@ export default function TrainerLeaveDashboard() {
             </tr>
           </thead>
           <tbody>
-            {leaves.map((l, i) => (
-              <tr key={i}>
+            {leaves.map((l) => (
+              <tr key={l.id}>
                 <td>{l.from_date}</td>
                 <td>{l.to_date}</td>
                 <td>{l.reason}</td>
