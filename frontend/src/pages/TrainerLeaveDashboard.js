@@ -18,7 +18,7 @@ export default function TrainerLeaveDashboard() {
   // AUTH CHECK
   // ===============================
   useEffect(() => {
-    if (!session || role !== "Trainer") {
+    if (!session || role !== "trainer") {
       setError("Please login as Trainer");
       return;
     }
