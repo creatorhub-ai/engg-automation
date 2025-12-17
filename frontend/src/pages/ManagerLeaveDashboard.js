@@ -1,4 +1,4 @@
-// src/pages/ManagerLeaveDashboard.js
+// src/pages/TrainerLeaveDashboard.js
 import React, { useEffect, useState } from "react";
 import { supabase } from "../supabaseClient";
 import {
@@ -9,10 +9,6 @@ import {
   TextField,
   Alert,
   Fade,
-  Select,
-  MenuItem,
-  FormControl,
-  InputLabel,
   CircularProgress,
 } from "@mui/material";
 
@@ -26,20 +22,29 @@ function formatDateDDMMYYYY(dateStr) {
   return `${d}/${m}/${y}`;
 }
 
-export default function ManagerLeaveDashboard() {
+// ---------- timeout wrapper ----------
+function withTimeout(promise, ms = 8000) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("Request timeout")), ms)
+    ),
+  ]);
+}
+
+export default function TrainerLeaveDashboard() {
   const [sessionUser, setSessionUser] = useState(null);
   const [internalUser, setInternalUser] = useState(null);
-
-  const [view, setView] = useState("month");
-  const [baseDate, setBaseDate] = useState(
-    new Date().toISOString().slice(0, 10)
-  );
-  const [selectedMonth, setSelectedMonth] = useState("");
-
   const [leaves, setLeaves] = useState([]);
 
-  const [pageLoading, setPageLoading] = useState(false);
-  const [actionLoading, setActionLoading] = useState(null);
+  const [loadingProfile, setLoadingProfile] = useState(true);
+  const [loadingLeaves, setLoadingLeaves] = useState(false);
+
+  const [form, setForm] = useState({
+    from_date: "",
+    to_date: "",
+    reason: "",
+  });
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -47,40 +52,72 @@ export default function ManagerLeaveDashboard() {
   // ---------- load session ----------
   useEffect(() => {
     const stored = localStorage.getItem("userSession");
-    if (stored) {
-      try {
-        setSessionUser(JSON.parse(stored));
-      } catch {
-        setSessionUser(null);
-      }
+    if (!stored) {
+      setError("Please login again");
+      setLoadingProfile(false);
+      return;
+    }
+
+    try {
+      setSessionUser(JSON.parse(stored));
+    } catch {
+      setError("Invalid session. Please login again.");
+      setLoadingProfile(false);
     }
   }, []);
 
-  // ---------- load internal user ----------
+  // ---------- load internal user (FIXED) ----------
   useEffect(() => {
     if (!sessionUser) return;
 
+    let cancelled = false;
+
     async function loadInternalUser() {
-      const { data, error } = await supabase
-        .from("internal_users")
-        .select("*")
-        .eq("email", sessionUser.email)
-        .single();
+      setLoadingProfile(true);
+      setError("");
 
-      if (error) {
-        setError("Failed to load user profile");
-        return;
+      try {
+        const { data, error } = await withTimeout(
+          supabase
+            .from("internal_users")
+            .select("*")
+            .eq("email", sessionUser.email)
+            .limit(1),
+          8000
+        );
+
+        if (cancelled) return;
+
+        if (error) throw error;
+
+        if (!data || data.length === 0) {
+          throw new Error(
+            "Trainer profile not found. Contact admin."
+          );
+        }
+
+        if (data[0].role !== "Trainer") {
+          throw new Error("Access denied. Trainer role required.");
+        }
+
+        setInternalUser(data[0]);
+      } catch (err) {
+        console.error(err);
+        setError(
+          err.message === "Request timeout"
+            ? "Server taking too long. Please refresh."
+            : err.message
+        );
+      } finally {
+        if (!cancelled) setLoadingProfile(false);
       }
-
-      if (!["manager", "admin"].includes(data.role)) {
-        setError("Access denied");
-        return;
-      }
-
-      setInternalUser(data);
     }
 
     loadInternalUser();
+
+    return () => {
+      cancelled = true;
+    };
   }, [sessionUser]);
 
   // ---------- load leaves ----------
@@ -89,123 +126,96 @@ export default function ManagerLeaveDashboard() {
       loadLeaves();
     }
     // eslint-disable-next-line
-  }, [internalUser, view, baseDate, selectedMonth]);
+  }, [internalUser]);
 
   async function loadLeaves() {
-    setPageLoading(true);
+    setLoadingLeaves(true);
     setError("");
-    setSuccess("");
 
-    const dateObj = new Date(baseDate);
-    let from, to;
+    try {
+      const { data, error } = await withTimeout(
+        supabase
+          .from("trainer_leaves")
+          .select("*")
+          .eq("trainer_id", internalUser.id)
+          .order("from_date"),
+        8000
+      );
 
-    if (view === "day") {
-      from = baseDate;
-      to = baseDate;
-    } else if (view === "week") {
-      const day = dateObj.getDay();
-      const monday = new Date(dateObj);
-      monday.setDate(dateObj.getDate() - ((day + 6) % 7));
-      const sunday = new Date(monday);
-      sunday.setDate(monday.getDate() + 6);
-      from = monday.toISOString().slice(0, 10);
-      to = sunday.toISOString().slice(0, 10);
-    } else {
-      const year = dateObj.getFullYear();
-      const m =
-        selectedMonth !== ""
-          ? parseInt(selectedMonth, 10) - 1
-          : dateObj.getMonth();
-      from = new Date(year, m, 1).toISOString().slice(0, 10);
-      to = new Date(year, m + 1, 0).toISOString().slice(0, 10);
-    }
+      if (error) throw error;
 
-    const { data, error } = await supabase
-      .from("trainer_leaves")
-      .select(
-        `*,
-         internal_users!trainer_leaves_trainer_id_fkey(name,email)`
-      )
-      .lte("from_date", to)
-      .gte("to_date", from)
-      .order("from_date");
-
-    if (error) {
-      setError("Failed to load leaves");
-    } else {
       setLeaves(data || []);
+    } catch (err) {
+      console.error(err);
+      setError("Failed to load leaves");
+    } finally {
+      setLoadingLeaves(false);
     }
-
-    setPageLoading(false);
   }
 
-  // ---------- approve / reject / revoke ----------
-  async function decide(leaveId, decision) {
-    if (!internalUser) return;
+  // ---------- apply leave ----------
+  async function handleApply() {
+    if (!form.from_date || !form.to_date) {
+      setError("From and To dates are required");
+      return;
+    }
 
-    setActionLoading(leaveId);
     setError("");
     setSuccess("");
 
     try {
-      const res = await fetch(
-        `${API_BASE}/api/leave/${leaveId}/decision`,
-        {
+      const res = await withTimeout(
+        fetch(`${API_BASE}/api/leave/apply`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            decision,
-            manager_id: internalUser.id,
-            manager_name: internalUser.name,
-            manager_email: internalUser.email,
+            trainer_id: internalUser.id,
+            from_date: form.from_date,
+            to_date: form.to_date,
+            reason: form.reason || null,
           }),
-        }
+        }),
+        8000
       );
 
       const data = await res.json();
 
       if (!res.ok || !data.success) {
-        throw new Error(data.error || "Failed");
+        throw new Error(data.error || "Leave apply failed");
       }
 
-      setSuccess(`✅ Leave ${decision}`);
-      await loadLeaves();
+      setSuccess("✅ Leave applied successfully");
+      setForm({ from_date: "", to_date: "", reason: "" });
+      loadLeaves();
     } catch (err) {
       console.error(err);
-      setError("Action failed. Try again.");
-    } finally {
-      setActionLoading(null);
+      setError(
+        err.message === "Request timeout"
+          ? "Server taking too long. Try again."
+          : err.message
+      );
     }
   }
 
-  // ---------- guards ----------
-  if (!sessionUser) {
-    return (
-      <Box sx={{ maxWidth: 500, mx: "auto", my: 4 }}>
-        <Paper sx={{ p: 4 }}>
-          <Typography>Please login</Typography>
-        </Paper>
-      </Box>
-    );
-  }
-
-  if (!internalUser) {
-    return (
-      <Box sx={{ maxWidth: 500, mx: "auto", my: 4 }}>
-        <Paper sx={{ p: 4 }}>
-          <CircularProgress />
-          <Typography sx={{ mt: 2 }}>Loading profile…</Typography>
-        </Paper>
-      </Box>
-    );
-  }
-
   // ---------- UI ----------
+  if (loadingProfile) {
+    return (
+      <Box sx={{ textAlign: "center", mt: 10 }}>
+        <CircularProgress />
+        <Typography mt={2}>Loading profile…</Typography>
+      </Box>
+    );
+  }
+
+  if (error && !internalUser) {
+    return <Alert severity="error">{error}</Alert>;
+  }
+
   return (
-    <Box sx={{ maxWidth: 1100, mx: "auto", my: 4 }}>
+    <Box sx={{ maxWidth: 900, mx: "auto", my: 4 }}>
       <Paper sx={{ p: 4 }}>
         <Typography variant="h4" gutterBottom>
-          Manager Leave Dashboard
+          Trainer Leave Dashboard
         </Typography>
 
         <Fade in={!!(error || success)}>
@@ -218,122 +228,50 @@ export default function ManagerLeaveDashboard() {
           </Box>
         </Fade>
 
-        {/* Filters */}
         <Box sx={{ display: "flex", gap: 2, mb: 3, flexWrap: "wrap" }}>
-          <FormControl sx={{ minWidth: 140 }}>
-            <InputLabel>View</InputLabel>
-            <Select
-              label="View"
-              value={view}
-              onChange={(e) => {
-                setView(e.target.value);
-                if (e.target.value !== "month") setSelectedMonth("");
-              }}
-            >
-              <MenuItem value="day">Day</MenuItem>
-              <MenuItem value="week">Week</MenuItem>
-              <MenuItem value="month">Month</MenuItem>
-            </Select>
-          </FormControl>
-
           <TextField
-            label="Base Date"
             type="date"
+            label="From"
             InputLabelProps={{ shrink: true }}
-            value={baseDate}
-            onChange={(e) => setBaseDate(e.target.value)}
+            value={form.from_date}
+            onChange={(e) =>
+              setForm({ ...form, from_date: e.target.value })
+            }
           />
-
-          {view === "month" && (
-            <FormControl sx={{ minWidth: 160 }}>
-              <InputLabel>Month</InputLabel>
-              <Select
-                label="Month"
-                value={selectedMonth}
-                onChange={(e) => setSelectedMonth(e.target.value)}
-              >
-                <MenuItem value="">Current</MenuItem>
-                {[...Array(12)].map((_, i) => (
-                  <MenuItem key={i + 1} value={String(i + 1)}>
-                    {new Date(0, i).toLocaleString("default", {
-                      month: "long",
-                    })}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-          )}
-
-          <Button onClick={loadLeaves} disabled={pageLoading}>
-            Refresh
+          <TextField
+            type="date"
+            label="To"
+            InputLabelProps={{ shrink: true }}
+            value={form.to_date}
+            onChange={(e) =>
+              setForm({ ...form, to_date: e.target.value })
+            }
+          />
+          <TextField
+            label="Reason"
+            value={form.reason}
+            onChange={(e) =>
+              setForm({ ...form, reason: e.target.value })
+            }
+          />
+          <Button variant="contained" onClick={handleApply}>
+            Apply
           </Button>
         </Box>
 
-        {/* Table */}
-        {pageLoading ? (
+        {loadingLeaves ? (
           <CircularProgress />
-        ) : !leaves.length ? (
-          <Typography>No leaves found</Typography>
         ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>
-                <th style={th}>Trainer</th>
-                <th style={th}>From</th>
-                <th style={th}>To</th>
-                <th style={th}>Reason</th>
-                <th style={th}>Status</th>
-                <th style={th}>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {leaves.map((l) => (
-                <tr key={l.id}>
-                  <td style={td}>{l.internal_users?.name}</td>
-                  <td style={td}>{formatDateDDMMYYYY(l.from_date)}</td>
-                  <td style={td}>{formatDateDDMMYYYY(l.to_date)}</td>
-                  <td style={td}>{l.reason}</td>
-                  <td style={td}>{l.status}</td>
-                  <td style={td}>
-                    {l.status === "pending" ? (
-                      <>
-                        <Button
-                          size="small"
-                          color="success"
-                          disabled={actionLoading === l.id}
-                          onClick={() => decide(l.id, "approved")}
-                        >
-                          Approve
-                        </Button>{" "}
-                        <Button
-                          size="small"
-                          color="error"
-                          disabled={actionLoading === l.id}
-                          onClick={() => decide(l.id, "rejected")}
-                        >
-                          Reject
-                        </Button>
-                      </>
-                    ) : (
-                      <Button
-                        size="small"
-                        color="warning"
-                        disabled={actionLoading === l.id}
-                        onClick={() => decide(l.id, "revoked")}
-                      >
-                        Revoke
-                      </Button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          leaves.map((l) => (
+            <Paper key={l.id} sx={{ p: 2, mb: 1 }}>
+              <Typography>
+                {formatDateDDMMYYYY(l.from_date)} →{" "}
+                {formatDateDDMMYYYY(l.to_date)} | {l.status}
+              </Typography>
+            </Paper>
+          ))
         )}
       </Paper>
     </Box>
   );
 }
-
-const th = { borderBottom: "1px solid #ddd", padding: 8 };
-const td = { borderBottom: "1px solid #eee", padding: 8 };
