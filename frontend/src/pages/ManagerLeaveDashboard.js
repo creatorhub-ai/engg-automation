@@ -1,4 +1,4 @@
-// src/pages/TrainerLeaveDashboard.js
+// src/pages/ManagerLeaveDashboard.js
 import React, { useEffect, useState } from "react";
 import { supabase } from "../supabaseClient";
 import {
@@ -9,6 +9,10 @@ import {
   TextField,
   Alert,
   Fade,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
   CircularProgress,
 } from "@mui/material";
 
@@ -22,30 +26,21 @@ function formatDateDDMMYYYY(dateStr) {
   return `${d}/${m}/${y}`;
 }
 
-// ---------- timeout wrapper ----------
-function withTimeout(promise, ms = 8000) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("Request timeout")), ms)
-    ),
-  ]);
-}
-
-export default function TrainerLeaveDashboard() {
+export default function ManagerLeaveDashboard() {
   const [sessionUser, setSessionUser] = useState(null);
   const [internalUser, setInternalUser] = useState(null);
-  const [leaves, setLeaves] = useState([]);
 
   const [loadingProfile, setLoadingProfile] = useState(true);
-  const [loadingLeaves, setLoadingLeaves] = useState(false);
+  const [pageLoading, setPageLoading] = useState(false);
+  const [actionLoading, setActionLoading] = useState(null);
 
-  const [form, setForm] = useState({
-    from_date: "",
-    to_date: "",
-    reason: "",
-  });
+  const [view, setView] = useState("month");
+  const [baseDate, setBaseDate] = useState(
+    new Date().toISOString().slice(0, 10)
+  );
+  const [selectedMonth, setSelectedMonth] = useState("");
 
+  const [leaves, setLeaves] = useState([]);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -53,7 +48,6 @@ export default function TrainerLeaveDashboard() {
   useEffect(() => {
     const stored = localStorage.getItem("userSession");
     if (!stored) {
-      setError("Please login again");
       setLoadingProfile(false);
       return;
     }
@@ -61,7 +55,7 @@ export default function TrainerLeaveDashboard() {
     try {
       setSessionUser(JSON.parse(stored));
     } catch {
-      setError("Invalid session. Please login again.");
+      setError("Invalid session data");
       setLoadingProfile(false);
     }
   }, []);
@@ -70,134 +64,137 @@ export default function TrainerLeaveDashboard() {
   useEffect(() => {
     if (!sessionUser) return;
 
-    let cancelled = false;
+    let active = true;
 
     async function loadInternalUser() {
       setLoadingProfile(true);
       setError("");
 
-      try {
-        const { data, error } = await withTimeout(
-          supabase
-            .from("internal_users")
-            .select("*")
-            .eq("email", sessionUser.email)
-            .limit(1),
-          8000
-        );
+      const { data, error } = await supabase
+        .from("internal_users")
+        .select("*")
+        .eq("email", sessionUser.email)
+        .limit(1);
 
-        if (cancelled) return;
+      if (!active) return;
 
-        if (error) throw error;
-
-        if (!data || data.length === 0) {
-          throw new Error(
-            "Trainer profile not found. Contact admin."
-          );
-        }
-
-        if (data[0].role !== "Trainer") {
-          throw new Error("Access denied. Trainer role required.");
-        }
-
-        setInternalUser(data[0]);
-      } catch (err) {
-        console.error(err);
-        setError(
-          err.message === "Request timeout"
-            ? "Server taking too long. Please refresh."
-            : err.message
-        );
-      } finally {
-        if (!cancelled) setLoadingProfile(false);
+      if (error) {
+        setError("Failed to load profile");
+        setLoadingProfile(false);
+        return;
       }
+
+      if (!data || data.length === 0) {
+        setError(
+          "Manager profile not found. Ask admin to create internal_users entry."
+        );
+        setLoadingProfile(false);
+        return;
+      }
+
+      if (!["manager", "admin"].includes(data[0].role)) {
+        setError("Access denied");
+        setLoadingProfile(false);
+        return;
+      }
+
+      setInternalUser(data[0]);
+      setLoadingProfile(false);
     }
 
     loadInternalUser();
-
-    return () => {
-      cancelled = true;
-    };
+    return () => (active = false);
   }, [sessionUser]);
 
   // ---------- load leaves ----------
   useEffect(() => {
-    if (internalUser) {
-      loadLeaves();
-    }
+    if (internalUser) loadLeaves();
     // eslint-disable-next-line
-  }, [internalUser]);
+  }, [internalUser, view, baseDate, selectedMonth]);
 
   async function loadLeaves() {
-    setLoadingLeaves(true);
+    setPageLoading(true);
     setError("");
 
-    try {
-      const { data, error } = await withTimeout(
-        supabase
-          .from("trainer_leaves")
-          .select("*")
-          .eq("trainer_id", internalUser.id)
-          .order("from_date"),
-        8000
-      );
+    const dateObj = new Date(baseDate);
+    let from, to;
 
-      if (error) throw error;
-
-      setLeaves(data || []);
-    } catch (err) {
-      console.error(err);
-      setError("Failed to load leaves");
-    } finally {
-      setLoadingLeaves(false);
+    if (view === "day") {
+      from = baseDate;
+      to = baseDate;
+    } else if (view === "week") {
+      const day = dateObj.getDay();
+      const monday = new Date(dateObj);
+      monday.setDate(dateObj.getDate() - ((day + 6) % 7));
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+      from = monday.toISOString().slice(0, 10);
+      to = sunday.toISOString().slice(0, 10);
+    } else {
+      const year = dateObj.getFullYear();
+      const m =
+        selectedMonth !== ""
+          ? parseInt(selectedMonth, 10) - 1
+          : dateObj.getMonth();
+      from = new Date(year, m, 1).toISOString().slice(0, 10);
+      to = new Date(year, m + 1, 0).toISOString().slice(0, 10);
     }
+
+    const { data, error } = await supabase
+      .from("trainer_leaves")
+      .select(
+        `*,
+         internal_users!trainer_leaves_trainer_id_fkey(name,email)`
+      )
+      .lte("from_date", to)
+      .gte("to_date", from)
+      .order("from_date");
+
+    if (error) {
+      setError("Failed to load leaves");
+    } else {
+      setLeaves(data || []);
+    }
+
+    setPageLoading(false);
   }
 
-  // ---------- apply leave ----------
-  async function handleApply() {
-    if (!form.from_date || !form.to_date) {
-      setError("From and To dates are required");
-      return;
-    }
-
+  // ---------- approve / reject ----------
+  async function decide(leaveId, decision) {
+    setActionLoading(leaveId);
     setError("");
     setSuccess("");
 
     try {
-      const res = await withTimeout(
-        fetch(`${API_BASE}/api/leave/apply`, {
+      const res = await fetch(
+        `${API_BASE}/api/leave/${leaveId}/decision`,
+        {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            trainer_id: internalUser.id,
-            from_date: form.from_date,
-            to_date: form.to_date,
-            reason: form.reason || null,
+            decision,
+            manager_id: internalUser.id,
+            manager_name: internalUser.name,
+            manager_email: internalUser.email,
           }),
-        }),
-        8000
+        }
       );
 
       const data = await res.json();
-
       if (!res.ok || !data.success) {
-        throw new Error(data.error || "Leave apply failed");
+        throw new Error(data.error);
       }
 
-      setSuccess("✅ Leave applied successfully");
-      setForm({ from_date: "", to_date: "", reason: "" });
-      loadLeaves();
-    } catch (err) {
-      console.error(err);
-      setError(
-        err.message === "Request timeout"
-          ? "Server taking too long. Try again."
-          : err.message
-      );
+      setSuccess(`✅ Leave ${decision}`);
+      await loadLeaves();
+    } catch {
+      setError("Decision failed");
+    } finally {
+      setActionLoading(null);
     }
   }
 
-  // ---------- UI ----------
+  // ---------- UI guards ----------
   if (loadingProfile) {
     return (
       <Box sx={{ textAlign: "center", mt: 10 }}>
@@ -211,64 +208,52 @@ export default function TrainerLeaveDashboard() {
     return <Alert severity="error">{error}</Alert>;
   }
 
+  // ---------- UI ----------
   return (
-    <Box sx={{ maxWidth: 900, mx: "auto", my: 4 }}>
+    <Box sx={{ maxWidth: 1100, mx: "auto", my: 4 }}>
       <Paper sx={{ p: 4 }}>
         <Typography variant="h4" gutterBottom>
-          Trainer Leave Dashboard
+          Manager Leave Dashboard
         </Typography>
 
-        <Fade in={!!(error || success)}>
-          <Box sx={{ mb: 2 }}>
-            {(error || success) && (
-              <Alert severity={error ? "error" : "success"}>
-                {error || success}
-              </Alert>
-            )}
-          </Box>
-        </Fade>
+        {(error || success) && (
+          <Alert severity={error ? "error" : "success"} sx={{ mb: 2 }}>
+            {error || success}
+          </Alert>
+        )}
 
-        <Box sx={{ display: "flex", gap: 2, mb: 3, flexWrap: "wrap" }}>
-          <TextField
-            type="date"
-            label="From"
-            InputLabelProps={{ shrink: true }}
-            value={form.from_date}
-            onChange={(e) =>
-              setForm({ ...form, from_date: e.target.value })
-            }
-          />
-          <TextField
-            type="date"
-            label="To"
-            InputLabelProps={{ shrink: true }}
-            value={form.to_date}
-            onChange={(e) =>
-              setForm({ ...form, to_date: e.target.value })
-            }
-          />
-          <TextField
-            label="Reason"
-            value={form.reason}
-            onChange={(e) =>
-              setForm({ ...form, reason: e.target.value })
-            }
-          />
-          <Button variant="contained" onClick={handleApply}>
-            Apply
-          </Button>
-        </Box>
-
-        {loadingLeaves ? (
+        {pageLoading ? (
           <CircularProgress />
+        ) : !leaves.length ? (
+          <Typography>No leaves found</Typography>
         ) : (
           leaves.map((l) => (
-            <Paper key={l.id} sx={{ p: 2, mb: 1 }}>
+            <Box key={l.id} sx={{ mb: 1 }}>
               <Typography>
+                {l.internal_users?.name} |{" "}
                 {formatDateDDMMYYYY(l.from_date)} →{" "}
                 {formatDateDDMMYYYY(l.to_date)} | {l.status}
               </Typography>
-            </Paper>
+              {l.status === "pending" && (
+                <>
+                  <Button
+                    size="small"
+                    onClick={() => decide(l.id, "approved")}
+                    disabled={actionLoading === l.id}
+                  >
+                    Approve
+                  </Button>
+                  <Button
+                    size="small"
+                    color="error"
+                    onClick={() => decide(l.id, "rejected")}
+                    disabled={actionLoading === l.id}
+                  >
+                    Reject
+                  </Button>
+                </>
+              )}
+            </Box>
           ))
         )}
       </Paper>
