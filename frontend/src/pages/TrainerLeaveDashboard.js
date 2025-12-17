@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { supabase } from "../supabaseClient";
 import {
   Paper,
@@ -13,11 +13,24 @@ import {
 const API_BASE =
   process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 
-// ---------- UTILS ----------
-function formatDate(dateStr) {
-  if (!dateStr) return "";
-  const [y, m, d] = dateStr.split("-");
-  return `${d}/${m}/${y}`;
+// ---------- utils ----------
+function formatDate(d) {
+  if (!d) return "";
+  const [y, m, day] = d.split("-");
+  return `${day}/${m}/${y}`;
+}
+
+async function fetchWithTimeout(url, options = {}, timeout = 8000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(timer);
+    return res;
+  } catch (e) {
+    clearTimeout(timer);
+    throw e;
+  }
 }
 
 export default function TrainerLeaveDashboard() {
@@ -38,16 +51,16 @@ export default function TrainerLeaveDashboard() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  // ---------- LOAD SESSION ----------
+  const leavesLoadedRef = useRef(false);
+
+  // ---------- load session ----------
   useEffect(() => {
-    const stored = localStorage.getItem("userSession");
-    if (stored) {
-      setSessionUser(JSON.parse(stored));
-    }
+    const s = localStorage.getItem("userSession");
+    if (s) setSessionUser(JSON.parse(s));
     setLoadingProfile(false);
   }, []);
 
-  // ---------- LOAD INTERNAL USER ----------
+  // ---------- load trainer profile ----------
   useEffect(() => {
     if (!sessionUser) return;
 
@@ -55,7 +68,7 @@ export default function TrainerLeaveDashboard() {
       setLoadingProfile(true);
       const { data, error } = await supabase
         .from("internal_users")
-        .select("*")
+        .select("id,name,email")
         .eq("email", sessionUser.email)
         .single();
 
@@ -70,29 +83,34 @@ export default function TrainerLeaveDashboard() {
     loadUser();
   }, [sessionUser]);
 
-  // ---------- LOAD LEAVES ----------
+  // ---------- load leaves (FAST API ONLY) ----------
   useEffect(() => {
-    if (internalUser) loadLeaves();
+    if (!internalUser || leavesLoadedRef.current) return;
+    leavesLoadedRef.current = true;
+    loadLeaves();
   }, [internalUser]);
 
   async function loadLeaves() {
     setLoadingLeaves(true);
-    const res = await fetch(
-      `${API_BASE}/api/leave/list?view=month&date=${new Date()
-        .toISOString()
-        .slice(0, 10)}`
-    );
-    const data = await res.json();
-    setLeaves(
-      data.filter((l) => l.trainer_id === internalUser.id) || []
-    );
+    try {
+      const res = await fetchWithTimeout(
+        `${API_BASE}/api/leave/list?view=month`
+      );
+      const data = await res.json();
+
+      setLeaves(
+        (data || []).filter((l) => l.trainer_id === internalUser.id)
+      );
+    } catch {
+      setError("Failed to load leaves");
+    }
     setLoadingLeaves(false);
   }
 
-  // ---------- APPLY LEAVE ----------
+  // ---------- apply leave ----------
   async function handleApply() {
     if (!form.from_date || !form.to_date) {
-      setError("From and To dates are required");
+      setError("From & To dates required");
       return;
     }
 
@@ -101,39 +119,40 @@ export default function TrainerLeaveDashboard() {
     setSuccess("");
 
     try {
-      const res = await fetch(`${API_BASE}/api/leave/apply`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          trainer_id: internalUser.id,
-          from_date: form.from_date,
-          to_date: form.to_date,
-          reason: form.reason,
-        }),
-      });
+      const res = await fetchWithTimeout(
+        `${API_BASE}/api/leave/apply`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            trainer_id: internalUser.id,
+            ...form,
+          }),
+        },
+        8000
+      );
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
 
       setSuccess("Leave applied successfully");
       setForm({ from_date: "", to_date: "", reason: "" });
+      leavesLoadedRef.current = false;
       loadLeaves();
     } catch {
       setError("Failed to apply leave");
     }
-
     setSubmitting(false);
   }
 
   // ---------- UI ----------
-  if (loadingProfile) {
+  if (loadingProfile)
     return (
-      <Box sx={{ textAlign: "center", mt: 8 }}>
+      <Box sx={{ textAlign: "center", mt: 10 }}>
         <CircularProgress />
         <Typography mt={2}>Loading profile…</Typography>
       </Box>
     );
-  }
 
   if (!sessionUser) return <Alert severity="error">Please login</Alert>;
   if (error && !internalUser) return <Alert severity="error">{error}</Alert>;
@@ -141,12 +160,10 @@ export default function TrainerLeaveDashboard() {
   return (
     <Box sx={{ maxWidth: 900, mx: "auto", my: 4 }}>
       <Paper sx={{ p: 4 }}>
-        <Typography variant="h4" gutterBottom>
-          Trainer Leave Dashboard
-        </Typography>
+        <Typography variant="h4">Trainer Leave Dashboard</Typography>
 
         {(error || success) && (
-          <Alert severity={error ? "error" : "success"} sx={{ mb: 2 }}>
+          <Alert severity={error ? "error" : "success"} sx={{ my: 2 }}>
             {error || success}
           </Alert>
         )}
@@ -179,8 +196,8 @@ export default function TrainerLeaveDashboard() {
           />
           <Button
             variant="contained"
-            onClick={handleApply}
             disabled={submitting}
+            onClick={handleApply}
           >
             {submitting ? "Applying…" : "Apply"}
           </Button>

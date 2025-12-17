@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { supabase } from "../supabaseClient";
 import {
   Paper,
@@ -15,11 +15,10 @@ import {
 const API_BASE =
   process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 
-// ---------- UTILS ----------
-function formatDate(dateStr) {
-  if (!dateStr) return "";
-  const [y, m, d] = dateStr.split("-");
-  return `${d}/${m}/${y}`;
+function formatDate(d) {
+  if (!d) return "";
+  const [y, m, day] = d.split("-");
+  return `${day}/${m}/${y}`;
 }
 
 export default function ManagerLeaveDashboard() {
@@ -33,17 +32,19 @@ export default function ManagerLeaveDashboard() {
   );
 
   const [loadingProfile, setLoadingProfile] = useState(true);
-  const [pageLoading, setPageLoading] = useState(false);
+  const [loadingLeaves, setLoadingLeaves] = useState(false);
   const [error, setError] = useState("");
 
-  // ---------- LOAD SESSION ----------
+  const loadedRef = useRef(false);
+
+  // ---------- session ----------
   useEffect(() => {
-    const stored = localStorage.getItem("userSession");
-    if (stored) setSessionUser(JSON.parse(stored));
+    const s = localStorage.getItem("userSession");
+    if (s) setSessionUser(JSON.parse(s));
     setLoadingProfile(false);
   }, []);
 
-  // ---------- LOAD INTERNAL USER ----------
+  // ---------- manager profile ----------
   useEffect(() => {
     if (!sessionUser) return;
 
@@ -51,7 +52,7 @@ export default function ManagerLeaveDashboard() {
       setLoadingProfile(true);
       const { data, error } = await supabase
         .from("internal_users")
-        .select("*")
+        .select("id,name,email,role")
         .eq("email", sessionUser.email)
         .single();
 
@@ -66,70 +67,75 @@ export default function ManagerLeaveDashboard() {
     loadUser();
   }, [sessionUser]);
 
-  // ---------- LOAD LEAVES ----------
+  // ---------- load leaves ----------
   useEffect(() => {
-    if (internalUser) loadLeaves();
+    if (!internalUser) return;
+    loadedRef.current = false;
+    loadLeaves();
   }, [internalUser, view, baseDate]);
 
   async function loadLeaves() {
-    setPageLoading(true);
-    const res = await fetch(
-      `${API_BASE}/api/leave/list?view=${view}&date=${baseDate}`
-    );
-    const data = await res.json();
-    setLeaves(data || []);
-    setPageLoading(false);
+    if (loadedRef.current) return;
+    loadedRef.current = true;
+
+    setLoadingLeaves(true);
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/leave/list?view=${view}&date=${baseDate}`
+      );
+      setLeaves(await res.json());
+    } catch {
+      setError("Failed to load leaves");
+    }
+    setLoadingLeaves(false);
   }
 
-  // ---------- APPROVE / REJECT ----------
   async function decide(id, decision) {
-    await fetch(`${API_BASE}/api/leave/decision`, {
+    await fetch(`${API_BASE}/api/leave/${id}/decision`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        leave_id: id,
         decision,
+        manager_id: internalUser.id,
         manager_name: internalUser.name,
         manager_email: internalUser.email,
       }),
     });
+    loadedRef.current = false;
     loadLeaves();
   }
 
   // ---------- UI ----------
-  if (loadingProfile) {
+  if (loadingProfile)
     return (
-      <Box sx={{ textAlign: "center", mt: 8 }}>
+      <Box sx={{ textAlign: "center", mt: 10 }}>
         <CircularProgress />
         <Typography mt={2}>Loading profile…</Typography>
       </Box>
     );
-  }
 
   if (error) return <Alert severity="error">{error}</Alert>;
 
   return (
     <Box sx={{ maxWidth: 1100, mx: "auto", my: 4 }}>
       <Paper sx={{ p: 4 }}>
-        <Typography variant="h4" gutterBottom>
-          Manager Leave Dashboard
-        </Typography>
+        <Typography variant="h4">Manager Leave Dashboard</Typography>
 
-        <Box sx={{ display: "flex", gap: 2, mb: 3 }}>
+        <Box sx={{ display: "flex", gap: 2, my: 2 }}>
           <Select value={view} onChange={(e) => setView(e.target.value)}>
-            <MenuItem value="date">Date</MenuItem>
+            <MenuItem value="day">Day</MenuItem>
             <MenuItem value="week">Week</MenuItem>
             <MenuItem value="month">Month</MenuItem>
           </Select>
 
           <TextField
-            type={view === "month" ? "month" : "date"}
+            type="date"
             value={baseDate}
             onChange={(e) => setBaseDate(e.target.value)}
           />
         </Box>
 
-        {pageLoading ? (
+        {loadingLeaves ? (
           <CircularProgress />
         ) : (
           leaves.map((l) => (
