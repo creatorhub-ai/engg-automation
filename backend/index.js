@@ -2144,14 +2144,14 @@ app.get('/api/leave/trainer/:trainerId', async (req, res) => {
   try {
     const { trainerId } = req.params;
 
-    const leaves = await pool.query(
+    const result = await pool.query(
       `SELECT * FROM trainer_leaves
        WHERE trainer_id = $1
        ORDER BY created_at DESC`,
       [trainerId]
     );
 
-    res.json(leaves.rows);
+    res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2161,7 +2161,6 @@ app.get('/api/leave/trainer/:trainerId', async (req, res) => {
 app.post('/api/leave/manager/filter', async (req, res) => {
   try {
     const { type, value } = req.body;
-
     let query = '';
     let params = [];
 
@@ -2197,22 +2196,22 @@ app.put('/api/leave/update', async (req, res) => {
   try {
     const { leave_id, status } = req.body;
 
-    const leave = await pool.query(
+    const result = await pool.query(
       `UPDATE trainer_leaves
        SET status=$1, updated_at=now()
        WHERE id=$2 RETURNING *`,
       [status, leave_id]
     );
 
-    const trainerId = leave.rows[0].trainer_id;
+    const leave = result.rows[0];
 
     await pool.query(
       `INSERT INTO leave_notifications (recipient_id, leave_id, type)
        VALUES ($1,$2,$3)`,
-      [trainerId, leave_id, status]
+      [leave.trainer_id, leave_id, status]
     );
 
-    await mailTransporter.sendMail({
+    await transporter.sendMail({
       from: process.env.LEAVE_EMAIL_USER,
       to: process.env.LEAVE_EMAIL_USER,
       subject: `Leave ${status}`,
@@ -2224,7 +2223,6 @@ app.put('/api/leave/update', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
 
 // Suggest classroom API
 app.post('/api/suggestClassroom', async (req, res) => {
