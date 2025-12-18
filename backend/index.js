@@ -34,8 +34,8 @@ import { pool } from "./db.js";
 import announceRouter from "./routes/announce.js";
 import attendanceRoutes from "./routes/attendance.js";
 import jwt from "jsonwebtoken";
-import holidays from "./routes/holidaysRoutes.js";
-import internalUsers from "./routes/internalUsersRoutes.js";
+import holidaysRoutes from "./routes/holidaysRoutes.js";
+import internalUsersRoutes from "./routes/internalUsersRoutes.js";
 
 dotenv.config();
 
@@ -46,6 +46,7 @@ dayjs.tz.setDefault("Asia/Kolkata");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const router = express.Router();
 
 // ============================
 // 🔥 IMPORTANT: NO TRAILING /

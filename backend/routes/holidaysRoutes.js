@@ -1,9 +1,10 @@
 // holidaysRoutes.js
-const express = require("express");
+import express from "express";
+import multer from "multer";
+import xlsx from "xlsx";
+import { pool } from "../db.js"; // adjust .js if needed
+
 const router = express.Router();
-const multer = require("multer");
-const xlsx = require("xlsx");
-const pool = require("../db"); // your pg pool instance
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -76,4 +77,4 @@ router.get("/", async (req, res) => {
   }
 });
 
-module.exports = router;
+export default router;
