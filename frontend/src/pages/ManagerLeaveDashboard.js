@@ -1,5 +1,10 @@
 // ManagerLeaveDashboard.js
-import React, { useEffect, useMemo, useState, useRef } from "react";
+import React, {
+  useEffect,
+  useMemo,
+  useState,
+  useRef,
+} from "react";
 import axios from "axios";
 import {
   Box,
@@ -8,6 +13,12 @@ import {
   IconButton,
   Chip,
   Tooltip,
+  ToggleButton,
+  ToggleButtonGroup,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
 } from "@mui/material";
 import {
   blue,
@@ -25,7 +36,6 @@ import ArrowForwardIosIcon from "@mui/icons-material/ArrowForwardIos";
 const API_BASE =
   process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 
-// Helper to format date as YYYY-MM-DD
 function formatDate(d) {
   const year = d.getFullYear();
   const month = `${d.getMonth() + 1}`.padStart(2, "0");
@@ -33,7 +43,6 @@ function formatDate(d) {
   return `${year}-${month}-${day}`;
 }
 
-// Palette for trainer-specific colors
 const TRAINER_COLORS = [
   { bg: deepPurple[100], border: deepPurple[200], text: deepPurple[900] },
   { bg: indigo[100], border: indigo[200], text: indigo[900] },
@@ -43,7 +52,6 @@ const TRAINER_COLORS = [
   { bg: blue[100], border: blue[200], text: blue[900] },
 ];
 
-// Simple hash to map trainer name to stable index
 function hashString(str) {
   let hash = 0;
   for (let i = 0; i < str.length; i += 1) {
@@ -55,31 +63,51 @@ function hashString(str) {
 
 function ManagerLeaveDashboard({ user, token }) {
   const [requests, setRequests] = useState([]);
-  const [monthCursor, setMonthCursor] = useState(() => {
+  const [holidays, setHolidays] = useState([]);
+  const [trainers, setTrainers] = useState([]);
+  const [selectedTrainerId, setSelectedTrainerId] = useState("all");
+
+  const [viewType, setViewType] = useState("month"); // 'month' | 'week' | 'day'
+  const [cursor, setCursor] = useState(() => {
     const d = new Date();
-    d.setDate(1);
+    d.setHours(0, 0, 0, 0);
     return d;
   });
 
-  // Optional: map of trainerName -> color index, persisted in ref
   const trainerColorMapRef = useRef({});
 
+  const authHeaders = useMemo(
+    () => (token ? { Authorization: `Bearer ${token}` } : {}),
+    [token]
+  );
+
   useEffect(() => {
-    async function loadUnavailability() {
+    async function loadAll() {
       try {
-        const headers = token ? { Authorization: `Bearer ${token}` } : {};
-        const res = await axios.get(`${API_BASE}/api/unavailability-requests`, {
-          headers,
-        });
-        setRequests(Array.isArray(res.data) ? res.data : []);
+        const [unavailRes, holRes, trainersRes] = await Promise.all([
+          axios.get(`${API_BASE}/api/unavailability-requests`, {
+            headers: authHeaders,
+          }),
+          axios.get(`${API_BASE}/api/holidays`, {
+            headers: authHeaders,
+            params: { year: cursor.getFullYear() },
+          }),
+          axios.get(`${API_BASE}/api/internal-users/trainers`, {
+            headers: authHeaders,
+          }),
+        ]);
+        setRequests(Array.isArray(unavailRes.data) ? unavailRes.data : []);
+        setHolidays(Array.isArray(holRes.data) ? holRes.data : []);
+        setTrainers(Array.isArray(trainersRes.data) ? trainersRes.data : []);
       } catch {
         setRequests([]);
+        setHolidays([]);
+        setTrainers([]);
       }
     }
-    loadUnavailability();
-  }, [token]);
+    loadAll();
+  }, [authHeaders, cursor.getFullYear()]);
 
-  // Build trainer -> color index map based on trainer names present
   const trainerColorMap = useMemo(() => {
     const map = { ...trainerColorMapRef.current };
 
@@ -96,11 +124,16 @@ function ManagerLeaveDashboard({ user, token }) {
     return map;
   }, [requests]);
 
-  // Build a map of day -> events
+  // Merge leave + holidays into dayEventsMap, with name filter applied
   const dayEventsMap = useMemo(() => {
     const map = {};
 
-    requests.forEach((req) => {
+    const filteredRequests =
+      selectedTrainerId === "all"
+        ? requests
+        : requests.filter((r) => String(r.trainer_id) === String(selectedTrainerId));
+
+    filteredRequests.forEach((req) => {
       const start = new Date(req.start_date);
       const end = new Date(req.end_date || req.start_date);
 
@@ -108,9 +141,9 @@ function ManagerLeaveDashboard({ user, token }) {
         (req.leave_type || "").toLowerCase() ||
         (req.reason || "").toLowerCase();
 
-      const cursor = new Date(start);
-      while (cursor <= end) {
-        const key = formatDate(cursor);
+      const cursorDate = new Date(start);
+      while (cursorDate <= end) {
+        const key = formatDate(cursorDate);
         if (!map[key]) map[key] = [];
 
         let category = "trainer";
@@ -121,96 +154,381 @@ function ManagerLeaveDashboard({ user, token }) {
         }
 
         map[key].push({
-          id: req.id,
+          id: `leave-${req.id}-${key}`,
           trainer_name: req.trainer_name,
           domain: req.domain,
           reason: req.reason,
           category,
         });
 
-        cursor.setDate(cursor.getDate() + 1);
+        cursorDate.setDate(cursorDate.getDate() + 1);
       }
     });
 
-    return map;
-  }, [requests]);
+    holidays.forEach((h) => {
+      const key = h.holiday_date; // yyyy-mm-dd
+      if (!map[key]) map[key] = [];
+      const lower = (h.type || "").toLowerCase();
+      const category = lower.includes("restricted")
+        ? "optionalHoliday"
+        : "holiday";
 
-  const year = monthCursor.getFullYear();
-  const monthIndex = monthCursor.getMonth();
-
-  const firstDayOfMonth = new Date(year, monthIndex, 1);
-  const lastDayOfMonth = new Date(year, monthIndex + 1, 0);
-  const daysInMonth = lastDayOfMonth.getDate();
-
-  // 0=Sunday, 1=Monday ...
-  const startWeekday = firstDayOfMonth.getDay();
-
-  const weeks = [];
-  let currentDay = 1 - startWeekday; // to include prev month spill
-
-  while (currentDay <= daysInMonth) {
-    const week = [];
-    for (let i = 0; i < 7; i++) {
-      const dateObj = new Date(year, monthIndex, currentDay);
-      const isCurrentMonth = dateObj.getMonth() === monthIndex;
-      const dateKey = formatDate(dateObj);
-      const events = dayEventsMap[dateKey] || [];
-
-      let bgColor = "white";
-      let borderColor = "#e0e0e0";
-
-      const hasHoliday = events.some((e) => e.category === "holiday");
-      const hasOptional = events.some(
-        (e) => e.category === "optionalHoliday"
-      );
-      const hasTrainerLeave = events.some(
-        (e) => e.category === "trainer"
-      );
-
-      if (hasHoliday) {
-        bgColor = green[50];
-        borderColor = green[200];
-      } else if (hasOptional) {
-        bgColor = red[50];
-        borderColor = red[200];
-      } else if (hasTrainerLeave) {
-        bgColor = deepPurple[50]; // base for cells containing trainer leaves
-        borderColor = deepPurple[200];
-      }
-
-      week.push({
-        dateObj,
-        displayDay: dateObj.getDate(),
-        isCurrentMonth,
-        dateKey,
-        events,
-        bgColor,
-        borderColor,
+      map[key].push({
+        id: `holiday-${key}`,
+        trainer_name: "",
+        domain: "",
+        reason: h.name,
+        category,
       });
-      currentDay++;
-    }
-    weeks.push(week);
-  }
+    });
 
-  const monthLabel = monthCursor.toLocaleString("default", {
+    return map;
+  }, [requests, holidays, selectedTrainerId]);
+
+  const year = cursor.getFullYear();
+  const monthIndex = cursor.getMonth();
+
+  const monthLabel = cursor.toLocaleString("default", {
     month: "long",
     year: "numeric",
   });
 
-  const goPrevMonth = () => {
-    setMonthCursor((prev) => {
+  const goPrev = () => {
+    setCursor((prev) => {
       const d = new Date(prev);
-      d.setMonth(d.getMonth() - 1);
+      if (viewType === "month") {
+        d.setMonth(d.getMonth() - 1);
+        d.setDate(1);
+      } else if (viewType === "week") {
+        d.setDate(d.getDate() - 7);
+      } else {
+        d.setDate(d.getDate() - 1);
+      }
       return d;
     });
   };
 
-  const goNextMonth = () => {
-    setMonthCursor((prev) => {
+  const goNext = () => {
+    setCursor((prev) => {
       const d = new Date(prev);
-      d.setMonth(d.getMonth() + 1);
+      if (viewType === "month") {
+        d.setMonth(d.getMonth() + 1);
+        d.setDate(1);
+      } else if (viewType === "week") {
+        d.setDate(d.getDate() + 7);
+      } else {
+        d.setDate(d.getDate() + 1);
+      }
       return d;
     });
+  };
+
+  const handleViewChange = (_, next) => {
+    if (!next) return;
+    setViewType(next);
+  };
+
+  const renderDayCellEvents = (dateObj) => {
+    const key = formatDate(dateObj);
+    const events = dayEventsMap[key] || [];
+
+    return (
+      <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
+        {events.map((ev) => {
+          let chipBg;
+          let chipColor;
+
+          if (ev.category === "holiday") {
+            chipBg = green[200];
+            chipColor = green[900];
+          } else if (ev.category === "optionalHoliday") {
+            chipBg = red[200];
+            chipColor = red[900];
+          } else {
+            const name = (ev.trainer_name || "Trainer").trim();
+            const idx = trainerColorMap[name] ?? 0;
+            const palette = TRAINER_COLORS[idx];
+            chipBg = palette.bg;
+            chipColor = palette.text;
+          }
+
+          const label =
+            ev.category === "trainer"
+              ? ev.trainer_name || "Trainer Leave"
+              : ev.category === "holiday"
+              ? ev.reason || "Holiday"
+              : ev.reason || "Optional Holiday";
+
+          return (
+            <Tooltip
+              key={ev.id}
+              title={`${ev.trainer_name || ""} ${
+                ev.domain ? `(${ev.domain})` : ""
+              }${ev.reason ? ` - ${ev.reason}` : ""}`}
+              arrow
+            >
+              <Chip
+                size="small"
+                label={label}
+                sx={{
+                  bgcolor: chipBg,
+                  color: chipColor,
+                  fontSize: 11,
+                  height: 22,
+                  maxWidth: "100%",
+                }}
+              />
+            </Tooltip>
+          );
+        })}
+      </Box>
+    );
+  };
+
+  const renderMonthView = () => {
+    const firstDayOfMonth = new Date(year, monthIndex, 1);
+    const lastDayOfMonth = new Date(year, monthIndex + 1, 0);
+    const daysInMonth = lastDayOfMonth.getDate();
+    const startWeekday = firstDayOfMonth.getDay();
+
+    const weeks = [];
+    let currentDay = 1 - startWeekday;
+
+    while (currentDay <= daysInMonth) {
+      const week = [];
+      for (let i = 0; i < 7; i++) {
+        const dateObj = new Date(year, monthIndex, currentDay);
+        dateObj.setHours(0, 0, 0, 0);
+        const isCurrentMonth = dateObj.getMonth() === monthIndex;
+        const key = formatDate(dateObj);
+        const events = dayEventsMap[key] || [];
+
+        let bgColor = "white";
+        let borderColor = "#e0e0e0";
+
+        const hasHoliday = events.some((e) => e.category === "holiday");
+        const hasOptional = events.some(
+          (e) => e.category === "optionalHoliday"
+        );
+        const hasTrainerLeave = events.some(
+          (e) => e.category === "trainer"
+        );
+
+        if (hasHoliday) {
+          bgColor = green[50];
+          borderColor = green[200];
+        } else if (hasOptional) {
+          bgColor = red[50];
+          borderColor = red[200];
+        } else if (hasTrainerLeave) {
+          bgColor = deepPurple[50];
+          borderColor = deepPurple[200];
+        }
+
+        week.push({
+          dateObj,
+          displayDay: dateObj.getDate(),
+          isCurrentMonth,
+          bgColor,
+          borderColor,
+        });
+        currentDay++;
+      }
+      weeks.push(week);
+    }
+
+    return (
+      <>
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: "repeat(7, 1fr)",
+            borderBottom: "1px solid #e0e0e0",
+            pb: 1,
+            mb: 1,
+          }}
+        >
+          {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
+            <Box
+              key={d}
+              sx={{
+                textAlign: "center",
+                fontWeight: "bold",
+                color: blue[800],
+                fontSize: 13,
+              }}
+            >
+              {d}
+            </Box>
+          ))}
+        </Box>
+
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: "repeat(7, 1fr)",
+            gap: 0.5,
+          }}
+        >
+          {weeks.map((week, wi) =>
+            week.map((day, di) => (
+              <Box
+                key={`${wi}-${di}`}
+                sx={{
+                  minHeight: 90,
+                  borderRadius: 1,
+                  border: `1px solid ${day.borderColor}`,
+                  bgcolor: day.isCurrentMonth ? day.bgColor : "#fafafa",
+                  opacity: day.isCurrentMonth ? 1 : 0.5,
+                  p: 0.5,
+                  display: "flex",
+                  flexDirection: "column",
+                }}
+              >
+                <Typography
+                  variant="caption"
+                  sx={{
+                    fontWeight: "bold",
+                    mb: 0.5,
+                    textAlign: "right",
+                  }}
+                >
+                  {day.displayDay}
+                </Typography>
+                {renderDayCellEvents(day.dateObj)}
+              </Box>
+            ))
+          )}
+        </Box>
+      </>
+    );
+  };
+
+  const renderWeekView = () => {
+    const startOfWeek = new Date(cursor);
+    const day = startOfWeek.getDay();
+    startOfWeek.setDate(startOfWeek.getDate() - day);
+    startOfWeek.setHours(0, 0, 0, 0);
+
+    const days = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(startOfWeek);
+      d.setDate(startOfWeek.getDate() + i);
+      d.setHours(0, 0, 0, 0);
+      days.push(d);
+    }
+
+    return (
+      <>
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: "repeat(7, 1fr)",
+            borderBottom: "1px solid #e0e0e0",
+            pb: 1,
+            mb: 1,
+          }}
+        >
+          {days.map((d) => (
+            <Box
+              key={d.toISOString()}
+              sx={{
+                textAlign: "center",
+                fontWeight: "bold",
+                color: blue[800],
+                fontSize: 13,
+              }}
+            >
+              {d.toLocaleDateString("default", {
+                weekday: "short",
+                day: "numeric",
+                month: "short",
+              })}
+            </Box>
+          ))}
+        </Box>
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: "repeat(7, 1fr)",
+            gap: 0.5,
+          }}
+        >
+          {days.map((d) => {
+            const key = formatDate(d);
+            const events = dayEventsMap[key] || [];
+
+            let bgColor = "white";
+            let borderColor = "#e0e0e0";
+
+            const hasHoliday = events.some((e) => e.category === "holiday");
+            const hasOptional = events.some(
+              (e) => e.category === "optionalHoliday"
+            );
+            const hasTrainerLeave = events.some(
+              (e) => e.category === "trainer"
+            );
+
+            if (hasHoliday) {
+              bgColor = green[50];
+              borderColor = green[200];
+            } else if (hasOptional) {
+              bgColor = red[50];
+              borderColor = red[200];
+            } else if (hasTrainerLeave) {
+              bgColor = deepPurple[50];
+              borderColor = deepPurple[200];
+            }
+
+            return (
+              <Box
+                key={key}
+                sx={{
+                  minHeight: 120,
+                  borderRadius: 1,
+                  border: `1px solid ${borderColor}`,
+                  bgcolor: bgColor,
+                  p: 0.75,
+                  display: "flex",
+                  flexDirection: "column",
+                }}
+              >
+                {renderDayCellEvents(d)}
+              </Box>
+            );
+          })}
+        </Box>
+      </>
+    );
+  };
+
+  const renderDayView = () => {
+    const d = new Date(cursor);
+    d.setHours(0, 0, 0, 0);
+
+    return (
+      <Box
+        sx={{
+          borderRadius: 1,
+          border: "1px solid #e0e0e0",
+          p: 1.5,
+          minHeight: 150,
+        }}
+      >
+        <Typography
+          variant="subtitle1"
+          sx={{ fontWeight: "bold", mb: 1 }}
+        >
+          {d.toLocaleDateString("default", {
+            weekday: "long",
+            day: "numeric",
+            month: "long",
+            year: "numeric",
+          })}
+        </Typography>
+        {renderDayCellEvents(d)}
+      </Box>
+    );
   };
 
   return (
@@ -221,22 +539,61 @@ function ManagerLeaveDashboard({ user, token }) {
           alignItems: "center",
           mb: 2,
           justifyContent: "space-between",
+          flexWrap: "wrap",
+          gap: 2,
         }}
       >
-        <Typography variant="h6" fontWeight="bold">
-          Trainer Leave Calendar
-        </Typography>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-          <IconButton size="small" onClick={goPrevMonth}>
+          <Typography variant="h6" fontWeight="bold">
+            Trainer Leave Calendar
+          </Typography>
+          <ToggleButtonGroup
+            size="small"
+            value={viewType}
+            exclusive
+            onChange={handleViewChange}
+          >
+            <ToggleButton value="day">Day</ToggleButton>
+            <ToggleButton value="week">Week</ToggleButton>
+            <ToggleButton value="month">Month</ToggleButton>
+          </ToggleButtonGroup>
+        </Box>
+
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          <IconButton size="small" onClick={goPrev}>
             <ArrowBackIosNewIcon fontSize="small" />
           </IconButton>
           <Typography variant="subtitle1" fontWeight="medium">
-            {monthLabel}
+            {viewType === "month"
+              ? monthLabel
+              : cursor.toLocaleDateString("default", {
+                  day: "numeric",
+                  month: "long",
+                  year: "numeric",
+                })}
           </Typography>
-          <IconButton size="small" onClick={goNextMonth}>
+          <IconButton size="small" onClick={goNext}>
             <ArrowForwardIosIcon fontSize="small" />
           </IconButton>
         </Box>
+
+        <FormControl size="small" sx={{ minWidth: 200 }}>
+          <InputLabel>Trainer</InputLabel>
+          <Select
+            label="Trainer"
+            value={selectedTrainerId}
+            onChange={(e) => setSelectedTrainerId(e.target.value)}
+          >
+            <MenuItem value="all">
+              <em>All Trainers</em>
+            </MenuItem>
+            {trainers.map((t) => (
+              <MenuItem key={t.id} value={t.id}>
+                {t.name} ({t.email})
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
       </Box>
 
       {/* Legend */}
@@ -258,7 +615,7 @@ function ManagerLeaveDashboard({ user, token }) {
               border: `1px solid ${red[200]}`,
             }}
           />
-          <Typography variant="body2">Optional Holiday</Typography>
+          <Typography variant="body2">Restricted / Optional Holiday</Typography>
         </Box>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <Box
@@ -284,120 +641,9 @@ function ManagerLeaveDashboard({ user, token }) {
         </Box>
       </Box>
 
-      {/* Weekday headers */}
-      <Box
-        sx={{
-          display: "grid",
-          gridTemplateColumns: "repeat(7, 1fr)",
-          borderBottom: "1px solid #e0e0e0",
-          pb: 1,
-          mb: 1,
-        }}
-      >
-        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
-          <Box
-            key={d}
-            sx={{
-              textAlign: "center",
-              fontWeight: "bold",
-              color: blue[800],
-              fontSize: 13,
-            }}
-          >
-            {d}
-          </Box>
-        ))}
-      </Box>
-
-      {/* Calendar grid */}
-      <Box
-        sx={{
-          display: "grid",
-          gridTemplateColumns: "repeat(7, 1fr)",
-          gap: 0.5,
-        }}
-      >
-        {weeks.map((week, wi) =>
-          week.map((day, di) => (
-            <Box
-              key={`${wi}-${di}`}
-              sx={{
-                minHeight: 90,
-                borderRadius: 1,
-                border: `1px solid ${day.borderColor}`,
-                bgcolor: day.isCurrentMonth ? day.bgColor : "#fafafa",
-                opacity: day.isCurrentMonth ? 1 : 0.5,
-                p: 0.5,
-                display: "flex",
-                flexDirection: "column",
-              }}
-            >
-              <Typography
-                variant="caption"
-                sx={{
-                  fontWeight: "bold",
-                  mb: 0.5,
-                  textAlign: "right",
-                }}
-              >
-                {day.displayDay}
-              </Typography>
-
-              <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
-                {day.events.map((ev, idx) => {
-                  let chipBg;
-                  let chipColor;
-
-                  if (ev.category === "holiday") {
-                    chipBg = green[200];
-                    chipColor = green[900];
-                  } else if (ev.category === "optionalHoliday") {
-                    chipBg = red[200];
-                    chipColor = red[900];
-                  } else {
-                    // Trainer leave: use trainer-specific color
-                    const name = (ev.trainer_name || "Trainer").trim();
-                    const colorIdx =
-                      trainerColorMap[name] ?? 0;
-                    const palette = TRAINER_COLORS[colorIdx];
-                    chipBg = palette.bg;
-                    chipColor = palette.text;
-                  }
-
-                  const label =
-                    ev.category === "trainer"
-                      ? ev.trainer_name || "Trainer Leave"
-                      : ev.category === "holiday"
-                      ? "Holiday"
-                      : "Optional Holiday";
-
-                  return (
-                    <Tooltip
-                      key={`${ev.id}-${idx}`}
-                      title={`${ev.trainer_name || ""} ${
-                        ev.domain ? `(${ev.domain})` : ""
-                      } - ${ev.reason || ""}`}
-                      arrow
-                    >
-                      <Chip
-                        size="small"
-                        label={label}
-                        sx={{
-                          bgcolor: chipBg,
-                          color: chipColor,
-                          fontSize: 11,
-                          height: 22,
-                          maxWidth: "100%",
-                        }}
-                      />
-                    </Tooltip>
-                  );
-                })}
-              </Box>
-            </Box>
-          ))
-        )}
-      </Box>
+      {viewType === "month" && renderMonthView()}
+      {viewType === "week" && renderWeekView()}
+      {viewType === "day" && renderDayView()}
     </Paper>
   );
 }

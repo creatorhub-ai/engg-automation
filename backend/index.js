@@ -34,6 +34,8 @@ import { pool } from "./db.js";
 import announceRouter from "./routes/announce.js";
 import attendanceRoutes from "./routes/attendance.js";
 import jwt from "jsonwebtoken";
+import holidays from "./routes/holidaysRoutes.js";
+import internalUsers from "./routes/internalUsersRoutes.js";
 
 dotenv.config();
 
@@ -73,6 +75,8 @@ app.use(
 app.use("/api/marks", marksWindowsRouter);
 app.use("/api/marks", marksSaveRouter);
 app.use("/api/attendance", attendanceRoutes);
+app.use("/api/holidays", holidaysRoutes);
+app.use("/api/internal-users", internalUsersRoutes);
 
 // =====================================================
 // ✅ Handle Preflight Requests (OPTIONS)
