@@ -45,7 +45,7 @@ const roleMenus = {
     { text: "Announcement", path: "/announcement" }, 
     { text: "Classroom Planner-2", path: "/classroom-planner" }, 
     { text: "Manager Leave Dashboard", path: "/manager/leaves" }, 
-    { text: "Manager Leave Dashboard", path: "/holiday" },
+    { text: "Manager Leave Dashboard", path: "/holiday-upload" },
   ],
   manager: [
     { text: "Home", path: "/home" },
@@ -64,7 +64,7 @@ const roleMenus = {
     { text: "Mark Entry", path: "/marks-entry" }, 
     { text: "Announcement", path: "/announcement" }, 
     { text: "Manager Leave Dashboard", path: "/manager/leaves" },
-    { text: "Upload Holidays", path: "/holiday" }, 
+    { text: "Upload Holidays", path: "/holiday-upload" }, 
   ],
   trainer: [
     { text: "Trainer Dashboard", path: "/dashboard" },
@@ -149,6 +149,8 @@ function getComponentForPath(path, login) {
       return <TrainerLeaveDashboard user={login} />;
     case "/manager/leaves":
       return <ManagerLeaveDashboard user={login} />;
+    case "/holiday-upload":
+      return <HolidayUpload user={login} />;
     default:
       return <div>Page not found</div>;
   }

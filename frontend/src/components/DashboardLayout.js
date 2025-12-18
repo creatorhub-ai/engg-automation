@@ -59,7 +59,7 @@ const MENUS_BY_ROLE = {
     { id: 15, name: "Announcement", path: "/announcement" },
     { id: 16, name: "Classroom Planner-2", path: "/classroom-planner" },
     { id: 17, name: "Manager Leave Dashboard", path: "/manager/leaves " },
-    { id: 18, name: "Holiday Upload", path: "/holiday" },
+    { id: 18, name: "Holiday Upload", path: "/holiday-upload" },
   ],
   manager: [
     { id: 1, name: "Home", path: "/home" },
@@ -78,7 +78,7 @@ const MENUS_BY_ROLE = {
     { id: 15, name: "Mark Entry", path: "/marks-entry" },
     { id: 16, name: "Announcement", path: "/announcement" },
     { id: 17, name: "Manager Leave Dashboard", path: "/manager/leaves " },
-    { id: 18, name: "Holiday Upload", path: "/holiday" },
+    { id: 18, name: "Holiday Upload", path: "/holiday-upload" },
   ],
   trainer: [
     { id: 1, name: "Trainer Dashboard", path: "/dashboard" },
