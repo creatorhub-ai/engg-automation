@@ -24,6 +24,7 @@ import AnnouncementDashboard from "./pages/AnnouncementDashboard";
 import ClassroomPlanner from "./pages/ClassroomPlanner";
 import TrainerLeaveDashboard from "./pages/TrainerLeaveDashboard";
 import ManagerLeaveDashboard from "./pages/ManagerLeaveDashboard";
+import HolidayUpload from "./pages/HolidayUpload";
 
 const roleMenus = {
   admin: [
@@ -43,8 +44,8 @@ const roleMenus = {
     { text: "Mark Entry", path: "/marks-entry" }, 
     { text: "Announcement", path: "/announcement" }, 
     { text: "Classroom Planner-2", path: "/classroom-planner" }, 
-    { text: "Trainer Leave Dashboard", path: "/trainer/leaves" }, 
     { text: "Manager Leave Dashboard", path: "/manager/leaves" }, 
+    { text: "Manager Leave Dashboard", path: "/holiday" },
   ],
   manager: [
     { text: "Home", path: "/home" },
@@ -62,7 +63,8 @@ const roleMenus = {
     { text: "Attendance", path: "/attendance" }, // <-- added attendance menu
     { text: "Mark Entry", path: "/marks-entry" }, 
     { text: "Announcement", path: "/announcement" }, 
-    { text: "Manager Leave Dashboard", path: "/manager/leaves" }, 
+    { text: "Manager Leave Dashboard", path: "/manager/leaves" },
+    { text: "Upload Holidays", path: "/holiday" }, 
   ],
   trainer: [
     { text: "Trainer Dashboard", path: "/dashboard" },
