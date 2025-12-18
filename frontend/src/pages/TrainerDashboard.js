@@ -29,6 +29,7 @@ import {
 } from "@mui/material";
 import CheckIcon from "@mui/icons-material/Check";
 import { green, orange, red, grey } from "@mui/material/colors";
+import ManagerLeaveDashboard from "./ManagerLeaveDashboard"; // NEW IMPORT
 
 const API_BASE =
   process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
@@ -40,7 +41,7 @@ const statusChipColor = {
 };
 
 // --- Component: TrainerUnavailabilityForm ---
-
+// (UNCHANGED, only kept for Apply Leave tab)
 function TrainerUnavailabilityForm({ user }) {
   const [domain, setDomain] = useState(user.domain || "");
   const [start, setStart] = useState("");
@@ -77,7 +78,7 @@ function TrainerUnavailabilityForm({ user }) {
   return (
     <Paper sx={{ p: 3, mb: 3 }}>
       <Typography variant="h6" fontWeight="bold" mb={1}>
-        Mark Unavailability
+        Apply Leave
       </Typography>
       <TextField
         label="Domain"
@@ -128,165 +129,7 @@ function TrainerUnavailabilityForm({ user }) {
   );
 }
 
-// --- Component: TrainerUnavailabilityManagerDashboard ---
-
-function TrainerUnavailabilityManagerDashboard() {
-  const [unavail, setUnavail] = useState([]);
-  const [selectedReq, setSelectedReq] = useState(null);
-  const [availableTrainers, setAvailableTrainers] = useState([]);
-  const [assignMsg, setAssignMsg] = useState("");
-
-  useEffect(() => {
-    async function fetchUnavailability() {
-      try {
-        const res = await axios.get(`${API_BASE}/api/unavailability-requests`);
-        setUnavail(res.data || []);
-      } catch {
-        setUnavail([]);
-      }
-    }
-    fetchUnavailability();
-  }, []);
-
-  async function handleViewAvailable(req) {
-    setSelectedReq(req);
-    setAssignMsg("");
-    setAvailableTrainers([]);
-    try {
-      const res = await axios.get(`${API_BASE}/api/available-trainers`, {
-        params: {
-          domain: req.domain,
-          start_date: req.start_date,
-          end_date: req.end_date,
-        },
-      });
-      if (!res.data || res.data.length === 0) {
-        alert("No trainers found available for the selected criteria.");
-        setAvailableTrainers([]);
-      } else {
-        setAvailableTrainers(res.data);
-      }
-    } catch (error) {
-      alert(
-        "Failed to fetch available trainers. " +
-          (error.response?.data?.error || error.message)
-      );
-      setAvailableTrainers([]);
-    }
-  }
-
-  async function handleReassign(trainer, assignment) {
-    try {
-      await axios.post(`${API_BASE}/api/reassign-topic`, {
-        batch_no: assignment.batch_no,
-        topic_id: assignment.id,
-        new_trainer_email: trainer.email,
-        new_trainer_name: trainer.name,
-      });
-      setAssignMsg(`Assigned "${assignment.topic_name}" to ${trainer.name}`);
-    } catch {
-      setAssignMsg("Failed to reassign topic");
-    }
-  }
-
-  return (
-    <Paper sx={{ p: 3, mb: 3 }}>
-      <Typography variant="h6" fontWeight="bold" mb={1}>
-        Unavailability Requests
-      </Typography>
-      <TableContainer sx={{ mb: 2 }}>
-        <Table size="small">
-          <TableHead>
-            <TableRow>
-              <TableCell>Trainer</TableCell>
-              <TableCell>Domain</TableCell>
-              <TableCell>From/To</TableCell>
-              <TableCell>Reason</TableCell>
-              <TableCell>Action</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {unavail.map((req) => (
-              <TableRow key={req.id}>
-                <TableCell>{req.trainer_name}</TableCell>
-                <TableCell>{req.domain}</TableCell>
-                <TableCell>
-                  {req.start_date} - {req.end_date}
-                </TableCell>
-                <TableCell>{req.reason}</TableCell>
-                <TableCell>
-                  <Button
-                    variant="outlined"
-                    onClick={() => handleViewAvailable(req)}
-                  >
-                    List Trainers
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </TableContainer>
-
-      {selectedReq && availableTrainers.length > 0 && (
-        <Box>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-            Available trainers for domain "{selectedReq.domain}"
-          </Typography>
-          <TableContainer>
-            <Table size="small">
-              <TableHead>
-                <TableRow>
-                  <TableCell>Name</TableCell>
-                  <TableCell>Email</TableCell>
-                  <TableCell>Batches / Assignments</TableCell>
-                  <TableCell>Assign Topic</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {availableTrainers.map((tr) => (
-                  <TableRow key={tr.email}>
-                    <TableCell>{tr.name}</TableCell>
-                    <TableCell>{tr.email}</TableCell>
-                    <TableCell>
-                      {(tr.assignments || []).map((a, i) => (
-                        <div key={i}>
-                          {a.batch_no} | {a.topic_name} | {a.start_time}-
-                          {a.end_time}
-                        </div>
-                      ))}
-                    </TableCell>
-                    <TableCell>
-                      {(tr.assignments || []).map((a, i) => (
-                        <Button
-                          key={i}
-                          variant="contained"
-                          color="success"
-                          size="small"
-                          onClick={() => handleReassign(tr, a)}
-                          sx={{ mr: 1, mb: 0.5 }}
-                        >
-                          Assign "{a.topic_name}"
-                        </Button>
-                      ))}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
-          {assignMsg && (
-            <Alert severity="success" sx={{ mt: 1 }}>
-              {assignMsg}
-            </Alert>
-          )}
-        </Box>
-      )}
-    </Paper>
-  );
-}
-
-// --- Main Component ---
+// === MAIN DASHBOARD (existing code, only bottom tab-content changed) ===
 
 function TrainerDashboard({ user, token }) {
   const [batches, setBatches] = useState([]);
@@ -306,10 +149,7 @@ function TrainerDashboard({ user, token }) {
   const [allBatchTopics, setAllBatchTopics] = useState([]);
   const [firstIncompleteWeek, setFirstIncompleteWeek] = useState(null);
 
-  // NEW: track topics where date changed but remarks missing
-  const [blockedTopics, setBlockedTopics] = useState({}); // { [topicId]: true }
-
-  // popup (Snackbar) when remarks missing
+  const [blockedTopics, setBlockedTopics] = useState({});
   const [remarksAlertOpen, setRemarksAlertOpen] = useState(false);
 
   // Load batches
@@ -437,7 +277,6 @@ function TrainerDashboard({ user, token }) {
             }
             return 0;
           });
-
           setTopics(sortedTopics);
           const newRemarks = {};
           const newActualDates = {};
@@ -489,7 +328,6 @@ function TrainerDashboard({ user, token }) {
 
   const isBlocked = (topicId) => !!blockedTopics[topicId];
 
-  // ==== STATUS CONFIRM – blocked if remarks missing after date change ====
   async function handleStatusConfirm(topicId) {
     const newStatus = pendingStatusChanges[topicId];
     if (!newStatus) {
@@ -499,7 +337,8 @@ function TrainerDashboard({ user, token }) {
 
     const topic = topics.find((t) => t.id === topicId);
     const plannedDate = topic?.date;
-    const actualDate = actualDatesMap[topicId] || topic?.actual_date || plannedDate;
+    const actualDate =
+      actualDatesMap[topicId] || topic?.actual_date || plannedDate;
     const planned = plannedDate ? new Date(plannedDate) : null;
     const actual = actualDate ? new Date(actualDate) : null;
     let daysDiff = 0;
@@ -512,7 +351,6 @@ function TrainerDashboard({ user, token }) {
     const remarks = (remarksMap[topicId] || "").trim();
 
     if (daysDiff !== 0 && !remarks) {
-      // freeze actions and show popup
       setBlockedTopics((prev) => ({ ...prev, [topicId]: true }));
       setRemarksAlertOpen(true);
       setAlertMessage(
@@ -597,7 +435,6 @@ function TrainerDashboard({ user, token }) {
     }
   }
 
-  // ====== ACTUAL DATE SAVE ======
   async function handleActualDateSave(topicId, actualDate, plannedDate) {
     try {
       if (!plannedDate || !actualDate) {
@@ -632,7 +469,6 @@ function TrainerDashboard({ user, token }) {
           )
         );
 
-        // if date changed and no remarks, freeze further actions & show popup
         if (daysDiff !== 0 && !remarks) {
           setBlockedTopics((prev) => ({ ...prev, [topicId]: true }));
           setRemarksAlertOpen(true);
@@ -675,7 +511,6 @@ function TrainerDashboard({ user, token }) {
     }
   }
 
-  // remarks save – if previously blocked and now non‑empty, unfreeze
   async function handleRemarksSave(topicId, value) {
     const trimmed = (value || "").trim();
     try {
@@ -715,6 +550,12 @@ function TrainerDashboard({ user, token }) {
     : "Trainer";
   const welcomeName = user?.name || "Trainer";
 
+  const lowerRole = (user?.role || "").toLowerCase();
+  const isTrainer = lowerRole === "trainer";
+  const isManagerOrAdmin =
+    lowerRole === "manager" || lowerRole === "admin";
+  const trainerTabLabel = isTrainer ? "Apply Leave" : "Trainer Management";
+
   return (
     <Box
       sx={{
@@ -730,7 +571,7 @@ function TrainerDashboard({ user, token }) {
         sx={{ mb: 2 }}
       >
         <Tab label="Progress" />
-        <Tab label="Trainer Management" />
+        <Tab label={trainerTabLabel} />
       </Tabs>
 
       {tab === 0 && (
@@ -753,7 +594,7 @@ function TrainerDashboard({ user, token }) {
             {roleTitle} Dashboard
           </Typography>
           <Typography variant="subtitle1" color="text.secondary" mb={3}>
-            Welcome,{" "}
+            Welcome{" "}
             <Box
               component="span"
               sx={{ fontWeight: "medium", color: "primary.main" }}
@@ -788,7 +629,8 @@ function TrainerDashboard({ user, token }) {
                   </MenuItem>
                   {batches.map((b) => (
                     <MenuItem key={b.batch_no} value={b.batch_no}>
-                      {b.batch_no} {b.start_date ? `(${b.start_date})` : ""}
+                      {b.batch_no}{" "}
+                      {b.start_date ? `(${b.start_date})` : ""}
                     </MenuItem>
                   ))}
                 </Select>
@@ -828,7 +670,8 @@ function TrainerDashboard({ user, token }) {
 
           {sortedDates.map((dateKey) => {
             const dateTopics = topicsByDate[dateKey] || [];
-            const weekNoForBlock = dateTopics[0]?.week_no || selectedWeek;
+            const weekNoForBlock =
+              dateTopics[0]?.week_no || selectedWeek;
             const weekEditable = canEditWeek(weekNoForBlock);
 
             return (
@@ -864,13 +707,22 @@ function TrainerDashboard({ user, token }) {
                       <TableRow
                         sx={{
                           bgcolor: "#1976d2",
-                          "& th": { color: "white", fontWeight: "bold" },
+                          "& th": {
+                            color: "white",
+                            fontWeight: "bold",
+                          },
                         }}
                       >
                         <TableCell>Topic</TableCell>
-                        <TableCell align="center">Planned Date</TableCell>
-                        <TableCell align="center">Actual Date</TableCell>
-                        <TableCell align="center">Difference</TableCell>
+                        <TableCell align="center">
+                          Planned Date
+                        </TableCell>
+                        <TableCell align="center">
+                          Actual Date
+                        </TableCell>
+                        <TableCell align="center">
+                          Difference
+                        </TableCell>
                         <TableCell align="center">Status</TableCell>
                         <TableCell align="center">Action</TableCell>
                         <TableCell align="center">Remarks</TableCell>
@@ -885,7 +737,8 @@ function TrainerDashboard({ user, token }) {
                         );
                         const frozen = isActionFrozen(t);
                         const blocked = isBlocked(t.id);
-                        const editable = weekEditable && !frozen && !blocked;
+                        const editable =
+                          weekEditable && !frozen && !blocked;
 
                         return (
                           <TableRow
@@ -909,7 +762,10 @@ function TrainerDashboard({ user, token }) {
                             >
                               {t.topic_name || `Topic ${t.id}`}
                             </TableCell>
-                            <TableCell align="center" sx={{ fontWeight: "medium" }}>
+                            <TableCell
+                              align="center"
+                              sx={{ fontWeight: "medium" }}
+                            >
                               {t.date}
                             </TableCell>
                             <TableCell align="center">
@@ -1017,7 +873,9 @@ function TrainerDashboard({ user, token }) {
                                 alignItems: "center",
                                 gap: 1,
                                 opacity: editable ? 1 : 0.6,
-                                pointerEvents: editable ? "auto" : "none",
+                                pointerEvents: editable
+                                  ? "auto"
+                                  : "none",
                               }}
                             >
                               <Tooltip
@@ -1038,7 +896,9 @@ function TrainerDashboard({ user, token }) {
                                   >
                                     <Select
                                       value={currentStatus}
-                                      disabled={!editable || !!t._pending}
+                                      disabled={
+                                        !editable || !!t._pending
+                                      }
                                       onChange={(e) =>
                                         handlePendingStatusChange(
                                           t.id,
@@ -1055,7 +915,9 @@ function TrainerDashboard({ user, token }) {
                                         fontWeight: "600",
                                       }}
                                     >
-                                      <MenuItem value="Planned">Planned</MenuItem>
+                                      <MenuItem value="Planned">
+                                        Planned
+                                      </MenuItem>
                                       <MenuItem value="In Progress">
                                         In Progress
                                       </MenuItem>
@@ -1075,7 +937,9 @@ function TrainerDashboard({ user, token }) {
                                     <IconButton
                                       size="small"
                                       color="primary"
-                                      onClick={() => handleStatusConfirm(t.id)}
+                                      onClick={() =>
+                                        handleStatusConfirm(t.id)
+                                      }
                                       disabled={t._pending}
                                       aria-label="Confirm status change"
                                     >
@@ -1096,7 +960,10 @@ function TrainerDashboard({ user, token }) {
                                   }))
                                 }
                                 onBlur={() =>
-                                  handleRemarksSave(t.id, remarksMap[t.id])
+                                  handleRemarksSave(
+                                    t.id,
+                                    remarksMap[t.id]
+                                  )
                                 }
                                 placeholder="Add remarks"
                                 variant="outlined"
@@ -1141,13 +1008,13 @@ function TrainerDashboard({ user, token }) {
 
       {tab === 1 && (
         <Box>
-          {user?.role === "trainer" && (
-            <TrainerUnavailabilityForm user={user} />
+          {isTrainer && <TrainerUnavailabilityForm user={user} />}
+
+          {isManagerOrAdmin && (
+            <ManagerLeaveDashboard user={user} token={token} />
           )}
-          {(user?.role === "manager" || user?.role === "admin") && (
-            <TrainerUnavailabilityManagerDashboard />
-          )}
-          {!["trainer", "manager", "admin"].includes(user?.role) && (
+
+          {!isTrainer && !isManagerOrAdmin && (
             <Alert severity="warning" sx={{ mt: 3 }}>
               Trainer Management is only available to trainers, managers, or
               admins. Please ensure your account has the correct role.
@@ -1156,7 +1023,7 @@ function TrainerDashboard({ user, token }) {
         </Box>
       )}
 
-      {/* Top‑center alert for date‑change without remarks */}
+      {/* Snackbar for remarks lock */}
       <Snackbar
         open={remarksAlertOpen}
         autoHideDuration={6000}
@@ -1173,7 +1040,7 @@ function TrainerDashboard({ user, token }) {
         </Alert>
       </Snackbar>
 
-      {/* Existing alert for delay/early messages */}
+      {/* Existing delay/early messages */}
       <Snackbar
         open={alertOpen}
         autoHideDuration={6000}
