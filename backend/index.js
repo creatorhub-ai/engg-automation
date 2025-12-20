@@ -76,8 +76,6 @@ app.use(
 app.use("/api/marks", marksWindowsRouter);
 app.use("/api/marks", marksSaveRouter);
 app.use("/api/attendance", attendanceRoutes);
-app.use("/api/holidays", holidaysRoutes);
-app.use("/api/internal-users", internalUsersRoutes);
 
 // =====================================================
 // ✅ Handle Preflight Requests (OPTIONS)
@@ -1369,6 +1367,108 @@ app.post("/api/save-classroom-matrix", async (req, res) => {
   }
 });
 
+// Get holidays for a given year
+app.get("/api/holidays", async (req, res) => {
+  try {
+    const year = Number(req.query.year) || new Date().getFullYear();
+
+    const result = await pool.query(
+      `
+      SELECT holiday_date, name, type
+      FROM holidays
+      WHERE EXTRACT(YEAR FROM holiday_date) = $1
+      ORDER BY holiday_date
+      `,
+      [year]
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error("GET /api/holidays error:", err);
+    res.status(500).json({ error: "Failed to fetch holidays" });
+  }
+});
+
+// Upload holiday calendar file and upsert into holidays table
+app.post("/api/holidays/upload", upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: "File is required" });
+    }
+
+    // Read the uploaded file with xlsx
+    const workbook = xlsx.readFile(req.file.path);
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    const rows = xlsx.utils.sheet_to_json(sheet, { header: 1 });
+
+    // Expect header row: [ 'Date', 'Day', 'Holiday', 'Type of Holiday', ... ]
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i];
+      if (!row || row.length < 4) continue;
+
+      const dateCell = row[0]; // "01-Jan" or proper Excel date
+      const holidayName = row[2]; // Holiday name
+      const typeStr = row[3]; // "Holiday" or "Restricted Holiday"
+
+      if (!dateCell || !holidayName || !typeStr) continue;
+
+      let dateObj;
+      if (dateCell instanceof Date) {
+        dateObj = dateCell;
+      } else {
+        // e.g. "01-Jan" -> assume current/target year
+        const [day, mon] = String(dateCell).split("-");
+        const year = Number(req.query.year) || new Date().getFullYear();
+        dateObj = new Date(`${day}-${mon}-${year}`);
+      }
+
+      if (isNaN(dateObj.getTime())) continue;
+
+      const dateISO = dateObj.toISOString().slice(0, 10);
+
+      await pool.query(
+        `
+        INSERT INTO holidays (holiday_date, name, type)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (holiday_date)
+        DO UPDATE SET name = EXCLUDED.name, type = EXCLUDED.type
+        `,
+        [dateISO, holidayName, typeStr]
+      );
+    }
+
+    // Optional: clean up uploaded file
+    try {
+      fs.unlinkSync(req.file.path);
+    } catch {
+      // ignore
+    }
+
+    res.json({ success: true, message: "Holidays uploaded successfully" });
+  } catch (err) {
+    console.error("POST /api/holidays/upload error:", err);
+    res.status(500).json({ error: "Failed to upload holidays" });
+  }
+});
+
+// Get trainers for dropdown
+app.get("/api/trainers", async (req, res) => {
+  try {
+    const result = await pool.query(
+      `
+      SELECT id, name, email
+      FROM internal_users
+      WHERE role = 'Trainer'
+      ORDER BY name
+      `
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error("GET /api/trainers error:", err);
+    res.status(500).json({ error: "Failed to fetch trainers" });
+  }
+});
 
 
 //===Load the domain progress ===

@@ -78,7 +78,7 @@ function ManagerLeaveDashboard({ user, token }) {
 
   const trainerColorMapRef = useRef({});
 
-  // NEW: upload state
+  // Upload state
   const [holidayFile, setHolidayFile] = useState(null);
   const [uploadStatus, setUploadStatus] = useState(null); // { type: 'success'|'error', msg: string }
 
@@ -97,7 +97,7 @@ function ManagerLeaveDashboard({ user, token }) {
           headers: authHeaders,
           params: { year },
         }),
-        axios.get(`${API_BASE}/api/internal-users/trainers`, {
+        axios.get(`${API_BASE}/api/trainers`, {
           headers: authHeaders,
         }),
       ]);
@@ -237,7 +237,7 @@ function ManagerLeaveDashboard({ user, token }) {
     setViewType(next);
   };
 
-  // NEW: handle holiday file upload (PDF / Excel as per backend)
+  // handle holiday file upload
   const handleHolidayFileChange = (e) => {
     const file = e.target.files?.[0];
     setHolidayFile(file || null);
