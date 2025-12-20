@@ -19,6 +19,8 @@ import {
   InputLabel,
   Select,
   MenuItem,
+  Button,
+  Alert,
 } from "@mui/material";
 import {
   blue,
@@ -76,36 +78,41 @@ function ManagerLeaveDashboard({ user, token }) {
 
   const trainerColorMapRef = useRef({});
 
+  // NEW: upload state
+  const [holidayFile, setHolidayFile] = useState(null);
+  const [uploadStatus, setUploadStatus] = useState(null); // { type: 'success'|'error', msg: string }
+
   const authHeaders = useMemo(
     () => (token ? { Authorization: `Bearer ${token}` } : {}),
     [token]
   );
 
-  useEffect(() => {
-    async function loadAll() {
-      try {
-        const [unavailRes, holRes, trainersRes] = await Promise.all([
-          axios.get(`${API_BASE}/api/unavailability-requests`, {
-            headers: authHeaders,
-          }),
-          axios.get(`${API_BASE}/api/holidays`, {
-            headers: authHeaders,
-            params: { year: cursor.getFullYear() },
-          }),
-          axios.get(`${API_BASE}/api/internal-users/trainers`, {
-            headers: authHeaders,
-          }),
-        ]);
-        setRequests(Array.isArray(unavailRes.data) ? unavailRes.data : []);
-        setHolidays(Array.isArray(holRes.data) ? holRes.data : []);
-        setTrainers(Array.isArray(trainersRes.data) ? trainersRes.data : []);
-      } catch {
-        setRequests([]);
-        setHolidays([]);
-        setTrainers([]);
-      }
+  async function loadAllData(year) {
+    try {
+      const [unavailRes, holRes, trainersRes] = await Promise.all([
+        axios.get(`${API_BASE}/api/unavailability-requests`, {
+          headers: authHeaders,
+        }),
+        axios.get(`${API_BASE}/api/holidays`, {
+          headers: authHeaders,
+          params: { year },
+        }),
+        axios.get(`${API_BASE}/api/internal-users/trainers`, {
+          headers: authHeaders,
+        }),
+      ]);
+      setRequests(Array.isArray(unavailRes.data) ? unavailRes.data : []);
+      setHolidays(Array.isArray(holRes.data) ? holRes.data : []);
+      setTrainers(Array.isArray(trainersRes.data) ? trainersRes.data : []);
+    } catch {
+      setRequests([]);
+      setHolidays([]);
+      setTrainers([]);
     }
-    loadAll();
+  }
+
+  useEffect(() => {
+    loadAllData(cursor.getFullYear());
   }, [authHeaders, cursor.getFullYear()]);
 
   const trainerColorMap = useMemo(() => {
@@ -131,7 +138,9 @@ function ManagerLeaveDashboard({ user, token }) {
     const filteredRequests =
       selectedTrainerId === "all"
         ? requests
-        : requests.filter((r) => String(r.trainer_id) === String(selectedTrainerId));
+        : requests.filter(
+            (r) => String(r.trainer_id) === String(selectedTrainerId)
+          );
 
     filteredRequests.forEach((req) => {
       const start = new Date(req.start_date);
@@ -226,6 +235,50 @@ function ManagerLeaveDashboard({ user, token }) {
   const handleViewChange = (_, next) => {
     if (!next) return;
     setViewType(next);
+  };
+
+  // NEW: handle holiday file upload (PDF / Excel as per backend)
+  const handleHolidayFileChange = (e) => {
+    const file = e.target.files?.[0];
+    setHolidayFile(file || null);
+    setUploadStatus(null);
+  };
+
+  const handleHolidayUpload = async () => {
+    if (!holidayFile) {
+      setUploadStatus({
+        type: "error",
+        msg: "Please select a holiday file to upload.",
+      });
+      return;
+    }
+
+    try {
+      const formData = new FormData();
+      formData.append("file", holidayFile);
+
+      await axios.post(`${API_BASE}/api/holidays/upload`, formData, {
+        headers: {
+          ...authHeaders,
+          "Content-Type": "multipart/form-data",
+        },
+      });
+
+      setUploadStatus({
+        type: "success",
+        msg: "Holiday list uploaded and saved successfully.",
+      });
+
+      // Reload holidays for current year so calendar updates
+      await loadAllData(cursor.getFullYear());
+    } catch (err) {
+      setUploadStatus({
+        type: "error",
+        msg:
+          err.response?.data?.error ||
+          "Failed to upload holiday list. Please check file format.",
+      });
+    }
   };
 
   const renderDayCellEvents = (dateObj) => {
@@ -596,6 +649,43 @@ function ManagerLeaveDashboard({ user, token }) {
         </FormControl>
       </Box>
 
+      {/* Holiday file upload area */}
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: 2,
+          mb: 2,
+          flexWrap: "wrap",
+        }}
+      >
+        <Typography variant="body2" sx={{ fontWeight: "bold" }}>
+          Upload Holiday List (updates holidays table)
+        </Typography>
+        <input
+          type="file"
+          accept=".xlsx,.xls,.csv,.pdf"
+          onChange={handleHolidayFileChange}
+          style={{ maxWidth: 260 }}
+        />
+        <Button
+          variant="contained"
+          size="small"
+          onClick={handleHolidayUpload}
+          disabled={!holidayFile}
+        >
+          Upload
+        </Button>
+      </Box>
+
+      {uploadStatus && (
+        <Box sx={{ mb: 2 }}>
+          <Alert severity={uploadStatus.type}>
+            {uploadStatus.msg}
+          </Alert>
+        </Box>
+      )}
+
       {/* Legend */}
       <Box
         sx={{
@@ -615,7 +705,9 @@ function ManagerLeaveDashboard({ user, token }) {
               border: `1px solid ${red[200]}`,
             }}
           />
-          <Typography variant="body2">Restricted / Optional Holiday</Typography>
+          <Typography variant="body2">
+            Restricted / Optional Holiday
+          </Typography>
         </Box>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <Box
@@ -637,7 +729,9 @@ function ManagerLeaveDashboard({ user, token }) {
               border: `1px solid ${deepPurple[200]}`,
             }}
           />
-          <Typography variant="body2">Trainer Leave (per-trainer color)</Typography>
+          <Typography variant="body2">
+            Trainer Leave (per-trainer color)
+          </Typography>
         </Box>
       </Box>
 
