@@ -2615,47 +2615,58 @@ app.get('/api/trainer-unavailability', async (req, res) => {
 //    (by date range + domain + optional batch_no)
 //////////////////////////////////////////////
 app.get('/api/unavailability-topics/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
+  const { id } = req.params;
 
+  try {
     // 1) Get the unavailability row
     const { data: ua, error: uaError } = await supabase
       .from('trainer_unavailability')
-      .select('id, domain, start_date, end_date')
+      .select('id, domain, start_date, end_date, trainer_email, trainer_name')
       .eq('id', id)
-      .single();
+      .maybeSingle();
 
     if (uaError) {
-      console.error('Supabase error (trainer_unavailability):', uaError);
-      return res.status(404).json({ error: 'Unavailability not found' });
+      console.error('trainer_unavailability error:', uaError);
+      return res.status(200).json({ unavailability: null, topics: [] });
     }
     if (!ua) {
-      return res.status(404).json({ error: 'Unavailability not found' });
+      // No such leave; not fatal for UI
+      return res.status(200).json({ unavailability: null, topics: [] });
     }
 
-    const { domain, start_date, end_date } = ua;
+    const { domain, start_date, end_date, trainer_email } = ua;
+    if (!domain || !start_date || !end_date) {
+      return res.status(200).json({ unavailability: ua, topics: [] });
+    }
 
-    // 2) Fetch topics by date range + domain
-    // Adjust column names to your actual topics table
+    // 2) Fetch topics from course_planner_data
+    //    - matching domain
+    //    - date between start_date and end_date
+    //    - assigned to this trainer (trainer_email)
     const { data: topics, error: topicsError } = await supabase
-      .from('topics')
-      .select('id, topic_name, date, week_no, batch_no, trainer_email, domain')
+      .from('course_planner_data')
+      .select(
+        'id, batch_no, domain, week_no, date, start_time, end_time, module_name, module_topic, topic_name, trainer_name, trainer_email, topic_status'
+      )
       .gte('date', start_date)
       .lte('date', end_date)
-      .eq('domain', domain);
+      .eq('domain', domain)
+      .eq('trainer_email', trainer_email);
 
     if (topicsError) {
-      console.error('Supabase error (topics):', topicsError);
-      throw topicsError;
+      console.error('course_planner_data error:', topicsError);
+      return res.status(200).json({ unavailability: ua, topics: [] });
     }
 
-    res.json({
+    return res.status(200).json({
       unavailability: ua,
       topics: topics || [],
     });
   } catch (err) {
-    console.error('Error in /api/unavailability-topics/:id:', err);
-    res.status(500).json({ error: 'Failed to fetch topics for unavailability' });
+    console.error('Unhandled error in /api/unavailability-topics/:id:', err);
+    return res
+      .status(200)
+      .json({ unavailability: null, topics: [] });
   }
 });
 

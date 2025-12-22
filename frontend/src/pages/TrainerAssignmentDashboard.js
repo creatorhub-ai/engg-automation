@@ -43,16 +43,15 @@ function TrainerAssignmentDashboard({ user, token, batchNo }) {
   const lowerRole = (user?.role || "").toLowerCase();
   const isManagerOrAdmin =
     lowerRole === "manager" || lowerRole === "admin";
-  const isPrivileged = isManagerOrAdmin || true; // UI only – backend enforces real auth
+  const isPrivileged = isManagerOrAdmin || true; // UI only
 
-  // Only send Authorization to avoid CORS issues
   const authHeaders = token
     ? {
         Authorization: `Bearer ${token}`,
       }
     : {};
 
-  // Load unavailability list (simple: no batch filter, matches backend route)
+  // Load trainer leave list
   useEffect(() => {
     const fetchUA = async () => {
       try {
@@ -76,14 +75,14 @@ function TrainerAssignmentDashboard({ user, token, batchNo }) {
     setLoading(true);
 
     try {
-      // 1) Fetch topics affected by this leave
+      // 1) fetch topics from course_planner_data via backend
       const topicsRes = await axios.get(
         `${API_BASE}/api/unavailability-topics/${ua.id}`,
         { headers: authHeaders }
       );
       setTopics(topicsRes.data?.topics || []);
 
-      // 2) Fetch available trainers for same domain & date range
+      // 2) fetch available trainers
       const availRes = await axios.get(
         `${API_BASE}/api/available-trainers`,
         {
@@ -141,7 +140,6 @@ function TrainerAssignmentDashboard({ user, token, batchNo }) {
       setSelectedTrainer(null);
       setSelectedUA(null);
 
-      // refresh list
       const res = await axios.get(`${API_BASE}/api/trainer-unavailability`, {
         headers: authHeaders,
       });
@@ -246,7 +244,7 @@ function TrainerAssignmentDashboard({ user, token, batchNo }) {
         </Table>
       </TableContainer>
 
-      {/* Dialog: show topics + available trainers */}
+      {/* Dialog showing topics + trainers */}
       <Dialog
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}
@@ -324,7 +322,7 @@ function TrainerAssignmentDashboard({ user, token, batchNo }) {
         </DialogContent>
       </Dialog>
 
-      {/* Confirm assign dialog */}
+      {/* Confirm assignment */}
       <Dialog
         open={confirmOpen}
         onClose={() => setConfirmOpen(false)}
