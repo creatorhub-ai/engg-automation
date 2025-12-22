@@ -2682,7 +2682,7 @@ app.get('/api/available-trainers', async (req, res) => {
 
     // trainers table: name, email, domain, etc.
     const { data: trainers, error: trainerError } = await supabase
-      .from('trainers')
+      .from('internal_users')
       .select('name, email, domain')
       .eq('domain', domain);
 
