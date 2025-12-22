@@ -1,4 +1,4 @@
-// TrainerDashboard.js
+// src/pages/TrainerDashboard.js
 import React, { useEffect, useState } from "react";
 import axios from "axios";
 import {
@@ -29,7 +29,8 @@ import {
 } from "@mui/material";
 import CheckIcon from "@mui/icons-material/Check";
 import { green, orange, red, grey } from "@mui/material/colors";
-import ManagerLeaveDashboard from "./ManagerLeaveDashboard"; // NEW IMPORT
+import ManagerLeaveDashboard from "./ManagerLeaveDashboard";
+import TrainerAssignmentDashboard from "./TrainerAssignmentDashboard";
 
 const API_BASE =
   process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
@@ -40,10 +41,7 @@ const statusChipColor = {
   Planned: red[600],
 };
 
-const [isBatchOwner, setIsBatchOwner] = useState(false);
-
 // --- Component: TrainerUnavailabilityForm ---
-// (UNCHANGED, only kept for Apply Leave tab)
 function TrainerUnavailabilityForm({ user }) {
   const [domain, setDomain] = useState(user.domain || "");
   const [start, setStart] = useState("");
@@ -131,7 +129,7 @@ function TrainerUnavailabilityForm({ user }) {
   );
 }
 
-// === MAIN DASHBOARD (existing code, only bottom tab-content changed) ===
+// === MAIN DASHBOARD ===
 
 function TrainerDashboard({ user, token }) {
   const [batches, setBatches] = useState([]);
@@ -153,6 +151,19 @@ function TrainerDashboard({ user, token }) {
 
   const [blockedTopics, setBlockedTopics] = useState({});
   const [remarksAlertOpen, setRemarksAlertOpen] = useState(false);
+
+  // NEW: batch owner flag (must be inside component)
+  const [isBatchOwner, setIsBatchOwner] = useState(false);
+
+  const lowerRole = (user?.role || "").toLowerCase();
+  const isTrainer = lowerRole === "trainer";
+  const isManagerOrAdmin = lowerRole === "manager" || lowerRole === "admin";
+  const trainerTabLabel = isTrainer ? "Apply Leave" : "Trainer Management";
+
+  const roleTitle = user?.role
+    ? user.role.charAt(0).toUpperCase() + user.role.slice(1)
+    : "Trainer";
+  const welcomeName = user?.name || "Trainer";
 
   // Load batches
   useEffect(() => {
@@ -251,18 +262,29 @@ function TrainerDashboard({ user, token }) {
     })();
   }, [selectedBatch, token]);
 
-  // Add this useEffect after the weeks useEffect
+  // Check batch owner for Manager/Admin
   useEffect(() => {
     const checkBatchOwner = async () => {
-      if (!selectedBatch || !token || lowerRole !== 'manager' && lowerRole !== 'admin') {
+      if (
+        !selectedBatch ||
+        !token ||
+        (lowerRole !== "manager" && lowerRole !== "admin")
+      ) {
         setIsBatchOwner(false);
         return;
       }
-      
+
       try {
         const headers = { Authorization: `Bearer ${token}` };
-        const res = await axios.get(`${API_BASE}/api/course_planner_data?batch_no=${selectedBatch}`, { headers });
-        if (res.data && res.data.length > 0 && res.data[0].batch_owner === user.email) {
+        const res = await axios.get(
+          `${API_BASE}/api/course_planner_data?batch_no=${selectedBatch}`,
+          { headers }
+        );
+        if (
+          res.data &&
+          res.data.length > 0 &&
+          res.data[0].batch_owner === user.email
+        ) {
           setIsBatchOwner(true);
         } else {
           setIsBatchOwner(false);
@@ -271,9 +293,9 @@ function TrainerDashboard({ user, token }) {
         setIsBatchOwner(false);
       }
     };
-  
-  checkBatchOwner();
-}, [selectedBatch, token, user.email, lowerRole]);
+
+    checkBatchOwner();
+  }, [selectedBatch, token, user.email, lowerRole]);
 
   // Load topics for selectedWeek
   useEffect(() => {
@@ -570,17 +592,6 @@ function TrainerDashboard({ user, token }) {
     if (daysDiff < 0) return { color: green[700], fontWeight: "bold" };
     return { color: grey[700] };
   }
-
-  const roleTitle = user?.role
-    ? user.role.charAt(0).toUpperCase() + user.role.slice(1)
-    : "Trainer";
-  const welcomeName = user?.name || "Trainer";
-
-  const lowerRole = (user?.role || "").toLowerCase();
-  const isTrainer = lowerRole === "trainer";
-  const isManagerOrAdmin =
-    lowerRole === "manager" || lowerRole === "admin";
-  const trainerTabLabel = isTrainer ? "Apply Leave" : "Trainer Management";
 
   return (
     <Box
@@ -1035,18 +1046,23 @@ function TrainerDashboard({ user, token }) {
       {tab === 1 && (
         <Box>
           {isTrainer && <TrainerUnavailabilityForm user={user} />}
-          
+
           {isManagerOrAdmin && isBatchOwner && (
-            <TrainerAssignmentDashboard user={user} token={token} batch_no={selectedBatch} />
+            <TrainerAssignmentDashboard
+              user={user}
+              token={token}
+              batch_no={selectedBatch}
+            />
           )}
-          
+
           {isManagerOrAdmin && !isBatchOwner && (
             <ManagerLeaveDashboard user={user} token={token} />
           )}
-          
+
           {!isTrainer && !isManagerOrAdmin && (
             <Alert severity="warning" sx={{ mt: 3 }}>
-              Trainer Management is only available to trainers, managers, or admins.
+              Trainer Management is only available to trainers, managers, or
+              admins.
             </Alert>
           )}
         </Box>
