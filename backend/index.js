@@ -2592,139 +2592,167 @@ app.post('/api/download-schedule', async (req, res) => {
 // 1. Get trainer unavailability for managers
 app.get('/api/trainer-unavailability', async (req, res) => {
   try {
+    // Simple: just return all rows, newest first
     const { data, error } = await supabase
       .from('trainer_unavailability')
-      .select(`
-        *,
-        trainer:trainers!trainer_email (
-          name, email, domain
-        )
-      `)
-      .order('start_date', { ascending: false });
-    
-    if (error) throw error;
-    res.json(data);
+      .select('*')
+      .order('submitted_at', { ascending: false });
+
+    if (error) {
+      console.error('Supabase error in trainer-unavailability:', error);
+      throw error;
+    }
+
+    res.json(data || []);
   } catch (err) {
+    console.error('Error in /api/trainer-unavailability:', err);
     res.status(500).json({ error: 'Failed to fetch trainer unavailability' });
   }
 });
 
-// 2. Get available trainers for specific domain and date range
+//////////////////////////////////////////////
+// 2. Get topics for a given unavailability
+//    (by date range + domain + optional batch_no)
+//////////////////////////////////////////////
+app.get('/api/unavailability-topics/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { data: ua, error: uaError } = await supabase
+      .from('trainer_unavailability')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (uaError || !ua) {
+      return res.status(404).json({ error: 'Unavailability not found' });
+    }
+
+    const { domain, start_date, end_date } = ua;
+
+    // topics table should have: id, topic_name, date, week_no, batch_no, domain, trainer_email, etc.
+    let query = supabase
+      .from('topics')
+      .select('id, topic_name, date, week_no, batch_no, trainer_email, domain')
+      .gte('date', start_date)
+      .lte('date', end_date)
+      .eq('domain', domain);
+
+    const { data: topics, error: topicsError } = await query;
+
+    if (topicsError) throw topicsError;
+
+    res.json({
+      unavailability: ua,
+      topics: topics || [],
+    });
+  } catch (err) {
+    console.error('Error fetching unavailability topics', err);
+    res.status(500).json({ error: 'Failed to fetch topics' });
+  }
+});
+
+//////////////////////////////////////////////
+// 3. Get available trainers for a domain & date range
+//////////////////////////////////////////////
 app.get('/api/available-trainers', async (req, res) => {
   try {
     const { domain, start_date, end_date } = req.query;
-    
-    // Get all trainers in that domain
+    if (!domain || !start_date || !end_date) {
+      return res.status(400).json({ error: 'domain, start_date, end_date required' });
+    }
+
+    // trainers table: name, email, domain, etc.
     const { data: trainers, error: trainerError } = await supabase
       .from('trainers')
-      .select('*')
+      .select('name, email, domain')
       .eq('domain', domain);
-    
+
     if (trainerError) throw trainerError;
-    
-    // Filter trainers who are NOT unavailable during this period
-    const availableTrainers = [];
-    
-    for (const trainer of trainers) {
-      const { data: unavailability, error: uaError } = await supabase
+
+    const available = [];
+
+    // For each trainer, check if they are free in that window
+    for (const t of trainers) {
+      const { data: conflicts, error: confError } = await supabase
         .from('trainer_unavailability')
-        .select('*')
-        .eq('trainer_email', trainer.email)
-        .gte('start_date', start_date)
-        .lte('end_date', end_date);
-      
-      if (uaError) continue;
-      
-      // Trainer is available if no conflicting unavailability
-      if (!unavailability || unavailability.length === 0) {
-        availableTrainers.push(trainer);
+        .select('id')
+        .eq('trainer_email', t.email)
+        .lte('start_date', end_date)
+        .gte('end_date', start_date); // simple overlap check
+
+      if (confError) continue;
+      // if no conflicts => available
+      if (!conflicts || conflicts.length === 0) {
+        available.push(t);
       }
     }
-    
-    res.json(availableTrainers);
+
+    res.json(available);
   } catch (err) {
+    console.error('Error fetching available trainers', err);
     res.status(500).json({ error: 'Failed to fetch available trainers' });
   }
 });
 
-// 3. Assign topics to trainer (batch owner only)
+//////////////////////////////////////////////
+// 4. Assign topics to a trainer
+//    - Only batch_owner/manager/admin allowed
+//////////////////////////////////////////////
 app.post('/api/assign-topics-to-trainer', async (req, res) => {
   try {
     const { unavailability_id, trainer_email, batch_no, topic_ids } = req.body;
-    
-    // Verify batch owner
-    const { data: batchOwner, error: ownerError } = await supabase
+    const requesterEmail = req.headers['x-user-email'];
+    const requesterRole = req.headers['x-user-role'];
+
+    if (!unavailability_id || !trainer_email || !batch_no || !Array.isArray(topic_ids)) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    // Check course_planner_data for batch_owner
+    const { data: plannerRow, error: plannerError } = await supabase
       .from('course_planner_data')
       .select('batch_owner')
       .eq('batch_no', batch_no)
       .single();
-    
-    if (ownerError || !batchOwner) {
-      return res.status(403).json({ error: 'Batch not found' });
+
+    if (plannerError || !plannerRow) {
+      return res.status(404).json({ error: 'course_planner_data not found for this batch' });
     }
-    
-    // Verify requester is batch owner (you'll need to pass user info in headers)
-    const requesterEmail = req.headers['x-user-email'];
-    if (requesterEmail !== batchOwner.batch_owner) {
-      return res.status(403).json({ error: 'Not authorized for this batch' });
+
+    const isOwner = plannerRow.batch_owner === requesterEmail;
+    const isManagerOrAdmin = requesterRole === 'manager' || requesterRole === 'admin';
+
+    if (!isOwner && !isManagerOrAdmin) {
+      return res.status(403).json({ error: 'Not authorized to assign topics for this batch' });
     }
-    
-    // Update topics with new trainer
-    const updates = topic_ids.map(topic_id => ({
-      topic_id,
-      trainer_email: trainer_email,
-      assigned_date: new Date().toISOString().split('T')[0]
-    }));
-    
-    const { data, error } = await supabase
+
+    // Update topics
+    const { data: updatedTopics, error: updateError } = await supabase
       .from('topics')
-      .update({ trainer_email: trainer_email })
+      .update({ trainer_email })
       .in('id', topic_ids);
-    
-    if (error) throw error;
-    
-    // Mark unavailability as resolved
-    await supabase
+
+    if (updateError) throw updateError;
+
+    // update trainer_unavailability row: status & assigned_to
+    const { error: uaUpdateError } = await supabase
       .from('trainer_unavailability')
-      .update({ status: 'assigned', assigned_to: trainer_email })
+      .update({
+        status: 'assigned',
+        assigned_to: trainer_email,
+      })
       .eq('id', unavailability_id);
-    
-    res.json({ success: true, message: 'Topics assigned successfully' });
+
+    if (uaUpdateError) throw uaUpdateError;
+
+    res.json({ success: true, updatedTopics });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to assign topics' });
+    console.error('Error assigning topics to trainer', err);
+    res.status(500).json({ error: 'Failed to assign topics to trainer' });
   }
 });
 
-// 4. Get topics for specific unavailability (for assignment)
-app.get('/api/unavailability-topics/:unavailability_id', async (req, res) => {
-  try {
-    const { unavailability_id } = req.params;
-    
-    const { data: unavailability, error } = await supabase
-      .from('trainer_unavailability')
-      .select('start_date, end_date, domain, trainer_name')
-      .eq('id', unavailability_id)
-      .single();
-    
-    if (error || !unavailability) {
-      return res.status(404).json({ error: 'Unavailability not found' });
-    }
-    
-    // Get topics in that date range for the domain/batch
-    const { data: topics, error: topicError } = await supabase
-      .from('topics')
-      .select('id, topic_name, date, week_no, batch_no, trainer_email')
-      .gte('date', unavailability.start_date)
-      .lte('date', unavailability.end_date)
-      .eq('domain', unavailability.domain);
-    
-    if (topicError) throw topicError;
-    
-    res.json({ unavailability, topics: topics.filter(t => !t.trainer_email || t.trainer_email === unavailability.trainer_name) });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch topics' });
-  }
-});
 
 //=== Progress update based on the trainer email ===
 app.get('/api/batch-owner/:batch_no', async (req, res) => {

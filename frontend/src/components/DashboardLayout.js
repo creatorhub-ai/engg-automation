@@ -60,6 +60,7 @@ const MENUS_BY_ROLE = {
     { id: 16, name: "Classroom Planner-2", path: "/classroom-planner" },
     { id: 17, name: "Manager Leave Dashboard", path: "/manager/leaves " },
     { id: 18, name: "Holiday Upload", path: "/holiday-upload" },
+    { id: 19, name: "Trainer Assignment Dashboard", path: "/trainer-assignment" },
   ],
   manager: [
     { id: 1, name: "Home", path: "/home" },

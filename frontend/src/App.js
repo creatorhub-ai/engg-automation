@@ -25,6 +25,7 @@ import ClassroomPlanner from "./pages/ClassroomPlanner";
 import TrainerLeaveDashboard from "./pages/TrainerLeaveDashboard";
 import ManagerLeaveDashboard from "./pages/ManagerLeaveDashboard";
 import HolidayUpload from "./pages/HolidayUpload";
+import TrainerAssignmentDashboard from "./pages/TrainerAssignmentDashboard";
 
 const roleMenus = {
   admin: [
@@ -46,6 +47,7 @@ const roleMenus = {
     { text: "Classroom Planner-2", path: "/classroom-planner" }, 
     { text: "Manager Leave Dashboard", path: "/manager/leaves" }, 
     { text: "Manager Leave Dashboard", path: "/holiday-upload" },
+    { text: "Trainer Assignment Dashboard", path: "/trainer-assignment" },
   ],
   manager: [
     { text: "Home", path: "/home" },
@@ -151,6 +153,8 @@ function getComponentForPath(path, login) {
       return <ManagerLeaveDashboard user={login} />;
     case "/holiday-upload":
       return <HolidayUpload user={login} />;
+    case "/trainer-assignment":
+      return <TrainerAssignmentDashboard user={login} />;
     default:
       return <div>Page not found</div>;
   }
