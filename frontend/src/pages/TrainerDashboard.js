@@ -41,45 +41,141 @@ const statusChipColor = {
   Planned: red[600],
 };
 
-// --- Component: TrainerUnavailabilityForm ---
-function TrainerUnavailabilityForm({ user }) {
-  const [domain, setDomain] = useState(user.domain || "");
+// --- NEW TrainerUnavailabilityForm (batch-aware) ---
+function TrainerUnavailabilityForm({ user, token }) {
+  const [domain, setDomain] = useState("");
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [reason, setReason] = useState("");
+
+  const [trainerBatches, setTrainerBatches] = useState([]); // {batch_no, domain}[]
+  const [selectedBatchNos, setSelectedBatchNos] = useState([]); // array of batch_no
+
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
 
+  const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
+
+  // Load batches & domains handled by this trainer
+  useEffect(() => {
+    const fetchBatches = async () => {
+      try {
+        const res = await axios.get(`${API_BASE}/api/trainer-batches`, {
+          params: { trainer_email: user.email },
+          headers: authHeaders,
+        });
+        const list = Array.isArray(res.data) ? res.data : [];
+        setTrainerBatches(list);
+
+        // If exactly one batch, auto-select it and domain
+        if (list.length === 1) {
+          setSelectedBatchNos([list[0].batch_no]);
+          setDomain(list[0].domain || "");
+        }
+      } catch (e) {
+        console.error("Error loading trainer batches", e);
+      }
+    };
+    if (user?.email) fetchBatches();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.email, token]);
+
+  // When selected batches change, if all share one domain, auto set it
+  useEffect(() => {
+    if (selectedBatchNos.length === 0) return;
+    const selectedDetails = trainerBatches.filter((b) =>
+      selectedBatchNos.includes(b.batch_no)
+    );
+    const uniqueDomains = Array.from(
+      new Set(selectedDetails.map((b) => b.domain || ""))
+    );
+    if (uniqueDomains.length === 1) {
+      setDomain(uniqueDomains[0]);
+    }
+  }, [selectedBatchNos, trainerBatches]);
+
   async function submitUnavailability() {
-    if (!domain || !start || !end) {
-      setErr("Please fill all fields");
+    setMsg("");
+    setErr("");
+
+    if (!start || !end) {
+      setErr("Please select From and To dates");
+      return;
+    }
+
+    if (selectedBatchNos.length === 0) {
+      setErr("Please select at least one batch");
+      return;
+    }
+
+    if (!domain) {
+      setErr("Domain is required");
       return;
     }
 
     try {
-      await axios.post(`${API_BASE}/api/trainer-unavailability`, {
-        trainer_email: user.email,
-        trainer_name: user.name,
-        domain,
-        start_date: start,
-        end_date: end,
-        reason,
-      });
+      const batch_nos_str = selectedBatchNos.join(",");
+
+      await axios.post(
+        `${API_BASE}/api/trainer-unavailability`,
+        {
+          trainer_email: user.email,
+          trainer_name: user.name,
+          domain,
+          start_date: start,
+          end_date: end,
+          reason,
+          batch_nos: batch_nos_str,
+        },
+        { headers: authHeaders }
+      );
+
       setMsg("Unavailability submitted");
       setErr("");
       setStart("");
       setEnd("");
       setReason("");
-    } catch {
+      // keep selected batches & domain for convenience
+    } catch (e) {
+      console.error("Failed to submit unavailability", e);
       setErr("Failed to submit unavailability");
     }
   }
+
+  const handleBatchChange = (event) => {
+    const value = event.target.value;
+    setSelectedBatchNos(
+      typeof value === "string" ? value.split(",") : value
+    );
+  };
 
   return (
     <Paper sx={{ p: 3, mb: 3 }}>
       <Typography variant="h6" fontWeight="bold" mb={1}>
         Apply Leave
       </Typography>
+
+      {/* Batches multi-select */}
+      <TextField
+        select
+        label="Batch(es)"
+        value={selectedBatchNos}
+        onChange={handleBatchChange}
+        fullWidth
+        SelectProps={{
+          multiple: true,
+          renderValue: (selected) => selected.join(", "),
+        }}
+        sx={{ mb: 1 }}
+      >
+        {trainerBatches.map((b) => (
+          <MenuItem key={b.batch_no} value={b.batch_no}>
+            {b.batch_no} {b.domain ? `(${b.domain})` : ""}
+          </MenuItem>
+        ))}
+      </TextField>
+
+      {/* Domain (auto-filled but editable) */}
       <TextField
         label="Domain"
         value={domain}
@@ -87,6 +183,7 @@ function TrainerUnavailabilityForm({ user }) {
         fullWidth
         sx={{ mb: 1 }}
       />
+
       <TextField
         label="From"
         type="date"
@@ -130,7 +227,6 @@ function TrainerUnavailabilityForm({ user }) {
 }
 
 // === MAIN DASHBOARD ===
-
 function TrainerDashboard({ user, token }) {
   const [batches, setBatches] = useState([]);
   const [selectedBatch, setSelectedBatch] = useState("");
@@ -152,12 +248,12 @@ function TrainerDashboard({ user, token }) {
   const [blockedTopics, setBlockedTopics] = useState({});
   const [remarksAlertOpen, setRemarksAlertOpen] = useState(false);
 
-  // NEW: batch owner flag (must be inside component)
   const [isBatchOwner, setIsBatchOwner] = useState(false);
 
   const lowerRole = (user?.role || "").toLowerCase();
   const isTrainer = lowerRole === "trainer";
-  const isManagerOrAdmin = lowerRole === "manager" || lowerRole === "admin";
+  const isManagerOrAdmin =
+    lowerRole === "manager" || lowerRole === "admin";
   const trainerTabLabel = isTrainer ? "Apply Leave" : "Trainer Management";
 
   const roleTitle = user?.role
@@ -1045,13 +1141,15 @@ function TrainerDashboard({ user, token }) {
 
       {tab === 1 && (
         <Box>
-          {isTrainer && <TrainerUnavailabilityForm user={user} />}
+          {isTrainer && (
+            <TrainerUnavailabilityForm user={user} token={token} />
+          )}
 
           {isManagerOrAdmin && isBatchOwner && (
             <TrainerAssignmentDashboard
               user={user}
               token={token}
-              batch_no={selectedBatch}
+              batchNo={selectedBatch}
             />
           )}
 

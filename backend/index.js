@@ -2589,14 +2589,60 @@ app.post('/api/download-schedule', async (req, res) => {
   res.status(400).send("Unsupported file type");
 });
 
+// Get batches and domains handled by a trainer
+app.get('/api/trainer-batches', async (req, res) => {
+  try {
+    const { trainer_email } = req.query;
+    if (!trainer_email) {
+      return res.status(200).json([]);
+    }
+
+    const { data, error } = await supabase
+      .from('course_planner_data')
+      .select('batch_no, domain, trainer_email')
+      .eq('trainer_email', trainer_email);
+
+    if (error) {
+      console.error('trainer-batches error:', error);
+      return res.status(200).json([]);
+    }
+
+    // Deduplicate by (batch_no, domain)
+    const keyMap = new Map();
+    (data || []).forEach((row) => {
+      if (!row.batch_no) return;
+      const key = `${row.batch_no}__${row.domain || ''}`;
+      if (!keyMap.has(key)) {
+        keyMap.set(key, {
+          batch_no: row.batch_no,
+          domain: row.domain || '',
+        });
+      }
+    });
+
+    res.status(200).json(Array.from(keyMap.values()));
+  } catch (err) {
+    console.error('Unhandled error in /api/trainer-batches:', err);
+    res.status(200).json([]);
+  }
+});
+
 // 1. Get trainer unavailability for managers
 app.get('/api/trainer-unavailability', async (req, res) => {
   try {
+    const { trainer_email, trainer_name, domain, start_date, end_date, reason, batch_nos } = req.body;
     // Simple: just return all rows, newest first
     const { data, error } = await supabase
       .from('trainer_unavailability')
-      .select('*')
-      .order('submitted_at', { ascending: false });
+      .insert([{
+        trainer_email,
+        trainer_name,
+        domain,
+        start_date,
+        end_date,
+        reason,
+        batch_nos, // new
+    }]);
 
     if (error) {
       console.error('Supabase error in trainer-unavailability:', error);
