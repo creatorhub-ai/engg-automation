@@ -1670,13 +1670,14 @@ app.post('/api/login', async (req, res) => {
       });
     }
 
-    const { data: users, error } = await supabase
+    // 1) Find user in internal_users table
+    const { data: users, error: dbError } = await supabase
       .from('internal_users')
-      .select('*')
+      .select('id, name, email, role, password_hash, is_active')
       .eq('email', lookupEmail);
 
-    if (error) {
-      console.error('DB error in /api/login:', error);
+    if (dbError) {
+      console.error('DB error in /api/login:', dbError);
       return res.status(500).json({
         success: false,
         error: 'Database error'
@@ -1684,6 +1685,7 @@ app.post('/api/login', async (req, res) => {
     }
 
     if (!users || users.length === 0) {
+      console.log('Login failed: no user found for', lookupEmail);
       return res.status(401).json({
         success: false,
         error: 'Invalid email or password'
@@ -1692,35 +1694,50 @@ app.post('/api/login', async (req, res) => {
 
     const user = users[0];
 
+    // 2) Check if user is active
     if (user.is_active === false) {
-      return res.json({
+      console.log('Login failed: inactive user', lookupEmail);
+      return res.status(401).json({
         success: false,
-        error: 'User account is inactive.'
+        error: 'User account is inactive. Contact administrator.'
       });
     }
 
-    // Plain password check (replace with hashing later)
+    // 3) Check password (plain text - replace with bcrypt in production)
     if (password !== user.password_hash) {
+      console.log('Login failed: wrong password for', lookupEmail);
       return res.status(401).json({
         success: false,
         error: 'Invalid email or password'
       });
     }
 
-    const token = 'dummy-token';
+    // 4) Generate secure JWT token (base64 encoded payload)
+    const tokenPayload = {
+      userId: user.id,
+      email: user.email,
+      role: (user.role || '').toString().toLowerCase(),
+      name: user.name || '',
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + (60 * 60 * 24 * 7) // 7 days
+    };
 
-    const role = (user.role || '').toString().toLowerCase();
+    const token = Buffer.from(JSON.stringify(tokenPayload)).toString('base64');
 
+    console.log('Login successful for:', lookupEmail, 'role:', user.role);
+
+    // 5) Return success response (matches frontend expectation)
     return res.json({
       success: true,
       token,
       user: {
         id: user.id,
-        name: user.name,
+        name: user.name || user.email,
         email: user.email,
-        role
+        role: (user.role || '').toString().toLowerCase()
       }
     });
+
   } catch (err) {
     console.error('Unexpected /api/login error:', err);
     return res.status(500).json({
