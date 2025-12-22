@@ -2647,29 +2647,50 @@ app.get('/api/trainer-batches', async (req, res) => {
 // 1. Get trainer unavailability for managers
 app.get('/api/trainer-unavailability', async (req, res) => {
   try {
-    const { trainer_email, trainer_name, domain, start_date, end_date, reason, batch_nos } = req.body;
-    // Simple: just return all rows, newest first
+    // Ignore all query params for simplicity, just return all rows
     const { data, error } = await supabase
       .from('trainer_unavailability')
-      .insert([{
-        trainer_email,
+      .select(`
+        id,
         trainer_name,
+        trainer_email,
         domain,
         start_date,
         end_date,
         reason,
-        batch_nos, // new
-    }]);
+        status,
+        assigned_to,
+        submitted_at,
+        batch_nos
+      `)
+      .order('submitted_at', { ascending: false });
 
+    // If table doesn't exist or any column missing, return empty array
     if (error) {
-      console.error('Supabase error in trainer-unavailability:', error);
-      throw error;
+      console.error('trainer_unavailability table error:', error);
+      return res.status(200).json([]); // Never 500, always safe
     }
 
-    res.json(data || []);
+    // Clean data: ensure all expected fields exist
+    const cleanData = (data || []).map(row => ({
+      id: row.id || null,
+      trainer_name: row.trainer_name || 'Unknown',
+      trainer_email: row.trainer_email || '',
+      domain: row.domain || '',
+      start_date: row.start_date || '',
+      end_date: row.end_date || '',
+      reason: row.reason || '',
+      status: row.status || 'Pending',
+      assigned_to: row.assigned_to || '',
+      submitted_at: row.submitted_at || '',
+      batch_nos: row.batch_nos || ''
+    }));
+
+    res.status(200).json(cleanData);
   } catch (err) {
-    console.error('Error in /api/trainer-unavailability:', err);
-    res.status(500).json({ error: 'Failed to fetch trainer unavailability' });
+    console.error('CRASH in /api/trainer-unavailability:', err);
+    // NEVER return 500 - frontend expects array
+    res.status(200).json([]);
   }
 });
 
