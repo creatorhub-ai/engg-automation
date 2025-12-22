@@ -2618,37 +2618,44 @@ app.get('/api/unavailability-topics/:id', async (req, res) => {
   try {
     const { id } = req.params;
 
+    // 1) Get the unavailability row
     const { data: ua, error: uaError } = await supabase
       .from('trainer_unavailability')
-      .select('*')
+      .select('id, domain, start_date, end_date')
       .eq('id', id)
       .single();
 
-    if (uaError || !ua) {
+    if (uaError) {
+      console.error('Supabase error (trainer_unavailability):', uaError);
+      return res.status(404).json({ error: 'Unavailability not found' });
+    }
+    if (!ua) {
       return res.status(404).json({ error: 'Unavailability not found' });
     }
 
     const { domain, start_date, end_date } = ua;
 
-    // topics table should have: id, topic_name, date, week_no, batch_no, domain, trainer_email, etc.
-    let query = supabase
+    // 2) Fetch topics by date range + domain
+    // Adjust column names to your actual topics table
+    const { data: topics, error: topicsError } = await supabase
       .from('topics')
       .select('id, topic_name, date, week_no, batch_no, trainer_email, domain')
       .gte('date', start_date)
       .lte('date', end_date)
       .eq('domain', domain);
 
-    const { data: topics, error: topicsError } = await query;
-
-    if (topicsError) throw topicsError;
+    if (topicsError) {
+      console.error('Supabase error (topics):', topicsError);
+      throw topicsError;
+    }
 
     res.json({
       unavailability: ua,
       topics: topics || [],
     });
   } catch (err) {
-    console.error('Error fetching unavailability topics', err);
-    res.status(500).json({ error: 'Failed to fetch topics' });
+    console.error('Error in /api/unavailability-topics/:id:', err);
+    res.status(500).json({ error: 'Failed to fetch topics for unavailability' });
   }
 });
 
