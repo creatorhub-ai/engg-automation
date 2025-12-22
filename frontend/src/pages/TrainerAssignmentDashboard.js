@@ -43,13 +43,9 @@ function TrainerAssignmentDashboard({ user, token, batchNo }) {
   const lowerRole = (user?.role || "").toLowerCase();
   const isManagerOrAdmin =
     lowerRole === "manager" || lowerRole === "admin";
-  const isPrivileged = isManagerOrAdmin || true; // UI only
+  const isPrivileged = isManagerOrAdmin || true;
 
-  const authHeaders = token
-    ? {
-        Authorization: `Bearer ${token}`,
-      }
-    : {};
+  const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
 
   // Load trainer leave list
   useEffect(() => {
@@ -75,14 +71,14 @@ function TrainerAssignmentDashboard({ user, token, batchNo }) {
     setLoading(true);
 
     try {
-      // 1) fetch topics from course_planner_data via backend
+      // 1) topics from course_planner_data via backend
       const topicsRes = await axios.get(
         `${API_BASE}/api/unavailability-topics/${ua.id}`,
         { headers: authHeaders }
       );
       setTopics(topicsRes.data?.topics || []);
 
-      // 2) fetch available trainers
+      // 2) available trainers for this domain (date is ignored by backend now)
       const availRes = await axios.get(
         `${API_BASE}/api/available-trainers`,
         {
@@ -244,7 +240,7 @@ function TrainerAssignmentDashboard({ user, token, batchNo }) {
         </Table>
       </TableContainer>
 
-      {/* Dialog showing topics + trainers */}
+      {/* Topics + trainers dialog */}
       <Dialog
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}
