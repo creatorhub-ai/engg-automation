@@ -40,6 +40,8 @@ const statusChipColor = {
   Planned: red[600],
 };
 
+const [isBatchOwner, setIsBatchOwner] = useState(false);
+
 // --- Component: TrainerUnavailabilityForm ---
 // (UNCHANGED, only kept for Apply Leave tab)
 function TrainerUnavailabilityForm({ user }) {
@@ -248,6 +250,30 @@ function TrainerDashboard({ user, token }) {
       }
     })();
   }, [selectedBatch, token]);
+
+  // Add this useEffect after the weeks useEffect
+  useEffect(() => {
+    const checkBatchOwner = async () => {
+      if (!selectedBatch || !token || lowerRole !== 'manager' && lowerRole !== 'admin') {
+        setIsBatchOwner(false);
+        return;
+      }
+      
+      try {
+        const headers = { Authorization: `Bearer ${token}` };
+        const res = await axios.get(`${API_BASE}/api/course_planner_data?batch_no=${selectedBatch}`, { headers });
+        if (res.data && res.data.length > 0 && res.data[0].batch_owner === user.email) {
+          setIsBatchOwner(true);
+        } else {
+          setIsBatchOwner(false);
+        }
+      } catch {
+        setIsBatchOwner(false);
+      }
+    };
+  
+  checkBatchOwner();
+}, [selectedBatch, token, user.email, lowerRole]);
 
   // Load topics for selectedWeek
   useEffect(() => {
@@ -1009,15 +1035,18 @@ function TrainerDashboard({ user, token }) {
       {tab === 1 && (
         <Box>
           {isTrainer && <TrainerUnavailabilityForm user={user} />}
-
-          {isManagerOrAdmin && (
+          
+          {isManagerOrAdmin && isBatchOwner && (
+            <TrainerAssignmentDashboard user={user} token={token} batch_no={selectedBatch} />
+          )}
+          
+          {isManagerOrAdmin && !isBatchOwner && (
             <ManagerLeaveDashboard user={user} token={token} />
           )}
-
+          
           {!isTrainer && !isManagerOrAdmin && (
             <Alert severity="warning" sx={{ mt: 3 }}>
-              Trainer Management is only available to trainers, managers, or
-              admins. Please ensure your account has the correct role.
+              Trainer Management is only available to trainers, managers, or admins.
             </Alert>
           )}
         </Box>

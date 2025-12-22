@@ -1396,20 +1396,27 @@ app.post("/api/holidays/upload", upload.single("file"), async (req, res) => {
       return res.status(400).json({ error: "File is required" });
     }
 
-    // Read the uploaded file with xlsx
+    const ext = (req.file.originalname.split(".").pop() || "").toLowerCase();
+    if (!["xlsx", "xls", "csv"].includes(ext)) {
+      return res
+        .status(400)
+        .json({ error: "Only .xlsx, .xls or .csv files are supported" });
+    }
+
+    // Read file with xlsx
     const workbook = xlsx.readFile(req.file.path);
     const sheetName = workbook.SheetNames[0];
     const sheet = workbook.Sheets[sheetName];
     const rows = xlsx.utils.sheet_to_json(sheet, { header: 1 });
 
-    // Expect header row: [ 'Date', 'Day', 'Holiday', 'Type of Holiday', ... ]
+    // Expect header row: Date | Day | Holiday | Type of Holiday
     for (let i = 1; i < rows.length; i++) {
       const row = rows[i];
       if (!row || row.length < 4) continue;
 
-      const dateCell = row[0]; // "01-Jan" or proper Excel date
-      const holidayName = row[2]; // Holiday name
-      const typeStr = row[3]; // "Holiday" or "Restricted Holiday"
+      const dateCell = row[0];
+      const holidayName = row[2];
+      const typeStr = row[3];
 
       if (!dateCell || !holidayName || !typeStr) continue;
 
@@ -1417,13 +1424,23 @@ app.post("/api/holidays/upload", upload.single("file"), async (req, res) => {
       if (dateCell instanceof Date) {
         dateObj = dateCell;
       } else {
-        // e.g. "01-Jan" -> assume current/target year
-        const [day, mon] = String(dateCell).split("-");
+        // e.g. "01-Jan" or "01-01-2025"
         const year = Number(req.query.year) || new Date().getFullYear();
-        dateObj = new Date(`${day}-${mon}-${year}`);
+        const value = String(dateCell).trim();
+
+        if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+          dateObj = new Date(value);
+        } else {
+          // "01-Jan" -> add year
+          const [day, mon] = value.split("-");
+          dateObj = new Date(`${day}-${mon}-${year}`);
+        }
       }
 
-      if (isNaN(dateObj.getTime())) continue;
+      if (isNaN(dateObj.getTime())) {
+        console.warn("Skipping invalid date row:", row);
+        continue;
+      }
 
       const dateISO = dateObj.toISOString().slice(0, 10);
 
@@ -1438,12 +1455,10 @@ app.post("/api/holidays/upload", upload.single("file"), async (req, res) => {
       );
     }
 
-    // Optional: clean up uploaded file
+    // Clean up uploaded file
     try {
       fs.unlinkSync(req.file.path);
-    } catch {
-      // ignore
-    }
+    } catch {}
 
     res.json({ success: true, message: "Holidays uploaded successfully" });
   } catch (err) {
@@ -2574,169 +2589,140 @@ app.post('/api/download-schedule', async (req, res) => {
   res.status(400).send("Unsupported file type");
 });
 
-// 1. Trainer submits unavailability
-app.post("/api/trainer-unavailability", async (req, res) => {
-  try {
-    const { trainer_email, trainer_name, domain, start_date, end_date, reason } = req.body;
-    const { error } = await supabase.from("trainer_unavailability").insert({
-      trainer_email,
-      trainer_name,
-      domain,
-      start_date,
-      end_date,
-      reason,
-      submitted_at: new Date().toISOString(),
-    });
-    if (error) return res.status(400).json({ error: error.message });
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// 2. Manager: View all unavailability requests
-app.get("/api/unavailability-requests", async (req, res) => {
+// 1. Get trainer unavailability for managers
+app.get('/api/trainer-unavailability', async (req, res) => {
   try {
     const { data, error } = await supabase
-      .from("trainer_unavailability")
-      .select("*")
-      .order("submitted_at", { ascending: false });
-    if (error) {
-      return res.status(400).json({ error: error.message });
-    }
+      .from('trainer_unavailability')
+      .select(`
+        *,
+        trainer:trainers!trainer_email (
+          name, email, domain
+        )
+      `)
+      .order('start_date', { ascending: false });
+    
+    if (error) throw error;
     res.json(data);
   } catch (err) {
-    res.status(500).json({ error: err.toString() });
+    res.status(500).json({ error: 'Failed to fetch trainer unavailability' });
   }
 });
 
-// 3. Manager: Get available trainers with assignments
-app.get("/api/available-trainers", async (req, res) => {
+// 2. Get available trainers for specific domain and date range
+app.get('/api/available-trainers', async (req, res) => {
   try {
-    let { domain, start_date, end_date } = req.query;
-
-    if (!domain) return res.status(400).json({ error: "Missing 'domain' parameter" });
-    if (!start_date) return res.status(400).json({ error: "Missing 'start_date' parameter" });
-    if (!end_date) return res.status(400).json({ error: "Missing 'end_date' parameter" });
-
-    domain = domain.toUpperCase();
-
-    let { data: trainers, error: err } = await supabase
-      .from("internal_users")
-      .select("id, name, email, domain, role")
-      .ilike("role", "trainer")
-      .eq("domain", domain);
-
-    if (err) return res.status(400).json({ error: err.message });
-
-    if (!Array.isArray(trainers)) trainers = [];
-
-    let { data: unavailable, error: unavailError } = await supabase
-      .from("trainer_unavailability")
-      .select("trainer_email")
-      .or(`and(start_date.lte.${end_date},end_date.gte.${start_date})`)
-      .eq("domain", domain);
-
-    if (unavailError) return res.status(400).json({ error: unavailError.message });
-
-    if (!Array.isArray(unavailable)) unavailable = [];
-
-    const unavailableEmails = unavailable.map((u) => u.trainer_email);
-
-    let list = [];
-    for (const t of trainers) {
-      if (unavailableEmails.includes(t.email)) continue;
-
-      const { data: planning, error: plError } = await supabase
-        .from("course_planner_data")
-        .select("batch_no,start_time,end_time,week_no,date,topic_name,id,trainer_email")
-        .eq("trainer_email", t.email)
-        .gte("date", start_date)
-        .lte("date", end_date);
-
-      if (plError) {
-        list.push({ ...t, assignments: [] });
-        continue;
+    const { domain, start_date, end_date } = req.query;
+    
+    // Get all trainers in that domain
+    const { data: trainers, error: trainerError } = await supabase
+      .from('trainers')
+      .select('*')
+      .eq('domain', domain);
+    
+    if (trainerError) throw trainerError;
+    
+    // Filter trainers who are NOT unavailable during this period
+    const availableTrainers = [];
+    
+    for (const trainer of trainers) {
+      const { data: unavailability, error: uaError } = await supabase
+        .from('trainer_unavailability')
+        .select('*')
+        .eq('trainer_email', trainer.email)
+        .gte('start_date', start_date)
+        .lte('end_date', end_date);
+      
+      if (uaError) continue;
+      
+      // Trainer is available if no conflicting unavailability
+      if (!unavailability || unavailability.length === 0) {
+        availableTrainers.push(trainer);
       }
-
-      list.push({ ...t, assignments: planning || [] });
     }
-
-    return res.json(list);
-  } catch (error) {
-    return res.status(500).json({ error: "Internal server error" });
+    
+    res.json(availableTrainers);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch available trainers' });
   }
 });
 
-
-// 4. Manager: Reassign / revoke topic assignment
-app.post("/api/reassign-topic", async (req, res) => {
+// 3. Assign topics to trainer (batch owner only)
+app.post('/api/assign-topics-to-trainer', async (req, res) => {
   try {
-    const { batch_no, topic_id, new_trainer_email, new_trainer_name } = req.body;
-    const updateData = {
-      trainer_email: new_trainer_email || null,
-      trainer_name: new_trainer_name || null,
-    };
-
-    const { error } = await supabase
-      .from("course_planner_data")
-      .update(updateData)
-      .eq("batch_no", batch_no)
-      .eq("id", topic_id);
-
-    if (error) return res.status(400).json({ error: error.message });
-
-    res.json({ success: true });
+    const { unavailability_id, trainer_email, batch_no, topic_ids } = req.body;
+    
+    // Verify batch owner
+    const { data: batchOwner, error: ownerError } = await supabase
+      .from('course_planner_data')
+      .select('batch_owner')
+      .eq('batch_no', batch_no)
+      .single();
+    
+    if (ownerError || !batchOwner) {
+      return res.status(403).json({ error: 'Batch not found' });
+    }
+    
+    // Verify requester is batch owner (you'll need to pass user info in headers)
+    const requesterEmail = req.headers['x-user-email'];
+    if (requesterEmail !== batchOwner.batch_owner) {
+      return res.status(403).json({ error: 'Not authorized for this batch' });
+    }
+    
+    // Update topics with new trainer
+    const updates = topic_ids.map(topic_id => ({
+      topic_id,
+      trainer_email: trainer_email,
+      assigned_date: new Date().toISOString().split('T')[0]
+    }));
+    
+    const { data, error } = await supabase
+      .from('topics')
+      .update({ trainer_email: trainer_email })
+      .in('id', topic_ids);
+    
+    if (error) throw error;
+    
+    // Mark unavailability as resolved
+    await supabase
+      .from('trainer_unavailability')
+      .update({ status: 'assigned', assigned_to: trainer_email })
+      .eq('id', unavailability_id);
+    
+    res.json({ success: true, message: 'Topics assigned successfully' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Failed to assign topics' });
   }
 });
 
-// 5. Push topics down - updates dates and notify trainers
-app.post("/api/push-down-topics", async (req, res) => {
+// 4. Get topics for specific unavailability (for assignment)
+app.get('/api/unavailability-topics/:unavailability_id', async (req, res) => {
   try {
-    const { batch_no, from_date, days_to_push } = req.body;
-    if (!batch_no || !from_date || !days_to_push) {
-      return res.status(400).json({ error: "Missing required fields" });
+    const { unavailability_id } = req.params;
+    
+    const { data: unavailability, error } = await supabase
+      .from('trainer_unavailability')
+      .select('start_date, end_date, domain, trainer_name')
+      .eq('id', unavailability_id)
+      .single();
+    
+    if (error || !unavailability) {
+      return res.status(404).json({ error: 'Unavailability not found' });
     }
-
-    // Fetch topics ordered by date >= from_date
-    const { data: topics, error: topicsErr } = await supabase
-      .from("course_planner_data")
-      .select("*")
-      .eq("batch_no", batch_no)
-      .gte("date", from_date)
-      .order("date", { ascending: true });
-
-    if (topicsErr) return res.status(400).json({ error: topicsErr.message });
-
-    for (let topic of topics) {
-      let newDate = new Date(topic.date);
-      newDate.setDate(newDate.getDate() + parseInt(days_to_push));
-
-      const { error: updateErr } = await supabase
-        .from("course_planner_data")
-        .update({ date: newDate.toISOString().split("T")[0] })
-        .eq("id", topic.id);
-
-      if (updateErr) return res.status(500).json({ error: "Failed to update topic dates" });
-    }
-
-    // Notify batch trainers about schedule changes
-    const trainerEmails = topics
-      .map(t => t.trainer_email)
-      .filter(email => email != null);
-
-    const uniqueEmails = [...new Set(trainerEmails)];
-
-    // Example: send email notification to trainers (implement your send here)
-    for (const email of uniqueEmails) {
-      // await sendEmailNotification(email, batch_no);
-    }
-
-    res.json({ success: true, message: `Topics pushed down by ${days_to_push} days and trainers notified.` });
+    
+    // Get topics in that date range for the domain/batch
+    const { data: topics, error: topicError } = await supabase
+      .from('topics')
+      .select('id, topic_name, date, week_no, batch_no, trainer_email')
+      .gte('date', unavailability.start_date)
+      .lte('date', unavailability.end_date)
+      .eq('domain', unavailability.domain);
+    
+    if (topicError) throw topicError;
+    
+    res.json({ unavailability, topics: topics.filter(t => !t.trainer_email || t.trainer_email === unavailability.trainer_name) });
   } catch (err) {
-    res.status(500).json({ error: "Internal server error" });
+    res.status(500).json({ error: 'Failed to fetch topics' });
   }
 });
 
@@ -6089,6 +6075,22 @@ app.post("/api/send-final-assessment-email", async (req, res) => {
   } catch (err) {
     console.error("❌ Final assessment email error:", err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Add this endpoint to check batch ownership
+app.get('/api/course_planner_data', async (req, res) => {
+  try {
+    const { batch_no } = req.query;
+    const { data, error } = await supabase
+      .from('course_planner_data')
+      .select('*')
+      .eq('batch_no', batch_no);
+    
+    if (error) throw error;
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch course planner data' });
   }
 });
 
