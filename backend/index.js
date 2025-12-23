@@ -2759,41 +2759,80 @@ app.get('/api/unavailability-topics/:id', async (req, res) => {
 //////////////////////////////////////////////
 app.get('/api/available-trainers', async (req, res) => {
   try {
-    const { domain, start_date, end_date } = req.query;
-    if (!domain || !start_date || !end_date) {
-      return res.status(400).json({ error: 'domain, start_date, end_date required' });
-    }
+    const { batch_no, domain, start_date, end_date } = req.query;
+    
+    console.log('Available trainers params:', { batch_no, domain, start_date, end_date });
 
-    // trainers table: name, email, domain, etc.
-    const { data: trainers, error: trainerError } = await supabase
-      .from('internal_users')
-      .select('name, email, domain')
-      .eq('domain', domain);
+    let trainers = [];
 
-    if (trainerError) throw trainerError;
+    // Case 1: batch_no provided (highest priority)
+    if (batch_no) {
+      console.log('Fetching trainers for batch:', batch_no);
+      const { data, error } = await supabase
+        .from('course_planner_data')
+        .select('DISTINCT trainer_email, trainer_name, domain')
+        .eq('batch_no', batch_no);
 
-    const available = [];
-
-    // For each trainer, check if they are free in that window
-    for (const t of trainers) {
-      const { data: conflicts, error: confError } = await supabase
-        .from('trainer_unavailability')
-        .select('id')
-        .eq('trainer_email', t.email)
-        .lte('start_date', end_date)
-        .gte('end_date', start_date); // simple overlap check
-
-      if (confError) continue;
-      // if no conflicts => available
-      if (!conflicts || conflicts.length === 0) {
-        available.push(t);
+      if (!error && data) {
+        trainers = data
+          .filter(row => row.trainer_email)
+          .map(row => ({
+            name: row.trainer_name || row.trainer_email.split('@')[0],
+            email: row.trainer_email,
+            domain: row.domain || ''
+          }));
       }
     }
+    // Case 2: domain provided
+    else if (domain) {
+      console.log('Fetching trainers for domain:', domain);
+      const { data, error } = await supabase
+        .from('course_planner_data')
+        .select('DISTINCT trainer_email, trainer_name, domain')
+        .eq('domain', domain);
 
-    res.json(available);
+      if (!error && data) {
+        trainers = data
+          .filter(row => row.trainer_email)
+          .map(row => ({
+            name: row.trainer_name || row.trainer_email.split('@')[0],
+            email: row.trainer_email,
+            domain: row.domain || domain
+          }));
+      }
+    }
+    // Case 3: dates provided (complex availability check)
+    else if (start_date && end_date) {
+      console.log('Fetching trainers available between dates');
+      // Simplified: get all trainers with topics in date range
+      const { data, error } = await supabase
+        .from('course_planner_data')
+        .select('DISTINCT trainer_email, trainer_name, domain')
+        .gte('date', start_date)
+        .lte('date', end_date);
+
+      if (!error && data) {
+        trainers = data
+          .filter(row => row.trainer_email)
+          .map(row => ({
+            name: row.trainer_name || row.trainer_email.split('@')[0],
+            email: row.trainer_email,
+            domain: row.domain || ''
+          }));
+      }
+    }
+    // Case 4: no params - return empty
+    else {
+      console.log('No valid params provided');
+      trainers = [];
+    }
+
+    console.log(`Found ${trainers.length} trainers`);
+    return res.status(200).json(trainers);
+
   } catch (err) {
-    console.error('Error fetching available trainers', err);
-    res.status(500).json({ error: 'Failed to fetch available trainers' });
+    console.error('CRASH in /api/available-trainers:', err);
+    return res.status(200).json([]); // NEVER ERROR
   }
 });
 

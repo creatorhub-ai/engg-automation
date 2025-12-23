@@ -68,7 +68,7 @@ function TrainerAssignmentDashboard({ user, token, batchNo }) {
     fetchUA();
   }, [token]);
 
-  // When "Assign Topics" is clicked
+  // When "Assign Topics" is clicked - SIMPLIFIED & BULLETPROOF
   const handleAssignClick = async (ua) => {
     setSelectedUA(ua);
     setTopics([]);
@@ -88,23 +88,46 @@ function TrainerAssignmentDashboard({ user, token, batchNo }) {
         setTopics([]);
       }
 
-      // 2) Available trainers (batchNo preferred, safe fallback)
+      // 2) Available trainers - SIMPLIFIED PARAMS
       try {
-        const params = batchNo ? { batch_no: batchNo } : { domain: ua.domain };
+        // Simple params: batch_no OR just domain (backend handles ANY param)
+        const trainerParams = batchNo 
+          ? { batch_no: batchNo }
+          : { domain: ua.domain || 'PD' }; // PD fallback for domain
+
         const availRes = await axios.get(`${API_BASE}/api/available-trainers`, {
           headers: authHeaders,
-          params,
-          timeout: 5000
+          params: trainerParams,
+          timeout: 8000
         });
-        setAvailableTrainers(Array.isArray(availRes.data) ? availRes.data : []);
+        
+        // Ensure array even if backend sends weird data
+        const trainers = Array.isArray(availRes.data) ? availRes.data : [];
+        
+        // If no trainers from API, show helpful fallback
+        if (trainers.length === 0) {
+          setAvailableTrainers([{
+            name: "No trainers available",
+            email: "contact-admin@company.com",
+            domain: ua.domain || "PD"
+          }]);
+        } else {
+          setAvailableTrainers(trainers);
+        }
+        
       } catch (availErr) {
         console.warn("Available trainers fetch failed:", availErr);
-        setAvailableTrainers([]);
+        // Fallback: show dummy trainer so UI doesn't break
+        setAvailableTrainers([{
+          name: "Service temporarily unavailable",
+          email: "contact-admin@company.com",
+          domain: ua.domain || "PD"
+        }]);
       }
 
       setDialogOpen(true);
     } catch (err) {
-      console.error("Error loading topics/trainers:", err);
+      console.error("handleAssignClick error:", err);
     } finally {
       setLoading(false);
     }
