@@ -21,14 +21,29 @@ import {
 import * as XLSX from "xlsx";
 import ExcelJS from "exceljs";
 
+const API_BASE =
+  process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 
 const colorPalette = [
-  "#edc7cf", "#bdd9bf", "#c7ceea", "#ffeebb", "#a4c2f4",
-  "#a1eafb", "#e6c7e3", "#f7cac9", "#ffe066", "#f8b195",
-  "#80ced6", "#d5f4e6", "#f0a6ca", "#b5ead7", "#ead3d7",
-  "#ffe0ac", "#b3cdd1", "#eec9e6"
+  "#edc7cf",
+  "#bdd9bf",
+  "#c7ceea",
+  "#ffeebb",
+  "#a4c2f4",
+  "#a1eafb",
+  "#e6c7e3",
+  "#f7cac9",
+  "#ffe066",
+  "#f8b195",
+  "#80ced6",
+  "#d5f4e6",
+  "#f0a6ca",
+  "#b5ead7",
+  "#ead3d7",
+  "#ffe0ac",
+  "#b3cdd1",
+  "#eec9e6",
 ];
-
 
 const slotDisplayMap = {
   morning: "morning",
@@ -37,35 +52,29 @@ const slotDisplayMap = {
   Shift_2: "evening",
 };
 
-
 // Parse Excel dates like 11.05.2026 or ISO yyyy-MM-dd to Date
 function parseExcelDate(value) {
   if (!value) return null;
   if (value instanceof Date) return value;
 
-
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     return new Date(value);
   }
-
 
   if (/^\d{2}\.\d{2}\.\d{4}$/.test(value)) {
     const [dd, mm, yyyy] = value.split(".");
     return new Date(`${yyyy}-${mm}-${dd}`);
   }
 
-
   const d = new Date(value);
   return isNaN(d.getTime()) ? null : d;
 }
-
 
 // Convert Date to ISO yyyy-MM-dd
 function toIsoDateString(d) {
   if (!(d instanceof Date) || isNaN(d.getTime())) return "";
   return d.toISOString().slice(0, 10);
 }
-
 
 function getWeeksInRange(start, end) {
   const startDate = new Date(start);
@@ -92,14 +101,11 @@ function getWeeksInRange(start, end) {
   return weeks;
 }
 
-
 function isDateOverlap(start1, end1, start2, end2) {
   return !(
-    new Date(end1) < new Date(start2) ||
-    new Date(start1) > new Date(end2)
+    new Date(end1) < new Date(start2) || new Date(start1) > new Date(end2)
   );
 }
-
 
 // Trim header names from XLSX (ex: "MODE " -> "MODE")
 function normalizeRowKeys(row) {
@@ -111,7 +117,6 @@ function normalizeRowKeys(row) {
   return normalized;
 }
 
-
 // Infer domain from COURSE prefix
 function getDomainFromCourse(course) {
   if (!course || typeof course !== "string") return "";
@@ -121,7 +126,6 @@ function getDomainFromCourse(course) {
   if (up.startsWith("DFTFT") || up.startsWith("DFT")) return "DFT";
   return "";
 }
-
 
 /**
  * Plan classrooms only for MODE = OFFLINE.
@@ -137,51 +141,40 @@ function planClassroomsForOffline(rows) {
   ];
   const shifts = ["morning", "evening"];
 
-
   const plans = [];
   const occupancyIndex = {};
   const getKey = (room, slot) => `${room}|${slot}`;
 
-
   rows.forEach((originalRow) => {
     const row = normalizeRowKeys(originalRow);
-
 
     const course = row["COURSE"];
     let mode = row["MODE"];
     const aStartRaw = row["A.START DATE"];
     const aEndRaw = row["A.DUE DATE"];
 
-
     const aStartDate = parseExcelDate(aStartRaw);
     const aEndDate = parseExcelDate(aEndRaw);
     const aStart = toIsoDateString(aStartDate);
     const aEnd = toIsoDateString(aEndDate);
 
-
     const capacity = Number(row["CAPACITY"] || 0);
     const enrolled = Number(row["ENROLLED"] || 0);
 
-
     mode = typeof mode === "string" ? mode.trim().toUpperCase() : "";
-
 
     if (!course || mode !== "OFFLINE" || !aStart || !aEnd) return;
 
-
     const hasSufficientCapacity = enrolled <= capacity || enrolled === 0;
     const licenseNeeded = enrolled > capacity ? enrolled - capacity : 0;
-
 
     let assignedRoom = (row["CLASS_ROOM"] || "").trim();
     let assignedShiftRaw = (row["SHIFTS"] || "").trim();
     let slot = "";
 
-
     if (assignedShiftRaw) {
       slot = slotDisplayMap[assignedShiftRaw] || "morning";
     }
-
 
     if (!assignedRoom || !assignedShiftRaw) {
       let candidateRooms;
@@ -191,14 +184,12 @@ function planClassroomsForOffline(rows) {
         candidateRooms = classrooms.filter((c) => c.name !== "Ganga");
       }
 
-
       let found = false;
       for (const room of candidateRooms) {
         for (const s of shifts) {
           const key = getKey(room.name, s);
           if (!occupancyIndex[key]) occupancyIndex[key] = [];
           const slotBookings = occupancyIndex[key];
-
 
           const overlap = slotBookings.some((b) =>
             isDateOverlap(aStart, aEnd, b.start, b.end)
@@ -222,7 +213,6 @@ function planClassroomsForOffline(rows) {
       occupancyIndex[key].push({ start: aStart, end: aEnd, course });
     }
 
-
     plans.push({
       batch_no: course,
       mode,
@@ -237,10 +227,8 @@ function planClassroomsForOffline(rows) {
     });
   });
 
-
   return plans;
 }
-
 
 function getBatchColorMap(allMatrixTable) {
   const batchSet = new Set();
@@ -258,7 +246,6 @@ function getBatchColorMap(allMatrixTable) {
   return batchColorMap;
 }
 
-
 // Convert hex to RGB object for ExcelJS
 function hexToRGB(hex) {
   const clean = hex.replace("#", "");
@@ -268,7 +255,6 @@ function hexToRGB(hex) {
     b: parseInt(clean.substring(4, 6), 16),
   };
 }
-
 
 export default function ClassroomPlanner() {
   const [plans, setPlans] = useState([]);
@@ -283,29 +269,38 @@ export default function ClassroomPlanner() {
   const [licenses, setLicenses] = useState([]);
   const [licenseError, setLicenseError] = useState("");
 
-
   // Auto-load matrix + licenses on mount
   useEffect(() => {
     const loadExistingMatrix = async () => {
       try {
         setLoading(true);
         setProcessingStatus("Loading saved classroom matrix...");
-        const res = await fetch("/api/get-classroom-matrix");
+
+        const res = await fetch(`${API_BASE}/api/get-classroom-matrix`);
         if (!res.ok) {
           setProcessingStatus("");
           setLoading(false);
           return;
         }
+
         const data = await res.json();
         const { occupancyRows, weeks: weeksData } = data || {};
+
         if (!Array.isArray(occupancyRows) || !occupancyRows.length) {
           setProcessingStatus("");
           setLoading(false);
           return;
         }
 
+        // occupancyRows saved from backend might contain a_start/a_end or occupancy_start/occupancy_end
+        const normalized = occupancyRows.map((p) => ({
+          ...p,
+          a_start: p.a_start || p.occupancy_start || p.occupancy_start_date || "",
+          a_end: p.a_end || p.occupancy_end || p.occupancy_end_date || "",
+        }));
 
-        setPlans(occupancyRows);
+        setPlans(normalized);
+
         if (Array.isArray(weeksData) && weeksData.length) {
           const w = weeksData.map((w) => ({
             ...w,
@@ -314,7 +309,7 @@ export default function ClassroomPlanner() {
           setWeeks(w);
         } else {
           const allDates = [];
-          occupancyRows.forEach((p) => {
+          normalized.forEach((p) => {
             if (p.a_start) allDates.push(p.a_start);
             if (p.a_end) allDates.push(p.a_end);
           });
@@ -324,6 +319,7 @@ export default function ClassroomPlanner() {
             setWeeks(getWeeksInRange(matrixStart, matrixEnd));
           }
         }
+
         setProcessingStatus("Loaded saved matrix.");
       } catch (e) {
         console.error("loadExistingMatrix error", e);
@@ -332,10 +328,9 @@ export default function ClassroomPlanner() {
       }
     };
 
-
     const loadLicenses = async () => {
       try {
-        const res = await fetch("/api/licenses");
+        const res = await fetch(`${API_BASE}/api/licenses`);
         if (!res.ok) return;
         const data = await res.json();
         const list = Array.isArray(data) ? data : data.licenses || [];
@@ -346,18 +341,15 @@ export default function ClassroomPlanner() {
       }
     };
 
-
     loadExistingMatrix();
     loadLicenses();
   }, []);
-
 
   const classrooms = useMemo(
     () => [...new Set(plans.map((p) => p.classroom_name).filter(Boolean))],
     [plans]
   );
   const slots = ["morning", "evening"];
-
 
   const table = useMemo(() => {
     const t = [];
@@ -371,7 +363,6 @@ export default function ClassroomPlanner() {
           const startIso = weekStart.toISOString().slice(0, 10);
           const endIso = weekEnd.toISOString().slice(0, 10);
 
-
           const batches = plans
             .filter(
               (p) =>
@@ -382,7 +373,6 @@ export default function ClassroomPlanner() {
             .map((p) => p.batch_no)
             .filter(Boolean);
 
-
           row.push(batches);
         });
         t.push(row);
@@ -391,9 +381,7 @@ export default function ClassroomPlanner() {
     return t;
   }, [classrooms, slots, weeks, plans]);
 
-
   const batchColorMap = useMemo(() => getBatchColorMap(table), [table]);
-
 
   const batchDetailMap = useMemo(() => {
     const m = {};
@@ -403,18 +391,15 @@ export default function ClassroomPlanner() {
     return m;
   }, [plans]);
 
-
   // License mapping
   const getLicenseInfoForBatch = (batchNo, enrolled) => {
     const domain = getDomainFromCourse(batchNo);
     if (!domain || !Array.isArray(licenses)) return [];
 
-
     const domainLicenses = licenses.filter(
       (l) => (l.domain || "").toString().toUpperCase() === domain
     );
     if (!domainLicenses.length) return [];
-
 
     return domainLicenses.map((lic) => {
       const count = Number(lic.count || 0);
@@ -426,7 +411,6 @@ export default function ClassroomPlanner() {
       };
     });
   };
-
 
   const handleBatchClick = (batch) => {
     if (!batch) return;
@@ -440,11 +424,9 @@ export default function ClassroomPlanner() {
     setSelectedBatch({ ...base, licenseInfo });
   };
 
-
   const handleFileUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
 
     setLoading(true);
     setError("");
@@ -454,27 +436,22 @@ export default function ClassroomPlanner() {
     setSelectedBatch(null);
     setSaveStatus("");
 
-
     try {
       const data = await file.arrayBuffer();
-
 
       setProcessingStatus("Parsing spreadsheet...");
       const wb = XLSX.read(data, { type: "array" });
       const sheetName = wb.SheetNames[0];
       const sheet = wb.Sheets[sheetName];
 
-
       const rows = XLSX.utils.sheet_to_json(sheet, {
         defval: "",
         raw: false,
       });
 
-
       setProcessingStatus("Processing OFFLINE batches...");
       const offlinePlans = planClassroomsForOffline(rows);
       setPlans(offlinePlans);
-
 
       if (!offlinePlans.length) {
         setError(
@@ -502,29 +479,36 @@ export default function ClassroomPlanner() {
     }
   };
 
-
   const handleDownloadXlsx = async () => {
     if (!plans.length) {
       setError("No data to export. Please upload a file with OFFLINE batches.");
       return;
     }
 
-
     try {
       const workbook = new ExcelJS.Workbook();
 
-
       // === CLASSROOM MATRIX SHEET ===
       const matrixSheet = workbook.addWorksheet("Classroom Matrix");
-      const headerRow = ["Classroom", "Slot", ...weeks.map((w) => `${w.month} W${w.weekNum}`)];
+      const headerRow = [
+        "Classroom",
+        "Slot",
+        ...weeks.map((w) => `${w.month} W${w.weekNum}`),
+      ];
       matrixSheet.addRow(headerRow);
-
 
       const headerRowExcel = matrixSheet.getRow(1);
       headerRowExcel.font = { bold: true, color: { argb: "FFFFFFFF" } };
-      headerRowExcel.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF333333" } };
-      headerRowExcel.alignment = { horizontal: "center", vertical: "center", wrapText: true };
-
+      headerRowExcel.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FF333333" },
+      };
+      headerRowExcel.alignment = {
+        horizontal: "center",
+        vertical: "center",
+        wrapText: true,
+      };
 
       table.forEach((row) => {
         const outRow = [];
@@ -532,30 +516,26 @@ export default function ClassroomPlanner() {
           if (idx < 2) {
             outRow.push(idx === 1 ? slotDisplayMap[cell] || cell : cell);
           } else {
-            if (Array.isArray(cell)) {
-              outRow.push(cell.join(", "));
-            } else {
-              outRow.push("");
-            }
+            if (Array.isArray(cell)) outRow.push(cell.join(", "));
+            else outRow.push("");
           }
         });
 
-
         const excelRow = matrixSheet.addRow(outRow);
-
 
         row.forEach((cell, colIdx) => {
           if (colIdx >= 2 && Array.isArray(cell) && cell.length > 0) {
             const firstBatch = cell[0];
             const hexColor = batchColorMap[firstBatch];
 
-
             if (hexColor) {
               const rgb = hexToRGB(hexColor);
-              const rgbHex = `FF${rgb.r.toString(16).padStart(2, "0")}${rgb.g
-                .toString(16)
-                .padStart(2, "0")}${rgb.b.toString(16).padStart(2, "0")}`.toUpperCase();
-
+              const rgbHex =
+                `FF${rgb.r.toString(16).padStart(2, "0")}${rgb.g
+                  .toString(16)
+                  .padStart(2, "0")}${rgb.b
+                  .toString(16)
+                  .padStart(2, "0")}`.toUpperCase();
 
               const excelCell = excelRow.getCell(colIdx + 1);
               excelCell.fill = {
@@ -563,10 +543,7 @@ export default function ClassroomPlanner() {
                 pattern: "solid",
                 fgColor: { argb: rgbHex },
               };
-              excelCell.font = {
-                bold: true,
-                color: { argb: "FF222222" },
-              };
+              excelCell.font = { bold: true, color: { argb: "FF222222" } };
               excelCell.alignment = {
                 horizontal: "center",
                 vertical: "center",
@@ -576,18 +553,18 @@ export default function ClassroomPlanner() {
           }
         });
 
-
         excelRow.getCell(1).font = { bold: true };
-        excelRow.getCell(2).alignment = { horizontal: "center", vertical: "center" };
+        excelRow.getCell(2).alignment = {
+          horizontal: "center",
+          vertical: "center",
+        };
       });
-
 
       matrixSheet.columns = [
         { width: 20 },
         { width: 12 },
         ...weeks.map(() => ({ width: 18 })),
       ];
-
 
       // === OFFLINE PLANS SHEET ===
       const plansSheet = workbook.addWorksheet("Offline Plans");
@@ -605,12 +582,18 @@ export default function ClassroomPlanner() {
       ];
       plansSheet.addRow(plansHeader);
 
-
       const plansHeaderRow = plansSheet.getRow(1);
       plansHeaderRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
-      plansHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF333333" } };
-      plansHeaderRow.alignment = { horizontal: "center", vertical: "center", wrapText: true };
-
+      plansHeaderRow.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FF333333" },
+      };
+      plansHeaderRow.alignment = {
+        horizontal: "center",
+        vertical: "center",
+        wrapText: true,
+      };
 
       plans.forEach((p) => {
         plansSheet.addRow([
@@ -627,7 +610,6 @@ export default function ClassroomPlanner() {
         ]);
       });
 
-
       plansSheet.columns = [
         { width: 15 },
         { width: 12 },
@@ -640,7 +622,6 @@ export default function ClassroomPlanner() {
         { width: 20 },
         { width: 12 },
       ];
-
 
       const buffer = await workbook.xlsx.writeBuffer();
       const blob = new Blob([buffer], {
@@ -658,8 +639,7 @@ export default function ClassroomPlanner() {
     }
   };
 
-
-  // UPDATED: save occupancy + updated dates to backend
+  // FIXED: save to backend using API_BASE + include weeks
   const handleSaveMatrix = async () => {
     if (!plans.length) {
       setError("No matrix to save. Upload a file and generate the plan first.");
@@ -669,7 +649,6 @@ export default function ClassroomPlanner() {
     setSaveStatus("");
     setError("");
 
-
     try {
       const occupancyRows = (plans || [])
         .filter((p) => p && p.classroom_name && p.slot)
@@ -677,15 +656,17 @@ export default function ClassroomPlanner() {
           classroom_name: p.classroom_name,
           slot: p.slot,
           batch_no: p.batch_no,
+
+          // keep both naming styles to avoid backend mismatch
           occupancy_start: p.a_start,
           occupancy_end: p.a_end,
+          a_start: p.a_start,
+          a_end: p.a_end,
         }));
-
 
       if (!occupancyRows.length) {
         throw new Error("No valid occupancy rows to save.");
       }
-
 
       const fullPlanRows = plans.map((p) => ({
         batch_no: p.batch_no,
@@ -698,26 +679,34 @@ export default function ClassroomPlanner() {
         slot: p.slot,
       }));
 
+      // weeks must be serializable (Date -> ISO)
+      const weeksPayload = (weeks || []).map((w) => ({
+        ...w,
+        weekStart: w.weekStart instanceof Date ? w.weekStart.toISOString() : w.weekStart,
+      }));
 
-      const payload = { occupancyRows, fullPlanRows };
+      const payload = { occupancyRows, fullPlanRows, weeks: weeksPayload };
 
-
-      const res = await fetch("/api/save-classroom-matrix", {
+      const res = await fetch(`${API_BASE}/api/save-classroom-matrix`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
 
-
       if (!res.ok) {
-        let msg = "Failed to save matrix";
+        // Try JSON first, then text fallback (many servers return HTML on 400)
+        let msg = `Failed to save matrix (HTTP ${res.status})`;
         try {
           const data = await res.json();
           if (data?.error) msg = data.error;
-        } catch (_) {}
+        } catch (_) {
+          try {
+            const t = await res.text();
+            if (t) msg = t;
+          } catch (_) {}
+        }
         throw new Error(msg);
       }
-
 
       setSaveStatus("Matrix and dates saved successfully.");
     } catch (err) {
@@ -726,7 +715,6 @@ export default function ClassroomPlanner() {
       setSaving(false);
     }
   };
-
 
   const getWorstLicenseShortfall = (licenseInfo = []) => {
     if (!licenseInfo.length) return null;
@@ -737,7 +725,6 @@ export default function ClassroomPlanner() {
     );
   };
 
-
   return (
     <Box sx={{ maxWidth: "98vw", mx: "auto", my: 4 }}>
       <Paper elevation={5} sx={{ p: 4, borderRadius: 3, mb: 4 }}>
@@ -746,12 +733,11 @@ export default function ClassroomPlanner() {
         </Typography>
         <Divider sx={{ mb: 3 }} />
 
-
         <Box sx={{ mb: 3, display: "flex", flexDirection: "column", gap: 2 }}>
           <Typography variant="subtitle1">
-            Upload CSV or XLSX file with columns like COURSE, MODE, A.START DATE, A.DUE DATE, CAPACITY, ENROLLED, CLASS_ROOM, SHIFTS. Only MODE = OFFLINE rows are planned.
+            Upload CSV or XLSX file with columns like COURSE, MODE, A.START DATE, A.DUE DATE,
+            CAPACITY, ENROLLED, CLASS_ROOM, SHIFTS. Only MODE = OFFLINE rows are planned.
           </Typography>
-
 
           <Button variant="contained" component="label" disabled={loading}>
             {loading ? <CircularProgress size={24} /> : "Upload File"}
@@ -764,7 +750,6 @@ export default function ClassroomPlanner() {
             />
           </Button>
 
-
           <TextField
             label="Download file name"
             value={downloadFileName}
@@ -776,7 +761,6 @@ export default function ClassroomPlanner() {
             }}
           />
         </Box>
-
 
         <Box sx={{ display: "flex", alignItems: "center", gap: 2, my: 2, flexWrap: "wrap" }}>
           <Typography variant="subtitle1">Actions:</Typography>
@@ -797,15 +781,9 @@ export default function ClassroomPlanner() {
             {saving ? <CircularProgress size={20} /> : "Save Matrix"}
           </Button>
           {saveStatus && (
-            <Chip
-              label={saveStatus}
-              color="success"
-              variant="filled"
-              sx={{ ml: 1 }}
-            />
+            <Chip label={saveStatus} color="success" variant="filled" sx={{ ml: 1 }} />
           )}
         </Box>
-
 
         {loading && (
           <Box
@@ -827,26 +805,19 @@ export default function ClassroomPlanner() {
           </Box>
         )}
 
-
         {!loading && processingStatus && (
-          <Chip
-            label={processingStatus}
-            color="info"
-            variant="outlined"
-            sx={{ mt: 2 }}
-          />
+          <Chip label={processingStatus} color="info" variant="outlined" sx={{ mt: 2 }} />
         )}
-
 
         <Fade in={!!error}>
           <Box>{error && <Alert severity="error" sx={{ mt: 3 }}>{error}</Alert>}</Box>
         </Fade>
+
         {licenseError && (
           <Alert severity="warning" sx={{ mt: 2 }}>
             {licenseError}
           </Alert>
         )}
-
 
         <Fade in={!!selectedBatch}>
           <Box sx={{ mt: 3 }}>
@@ -855,7 +826,6 @@ export default function ClassroomPlanner() {
                 <Typography variant="subtitle1" fontWeight="bold">
                   Batch Details: {selectedBatch.batch_no}
                 </Typography>
-
 
                 <Box sx={{ mt: 1 }}>
                   <Typography variant="body2">
@@ -870,7 +840,6 @@ export default function ClassroomPlanner() {
                   </Typography>
                 </Box>
 
-
                 {selectedBatch.licenseInfo && selectedBatch.licenseInfo.length > 0 && (
                   <Box sx={{ mt: 2 }}>
                     {(() => {
@@ -880,7 +849,6 @@ export default function ClassroomPlanner() {
                         0
                       );
                       const isSufficient = totalShort <= 0;
-
 
                       return (
                         <>
@@ -894,7 +862,6 @@ export default function ClassroomPlanner() {
                               ? "All licenses are sufficient for this batch."
                               : `Insufficient license: ${worst.license_name} (have ${worst.count}, need ${worst.count + worst.additional_needed}).`}
                           </Typography>
-
 
                           <TableContainer component={Paper} sx={{ maxWidth: 480, mt: 1 }}>
                             <Table size="small">
@@ -936,12 +903,10 @@ export default function ClassroomPlanner() {
         </Fade>
       </Paper>
 
-
       <Paper elevation={3} sx={{ p: 4, borderRadius: 3, minHeight: 320 }}>
         <Typography variant="h5" fontWeight="bold" mb={2}>
           Classroom Occupancy Matrix
         </Typography>
-
 
         {loading ? (
           <Box
@@ -957,7 +922,8 @@ export default function ClassroomPlanner() {
           </Box>
         ) : !plans.length ? (
           <Alert severity="info">
-            Upload a file with OFFLINE batches or rely on auto-loaded data to see the classroom occupancy matrix.
+            Upload a file with OFFLINE batches or rely on auto-loaded data to see the classroom
+            occupancy matrix.
           </Alert>
         ) : (
           <>
@@ -1013,7 +979,8 @@ export default function ClassroomPlanner() {
                                       label={batch}
                                       size="small"
                                       sx={{
-                                        backgroundColor: batchColorMap[batch] || "#e0e0e0",
+                                        backgroundColor:
+                                          batchColorMap[batch] || "#e0e0e0",
                                         color: "#222",
                                         fontWeight: 600,
                                         height: 24,

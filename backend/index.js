@@ -1274,34 +1274,84 @@ app.get('/api/licenses', async (req, res) => {
   res.json(data); // plain array
 });
 
-// Get classroom matrix for planner
-app.get('/api/get-classroom-matrix', async (req, res) => {
-  const { data, error } = await supabase
-    .from('classroom_occupancy')
-    .select('classroom_name, slot, batch_no, occupancy_start, occupancy_end');
+// SAVE classroom matrix
+app.post("/api/save-classroom-matrix", async (req, res) => {
+  try {
+    const { occupancyRows, fullPlanRows, weeks } = req.body || {};
 
-  if (error) {
-    console.error('get-classroom-matrix error', error);
-    return res.status(500).json({ error: 'Failed to fetch occupancy data' });
+    if (!Array.isArray(occupancyRows) || occupancyRows.length === 0) {
+      return res.status(400).json({ error: "occupancyRows is required (non-empty array)." });
+    }
+    if (!Array.isArray(fullPlanRows)) {
+      return res.status(400).json({ error: "fullPlanRows must be an array." });
+    }
+    if (!Array.isArray(weeks)) {
+      return res.status(400).json({ error: "weeks must be an array." });
+    }
+
+    // Minimal validation for occupancy rows
+    for (const r of occupancyRows) {
+      if (!r.classroom_name || !r.slot || !r.batch_no) {
+        return res.status(400).json({
+          error: "Each occupancy row must contain classroom_name, slot, batch_no.",
+        });
+      }
+      const start = r.occupancy_start || r.a_start;
+      const end = r.occupancy_end || r.a_end;
+      if (!start || !end) {
+        return res.status(400).json({
+          error: "Each occupancy row must contain occupancy_start/occupancy_end (or a_start/a_end).",
+        });
+      }
+    }
+
+    const payload = {
+      id: "default",
+      occupancy_rows: occupancyRows,
+      full_plan_rows: fullPlanRows,
+      weeks,
+    };
+
+    // Upsert = insert if missing, update if exists
+    const { error } = await supabase
+      .from("classroom_matrix_store")
+      .upsert(payload, { onConflict: "id" });
+
+    if (error) {
+      console.error("save-classroom-matrix error:", error);
+      return res.status(500).json({ error: "Failed to save matrix in DB." });
+    }
+
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("Unhandled error in /api/save-classroom-matrix:", err);
+    return res.status(500).json({ error: "Server error" });
   }
+});
 
-  const occupancyRows = (data || []).map(row => ({
-    classroom_name: row.classroom_name,
-    slot: row.slot,                     // logical slot name
-    batch_no: row.batch_no,
-    a_start: row.occupancy_start,
-    a_end: row.occupancy_end,
-    // capacity/enrolled are not stored in this table; set to 0 so planner still works
-    capacity: 0,
-    enrolled: 0,
-    hasSufficientCapacity: true,
-    licenseNeeded: 0,
-  }));
+// GET saved classroom matrix
+app.get("/api/get-classroom-matrix", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("classroom_matrix_store")
+      .select("occupancy_rows, full_plan_rows, weeks")
+      .eq("id", "default")
+      .maybeSingle();
 
-  res.json({
-    occupancyRows,
-    weeks: [],                          // frontend will recompute weeks from dates
-  });
+    if (error) {
+      console.error("get-classroom-matrix error:", error);
+      return res.status(200).json({ occupancyRows: [], fullPlanRows: [], weeks: [] });
+    }
+
+    return res.status(200).json({
+      occupancyRows: data?.occupancy_rows || [],
+      fullPlanRows: data?.full_plan_rows || [],
+      weeks: data?.weeks || [],
+    });
+  } catch (err) {
+    console.error("Unhandled error in /api/get-classroom-matrix:", err);
+    return res.status(200).json({ occupancyRows: [], fullPlanRows: [], weeks: [] });
+  }
 });
 
 // ===============================
@@ -2209,37 +2259,6 @@ app.get('/api/domains', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch domains' });
   }
-});
-
-
-// Get saved classroom matrix (occupancyRows + weeks) for planner
-// If you don't have a separate weeks table, send weeks: [] and let frontend rebuild.
-app.get('/api/get-classroom-matrix', async (req, res) => {
-  const { data, error } = await supabase
-    .from('classroom_occupancy')
-    .select('classroom_name, slot, batch_no, occupancy_start, occupancy_end');
-
-  if (error) {
-    console.error('get-classroom-matrix error', error);
-    return res.status(500).json({ error: 'Failed to fetch occupancy data' });
-  }
-
-  const occupancyRows = (data || []).map((row) => ({
-    classroom_name: row.classroom_name,
-    slot: row.slot,                 // from DB
-    batch_no: row.batch_no,
-    a_start: row.occupancy_start,
-    a_end: row.occupancy_end,
-    capacity: 0,
-    enrolled: 0,
-    hasSufficientCapacity: true,
-    licenseNeeded: 0,
-  }));
-
-  res.json({
-    occupancyRows,
-    weeks: [],
-  });
 });
 
 // ================= APPLY LEAVE (TRAINER) =================
