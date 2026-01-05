@@ -2606,6 +2606,8 @@ app.post('/api/download-schedule', async (req, res) => {
   res.status(400).send("Unsupported file type");
 });
 
+
+
 // Get batches and domains handled by a trainer
 app.get('/api/trainer-batches', async (req, res) => {
   try {
@@ -2645,52 +2647,63 @@ app.get('/api/trainer-batches', async (req, res) => {
 });
 
 // 1. Get trainer unavailability for managers
-app.get('/api/trainer-unavailability', async (req, res) => {
+app.post('/api/trainer-unavailability', async (req, res) => {
   try {
-    // Ignore all query params for simplicity, just return all rows
-    const { data, error } = await supabase
-      .from('trainer_unavailability')
-      .select(`
-        id,
-        trainer_name,
-        trainer_email,
-        domain,
-        start_date,
-        end_date,
-        reason,
-        status,
-        assigned_to,
-        submitted_at,
-        batch_nos
-      `)
-      .order('submitted_at', { ascending: false });
+    const { 
+      trainer_email, 
+      trainer_name, 
+      domain, 
+      start_date, 
+      end_date, 
+      reason, 
+      batch_nos 
+    } = req.body;
 
-    // If table doesn't exist or any column missing, return empty array
-    if (error) {
-      console.error('trainer_unavailability table error:', error);
-      return res.status(200).json([]); // Never 500, always safe
+    // Basic validation
+    if (!trainer_email || !start_date || !end_date) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'trainer_email, start_date, and end_date required' 
+      });
     }
 
-    // Clean data: ensure all expected fields exist
-    const cleanData = (data || []).map(row => ({
-      id: row.id || null,
-      trainer_name: row.trainer_name || 'Unknown',
-      trainer_email: row.trainer_email || '',
-      domain: row.domain || '',
-      start_date: row.start_date || '',
-      end_date: row.end_date || '',
-      reason: row.reason || '',
-      status: row.status || 'Pending',
-      assigned_to: row.assigned_to || '',
-      submitted_at: row.submitted_at || '',
-      batch_nos: row.batch_nos || ''
-    }));
+    // Insert new unavailability record
+    const { data, error } = await supabase
+      .from('trainer_unavailability')
+      .insert([{
+        trainer_email: trainer_email.trim().toLowerCase(),
+        trainer_name: trainer_name || trainer_email.split('@')[0],
+        domain: domain || '',
+        start_date,
+        end_date,
+        reason: reason || '',
+        batch_nos: batch_nos || '',
+        status: 'Pending', // default
+        submitted_at: new Date().toISOString()
+      }])
+      .select()
+      .single();
 
-    res.status(200).json(cleanData);
+    if (error) {
+      console.error('Insert trainer_unavailability error:', error);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Failed to save leave request' 
+      });
+    }
+
+    console.log('Leave submitted:', trainer_email, start_date, 'to', end_date);
+    return res.json({ 
+      success: true, 
+      id: data.id 
+    });
+
   } catch (err) {
-    console.error('CRASH in /api/trainer-unavailability:', err);
-    // NEVER return 500 - frontend expects array
-    res.status(200).json([]);
+    console.error('POST /api/trainer-unavailability error:', err);
+    return res.status(500).json({ 
+      success: false, 
+      error: 'Server error' 
+    });
   }
 });
 
@@ -6421,6 +6434,108 @@ app.post('/api/tutors/add', async (req, res) => {
   } catch (error) {
     console.error('Error adding tutor:', error);
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// PUT update tutor by id (optionally accept password change too)
+app.put("/api/tutors/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, role, is_active, domain, password } = req.body || {};
+
+    if (!id) return res.status(400).json({ success: false, error: "Missing id" });
+
+    const patch = {};
+    if (name !== undefined) patch.name = String(name).trim();
+    if (role !== undefined) patch.role = role || "Trainer";
+    if (typeof is_active === "boolean") patch.is_active = is_active;
+    if (domain !== undefined) patch.domain = domain ? String(domain).trim() : null;
+
+    if (password) patch.password = await bcrypt.hash(password, 10);
+
+    const { data, error } = await supabase
+      .from("internal_users")
+      .update(patch)
+      .eq("id", id)
+      .select("id, created_at, name, email, role, is_active, domain")
+      .single();
+
+    if (error) {
+      console.error("PUT /api/tutors/:id error:", error);
+      return res.status(500).json({ success: false, error: "Update failed" });
+    }
+
+    return res.status(200).json({ success: true, data });
+  } catch (err) {
+    console.error("Unhandled error in PUT /api/tutors/:id:", err);
+    return res.status(500).json({ success: false, error: "Server error" });
+  }
+});
+
+/**
+ * DELETE /api/tutors/:id
+ * default => soft delete (is_active=false)
+ * ?hard=true => hard delete row
+ */
+app.delete("/api/tutors/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const hard = String(req.query.hard || "").toLowerCase() === "true";
+
+    if (!id) return res.status(400).json({ success: false, error: "Missing id" });
+
+    if (hard) {
+      const { error } = await supabase.from("internal_users").delete().eq("id", id);
+      if (error) {
+        console.error("DELETE hard /api/tutors/:id error:", error);
+        return res.status(500).json({ success: false, error: "Hard delete failed" });
+      }
+      return res.status(200).json({ success: true, hard: true });
+    }
+
+    const { data, error } = await supabase
+      .from("internal_users")
+      .update({ is_active: false })
+      .eq("id", id)
+      .select("id, name, email, is_active")
+      .single();
+
+    if (error) {
+      console.error("DELETE soft /api/tutors/:id error:", error);
+      return res.status(500).json({ success: false, error: "Soft delete failed" });
+    }
+
+    return res.status(200).json({ success: true, hard: false, data });
+  } catch (err) {
+    console.error("Unhandled error in DELETE /api/tutors/:id:", err);
+    return res.status(500).json({ success: false, error: "Server error" });
+  }
+});
+
+/**
+ * Optional fallback (if you still want delete-by-email):
+ * DELETE /api/tutors?email=someone@mail.com  => soft delete
+ */
+app.delete("/api/tutors", async (req, res) => {
+  try {
+    const { email } = req.query;
+    if (!email) return res.status(400).json({ success: false, error: "email is required" });
+
+    const { data, error } = await supabase
+      .from("internal_users")
+      .update({ is_active: false })
+      .eq("email", String(email).trim())
+      .select("id, name, email, is_active");
+
+    if (error) {
+      console.error("DELETE /api/tutors?email error:", error);
+      return res.status(500).json({ success: false, error: "Soft delete failed" });
+    }
+
+    return res.status(200).json({ success: true, data });
+  } catch (err) {
+    console.error("Unhandled error in DELETE /api/tutors:", err);
+    return res.status(500).json({ success: false, error: "Server error" });
   }
 });
 
