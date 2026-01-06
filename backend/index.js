@@ -1278,25 +1278,37 @@ app.get('/api/licenses', async (req, res) => {
 // GET saved classroom matrix
 app.get("/api/get-classroom-matrix", async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from("classroom_matrix_store")
-      .select("occupancy_rows, full_plan_rows, weeks")
-      .eq("id", "default")
-      .maybeSingle();
+    const { data: occupancyRows, error } = await supabase
+      .from("classroom_occupancy")
+      .select("*")
+      .order("batch_no");
 
     if (error) {
       console.error("get-classroom-matrix error:", error);
-      return res.status(200).json({ occupancyRows: [], fullPlanRows: [], weeks: [] });
+      return res.status(500).json({ error: error.message });
     }
 
-    return res.status(200).json({
-      occupancyRows: data?.occupancy_rows || [],
-      fullPlanRows: data?.full_plan_rows || [],
-      weeks: data?.weeks || [],
+    // Transform back to frontend format
+    const transformedRows = occupancyRows.map((r) => ({
+      batch_no: r.batch_no,
+      classroom_name: r.classroom_name,
+      slot: r.slot,
+      occupancy_start: r.occupancy_start,
+      occupancy_end: r.occupancy_end,
+      enrolled: r.enrolled || 0,
+      a_start: r.occupancy_start,
+      a_end: r.occupancy_end,
+      capacity: 35, // default, or fetch from classrooms table if needed
+      mode: "OFFLINE",
+    }));
+
+    res.json({
+      occupancyRows: transformedRows,
+      weeks: [], // computed in frontend from dates
     });
   } catch (err) {
-    console.error("Unhandled error in /api/get-classroom-matrix:", err);
-    return res.status(200).json({ occupancyRows: [], fullPlanRows: [], weeks: [] });
+    console.error("get-classroom-matrix error:", err);
+    res.status(500).json({ error: "Server error" });
   }
 });
 
@@ -1305,60 +1317,62 @@ app.post("/api/save-classroom-matrix", async (req, res) => {
   try {
     const { occupancyRows, fullPlanRows, weeks } = req.body;
 
+    console.log("SAVE MATRIX payload:", {
+      rowsCount: occupancyRows?.length || 0,
+      hasWeeks: !!weeks?.length,
+    });
+
     if (!Array.isArray(occupancyRows) || occupancyRows.length === 0) {
-      return res
-        .status(400)
-        .json({ error: "occupancyRows is required non-empty array." });
-    }
-    if (!Array.isArray(fullPlanRows)) {
-      return res.status(400).json({ error: "fullPlanRows must be an array." });
-    }
-    if (!Array.isArray(weeks)) {
-      return res.status(400).json({ error: "weeks must be an array." });
+      return res.status(400).json({ error: "occupancyRows required" });
     }
 
-    // Minimal validation for occupancy rows
-    for (const r of occupancyRows) {
-      // FRONTEND SENDS classroom_name & slot & batch_no
-      if (!r.classroom_name || !r.slot || !r.batch_no) {
-        return res.status(400).json({
-          error:
-            "Each occupancy row must contain classroom_name, slot, batch_no.",
-        });
-      }
-
+    // Validate each row matches your classroom_occupancy columns
+    const validRows = occupancyRows.filter((r) => {
       const start = r.occupancy_start || r.a_start;
       const end = r.occupancy_end || r.a_end;
-      if (!start || !end) {
-        return res.status(400).json({
-          error:
-            "Each occupancy row must contain occupancy_start/occupancy_end or a_start/a_end.",
-        });
-      }
+      return (
+        r.batch_no &&
+        r.classroom_name &&
+        r.slot &&
+        start &&
+        end &&
+        r.classroom_name.match(/^(Ganga|Yamuna|Cauvery)/)
+      );
+    });
+
+    if (validRows.length === 0) {
+      return res.status(400).json({ error: "No valid occupancy rows" });
     }
 
-    const payload = {
-      id: "default",
-      occupancyrows: occupancyRows,
-      fullplanrows: fullPlanRows,
-      weeks,
-    };
-
+    // Upsert into classroom_occupancy (uses batch_no as unique?)
     const { error } = await supabase
-      .from("classroommatrixstore")
-      .upsert(payload, { onConflict: "id" });
+      .from("classroom_occupancy")
+      .upsert(
+        validRows.map((r) => ({
+          batch_no: r.batch_no,
+          classroom_name: r.classroom_name,
+          slot: r.slot,
+          occupancy_start: r.occupancy_start || r.a_start,
+          occupancy_end: r.occupancy_end || r.a_end,
+          enrolled: r.enrolled || 0,
+          class_room: r.classroom_name.split(" ")[0], // Ganga/Yamuna/Cauvery
+          shifts: r.slot === "morning" ? "Shift_1" : "Shift_2",
+        })),
+        { onConflict: "batch_no" }
+      );
 
     if (error) {
-      console.error("save-classroom-matrix error:", error);
-      return res
-        .status(500)
-        .json({ error: "Failed to save matrix in DB.", detail: error.message });
+      console.error("Supabase upsert error:", error);
+      return res.status(500).json({ error: error.message });
     }
 
-    return res.status(200).json({ success: true });
+    // Optional: Store matrix summary (weeks, fullPlanRows) in separate JSON field if you add it later
+    // For now, just occupancy is saved
+
+    res.json({ success: true, savedRows: validRows.length });
   } catch (err) {
-    console.error("Unhandled error in /api/save-classroom-matrix", err);
-    return res.status(500).json({ error: "Server error" });
+    console.error("save-classroom-matrix error:", err);
+    res.status(500).json({ error: "Server error" });
   }
 });
 

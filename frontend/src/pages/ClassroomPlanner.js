@@ -642,7 +642,7 @@ export default function ClassroomPlanner() {
   // FIXED: save to backend using API_BASE + include weeks
   const handleSaveMatrix = async () => {
     if (!plans.length) {
-      setError("No matrix to save. Upload a file and generate the plan first.");
+      setError("No matrix to save. Upload a file first.");
       return;
     }
     setSaving(true);
@@ -650,44 +650,31 @@ export default function ClassroomPlanner() {
     setError("");
 
     try {
-      const occupancyRows = (plans || [])
-        .filter((p) => p && p.classroom_name && p.slot)
+      // Map to exact backend fields (your classroom_occupancy columns)
+      const occupancyRows = plans
+        .filter((p) => p.classroom_name && p.slot && p.batch_no && p.a_start && p.a_end)
         .map((p) => ({
-          // match backend validation exactly
+          batch_no: p.batch_no,
           classroom_name: p.classroom_name,
           slot: p.slot,
-          batch_no: p.batch_no,
-
           occupancy_start: p.a_start,
           occupancy_end: p.a_end,
-          a_start: p.a_start,
-          a_end: p.a_end,
+          enrolled: p.enrolled || 0,
+          a_start: p.a_start, // extra for frontend
+          a_end: p.a_end, // extra for frontend
         }));
 
       if (!occupancyRows.length) {
-        throw new Error("No valid occupancy rows to save.");
+        throw new Error("No valid rows to save.");
       }
 
-      const fullPlanRows = plans.map((p) => ({
-        batch_no: p.batch_no,
-        a_start: p.a_start,
-        a_end: p.a_end,
-        capacity: p.capacity,
-        enrolled: p.enrolled,
-        mode: p.mode,
-        classroom_name: p.classroom_name,
-        slot: p.slot,
-      }));
+      const payload = {
+        occupancyRows,
+        fullPlanRows: plans, // optional, ignored for now
+        weeks, // optional, ignored for now
+      };
 
-      const weeksPayload = (weeks || []).map((w) => ({
-        ...w,
-        weekStart:
-          w.weekStart instanceof Date
-            ? w.weekStart.toISOString()
-            : w.weekStart,
-      }));
-
-      const payload = { occupancyRows, fullPlanRows, weeks: weeksPayload };
+      console.log("Saving:", occupancyRows.length, "rows");
 
       const res = await fetch(`${API_BASE}/api/save-classroom-matrix`, {
         method: "POST",
@@ -695,18 +682,23 @@ export default function ClassroomPlanner() {
         body: JSON.stringify(payload),
       });
 
+      const data = await res.json();
+
       if (!res.ok) {
-        let msg = `Failed to save matrix (HTTP ${res.status})`;
-        try {
-          const data = await res.json();
-          if (data?.error) msg = data.error;
-        } catch (_) {}
-        throw new Error(msg);
+        throw new Error(data.error || `HTTP ${res.status}`);
       }
 
-      setSaveStatus("Matrix and dates saved successfully.");
+      setSaveStatus(`Saved ${data.savedRows} rows successfully.`);
+      setPlans((prev) =>
+        prev.map((p) =>
+          occupancyRows.find((r) => r.batch_no === p.batch_no)
+            ? { ...p, updated: true }
+            : p
+        )
+      );
     } catch (err) {
-      setError(err.message || "Failed to save matrix");
+      console.error("Save error:", err);
+      setError(err.message);
     } finally {
       setSaving(false);
     }
