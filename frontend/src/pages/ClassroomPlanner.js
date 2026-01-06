@@ -274,53 +274,48 @@ export default function ClassroomPlanner() {
     const loadExistingMatrix = async () => {
       try {
         setLoading(true);
-        setProcessingStatus("Loading saved classroom matrix...");
+        setProcessingStatus("Loading saved matrix...");
 
         const res = await fetch(`${API_BASE}/api/get-classroom-matrix`);
         if (!res.ok) {
-          setProcessingStatus("");
-          setLoading(false);
+          setProcessingStatus("No saved matrix found.");
           return;
         }
 
         const data = await res.json();
-        const { occupancyRows, weeks: weeksData } = data || {};
+        const { occupancyRows } = data;
 
-        if (!Array.isArray(occupancyRows) || !occupancyRows.length) {
-          setProcessingStatus("");
+        if (!occupancyRows?.length) {
+          setProcessingStatus("No saved data.");
           setLoading(false);
           return;
         }
 
-        // occupancyRows saved from backend might contain a_start/a_end or occupancy_start/occupancy_end
-        const normalized = occupancyRows.map((p) => ({
-          ...p,
-          a_start: p.a_start || p.occupancy_start || p.occupancy_start_date || "",
-          a_end: p.a_end || p.occupancy_end || p.occupancy_end_date || "",
+        // Map to plans format
+        const normalizedPlans = occupancyRows.map((r) => ({
+          batch_no: r.batch_no,
+          classroom_name: r.classroom_name,
+          slot: r.slot,
+          a_start: r.occupancy_start,
+          a_end: r.occupancy_end,
+          enrolled: r.enrolled || 0,
+          capacity: r.capacity || 35,
+          mode: "OFFLINE",
         }));
 
-        setPlans(normalized);
+        setPlans(normalizedPlans);
 
-        if (Array.isArray(weeksData) && weeksData.length) {
-          const w = weeksData.map((w) => ({
-            ...w,
-            weekStart: new Date(w.weekStart),
-          }));
-          setWeeks(w);
-        } else {
-          const allDates = [];
-          normalized.forEach((p) => {
-            if (p.a_start) allDates.push(p.a_start);
-            if (p.a_end) allDates.push(p.a_end);
-          });
-          if (allDates.length) {
-            const matrixStart = allDates.reduce((a, b) => (a < b ? a : b));
-            const matrixEnd = allDates.reduce((a, b) => (a > b ? a : b));
-            setWeeks(getWeeksInRange(matrixStart, matrixEnd));
-          }
+        // Compute weeks from dates
+        const allDates = normalizedPlans.flatMap((p) => [p.a_start, p.a_end]);
+        if (allDates.length) {
+          const start = allDates.reduce((a, b) => (a < b ? a : b));
+          const end = allDates.reduce((a, b) => (a > b ? a : b));
+          setWeeks(getWeeksInRange(start, end));
         }
 
-        setProcessingStatus("Loaded saved matrix.");
+        setProcessingStatus(
+          `Loaded ${occupancyRows.length} saved batches (auto-reload on next upload)`
+        );
       } catch (e) {
         console.error("loadExistingMatrix error", e);
       } finally {
@@ -650,31 +645,24 @@ export default function ClassroomPlanner() {
     setError("");
 
     try {
-      // Map to exact backend fields (your classroom_occupancy columns)
       const occupancyRows = plans
-        .filter((p) => p.classroom_name && p.slot && p.batch_no && p.a_start && p.a_end)
+        .filter((p) => p.batch_no && p.classroom_name && p.slot && p.a_start && p.a_end)
         .map((p) => ({
-          batch_no: p.batch_no,
+          batch_no: p.batch_no.trim(),
           classroom_name: p.classroom_name,
           slot: p.slot,
           occupancy_start: p.a_start,
           occupancy_end: p.a_end,
           enrolled: p.enrolled || 0,
-          a_start: p.a_start, // extra for frontend
-          a_end: p.a_end, // extra for frontend
+          a_start: p.a_start,
+          a_end: p.a_end,
         }));
 
       if (!occupancyRows.length) {
         throw new Error("No valid rows to save.");
       }
 
-      const payload = {
-        occupancyRows,
-        fullPlanRows: plans, // optional, ignored for now
-        weeks, // optional, ignored for now
-      };
-
-      console.log("Saving:", occupancyRows.length, "rows");
+      const payload = { occupancyRows };
 
       const res = await fetch(`${API_BASE}/api/save-classroom-matrix`, {
         method: "POST",
@@ -688,14 +676,14 @@ export default function ClassroomPlanner() {
         throw new Error(data.error || `HTTP ${res.status}`);
       }
 
-      setSaveStatus(`Saved ${data.savedRows} rows successfully.`);
-      setPlans((prev) =>
-        prev.map((p) =>
-          occupancyRows.find((r) => r.batch_no === p.batch_no)
-            ? { ...p, updated: true }
-            : p
-        )
+      // Show smart summary
+      const { inserted, updated, skipped } = data.summary || {};
+      setSaveStatus(
+        `✅ ${inserted || 0} NEW + ${updated || 0} UPDATED + ${skipped || 0} unchanged`
       );
+
+      // Refresh from backend
+      await loadExistingMatrix();
     } catch (err) {
       console.error("Save error:", err);
       setError(err.message);

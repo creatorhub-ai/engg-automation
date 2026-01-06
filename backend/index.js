@@ -1317,62 +1317,97 @@ app.post("/api/save-classroom-matrix", async (req, res) => {
   try {
     const { occupancyRows, fullPlanRows, weeks } = req.body;
 
-    console.log("SAVE MATRIX payload:", {
-      rowsCount: occupancyRows?.length || 0,
-      hasWeeks: !!weeks?.length,
-    });
+    console.log("Processing", occupancyRows?.length || 0, "rows");
 
     if (!Array.isArray(occupancyRows) || occupancyRows.length === 0) {
       return res.status(400).json({ error: "occupancyRows required" });
     }
 
-    // Validate each row matches your classroom_occupancy columns
-    const validRows = occupancyRows.filter((r) => {
-      const start = r.occupancy_start || r.a_start;
-      const end = r.occupancy_end || r.a_end;
-      return (
-        r.batch_no &&
-        r.classroom_name &&
-        r.slot &&
-        start &&
-        end &&
-        r.classroom_name.match(/^(Ganga|Yamuna|Cauvery)/)
-      );
+    let inserted = 0;
+    let updated = 0;
+    let skipped = 0;
+
+    // Process each row (batch_no unique)
+    for (const row of occupancyRows) {
+      const batch_no = row.batch_no?.trim();
+      if (!batch_no || !row.classroom_name || !row.slot) {
+        skipped++;
+        continue;
+      }
+
+      const occupancy_start = row.occupancy_start || row.a_start;
+      const occupancy_end = row.occupancy_end || row.a_end;
+      const enrolled = Number(row.enrolled) || 0;
+
+      if (!occupancy_start || !occupancy_end) {
+        skipped++;
+        continue;
+      }
+
+      // 1. Check if batch_no already exists
+      const { data: existing } = await supabase
+        .from("classroom_occupancy")
+        .select("batch_no, occupancy_start, occupancy_end, enrolled, classroom_name, slot")
+        .eq("batch_no", batch_no)
+        .maybeSingle();
+
+      const updateData = {
+        batch_no,
+        classroom_name: row.classroom_name,
+        slot: row.slot,
+        occupancy_start,
+        occupancy_end,
+        enrolled,
+        class_room: row.classroom_name.split(" ")[0], // Ganga/Yamuna/Cauvery
+        shifts: row.slot === "morning" ? "Shift_1" : "Shift_2",
+        updated_at: new Date().toISOString(),
+      };
+
+      if (existing) {
+        // 2. UPDATE if dates/enrolled/classroom changed
+        const datesChanged =
+          existing.occupancy_start !== occupancy_start ||
+          existing.occupancy_end !== occupancy_end;
+        const enrolledChanged = existing.enrolled !== enrolled;
+        const roomChanged =
+          existing.classroom_name !== row.classroom_name ||
+          existing.slot !== row.slot;
+
+        if (datesChanged || enrolledChanged || roomChanged) {
+          const { error } = await supabase
+            .from("classroom_occupancy")
+            .update(updateData)
+            .eq("batch_no", batch_no);
+
+          if (!error) {
+            updated++;
+            console.log(`UPDATED ${batch_no}: dates=${datesChanged}, enrolled=${enrolledChanged}, room=${roomChanged}`);
+          }
+        } else {
+          skipped++;
+          console.log(`UNCHANGED ${batch_no}`);
+        }
+      } else {
+        // 3. INSERT new batch_no
+        const { error } = await supabase
+          .from("classroom_occupancy")
+          .insert(updateData);
+
+        if (!error) {
+          inserted++;
+          console.log(`INSERTED ${batch_no}`);
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      summary: { inserted, updated, skipped },
+      totalProcessed: occupancyRows.length,
     });
-
-    if (validRows.length === 0) {
-      return res.status(400).json({ error: "No valid occupancy rows" });
-    }
-
-    // Upsert into classroom_occupancy (uses batch_no as unique?)
-    const { error } = await supabase
-      .from("classroom_occupancy")
-      .upsert(
-        validRows.map((r) => ({
-          batch_no: r.batch_no,
-          classroom_name: r.classroom_name,
-          slot: r.slot,
-          occupancy_start: r.occupancy_start || r.a_start,
-          occupancy_end: r.occupancy_end || r.a_end,
-          enrolled: r.enrolled || 0,
-          class_room: r.classroom_name.split(" ")[0], // Ganga/Yamuna/Cauvery
-          shifts: r.slot === "morning" ? "Shift_1" : "Shift_2",
-        })),
-        { onConflict: "batch_no" }
-      );
-
-    if (error) {
-      console.error("Supabase upsert error:", error);
-      return res.status(500).json({ error: error.message });
-    }
-
-    // Optional: Store matrix summary (weeks, fullPlanRows) in separate JSON field if you add it later
-    // For now, just occupancy is saved
-
-    res.json({ success: true, savedRows: validRows.length });
   } catch (err) {
     console.error("save-classroom-matrix error:", err);
-    res.status(500).json({ error: "Server error" });
+    res.status(500).json({ error: err.message });
   }
 });
 
