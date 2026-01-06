@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useCallback } from "react";
 import {
   Paper,
   Typography,
@@ -269,60 +269,66 @@ export default function ClassroomPlanner() {
   const [licenses, setLicenses] = useState([]);
   const [licenseError, setLicenseError] = useState("");
 
+  // ✅ FIX: hoisted so it is accessible to handleSaveMatrix + useEffect
+  const loadExistingMatrix = useCallback(async () => {
+    try {
+      setLoading(true);
+      setProcessingStatus("Loading saved matrix...");
+
+      const res = await fetch(`${API_BASE}/api/get-classroom-matrix`);
+      if (!res.ok) {
+        setProcessingStatus("No saved matrix found.");
+        setPlans([]);
+        setWeeks([]);
+        return;
+      }
+
+      const data = await res.json();
+      const { occupancyRows } = data || {};
+
+      if (!occupancyRows?.length) {
+        setProcessingStatus("No saved data.");
+        setPlans([]);
+        setWeeks([]);
+        return;
+      }
+
+      // Map to plans format
+      const normalizedPlans = occupancyRows.map((r) => ({
+        batch_no: r.batch_no,
+        classroom_name: r.classroom_name,
+        slot: r.slot,
+        a_start: r.occupancy_start,
+        a_end: r.occupancy_end,
+        enrolled: r.enrolled || 0,
+        capacity: r.capacity || 35,
+        mode: "OFFLINE",
+      }));
+
+      setPlans(normalizedPlans);
+
+      // Compute weeks from dates
+      const allDates = normalizedPlans.flatMap((p) => [p.a_start, p.a_end]).filter(Boolean);
+      if (allDates.length) {
+        const start = allDates.reduce((a, b) => (a < b ? a : b));
+        const end = allDates.reduce((a, b) => (a > b ? a : b));
+        setWeeks(getWeeksInRange(start, end));
+      } else {
+        setWeeks([]);
+      }
+
+      setProcessingStatus(
+        `Loaded ${occupancyRows.length} saved batches (auto-reload on next upload)`
+      );
+    } catch (e) {
+      console.error("loadExistingMatrix error", e);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   // Auto-load matrix + licenses on mount
   useEffect(() => {
-    const loadExistingMatrix = async () => {
-      try {
-        setLoading(true);
-        setProcessingStatus("Loading saved matrix...");
-
-        const res = await fetch(`${API_BASE}/api/get-classroom-matrix`);
-        if (!res.ok) {
-          setProcessingStatus("No saved matrix found.");
-          return;
-        }
-
-        const data = await res.json();
-        const { occupancyRows } = data;
-
-        if (!occupancyRows?.length) {
-          setProcessingStatus("No saved data.");
-          setLoading(false);
-          return;
-        }
-
-        // Map to plans format
-        const normalizedPlans = occupancyRows.map((r) => ({
-          batch_no: r.batch_no,
-          classroom_name: r.classroom_name,
-          slot: r.slot,
-          a_start: r.occupancy_start,
-          a_end: r.occupancy_end,
-          enrolled: r.enrolled || 0,
-          capacity: r.capacity || 35,
-          mode: "OFFLINE",
-        }));
-
-        setPlans(normalizedPlans);
-
-        // Compute weeks from dates
-        const allDates = normalizedPlans.flatMap((p) => [p.a_start, p.a_end]);
-        if (allDates.length) {
-          const start = allDates.reduce((a, b) => (a < b ? a : b));
-          const end = allDates.reduce((a, b) => (a > b ? a : b));
-          setWeeks(getWeeksInRange(start, end));
-        }
-
-        setProcessingStatus(
-          `Loaded ${occupancyRows.length} saved batches (auto-reload on next upload)`
-        );
-      } catch (e) {
-        console.error("loadExistingMatrix error", e);
-      } finally {
-        setLoading(false);
-      }
-    };
-
     const loadLicenses = async () => {
       try {
         const res = await fetch(`${API_BASE}/api/licenses`);
@@ -338,7 +344,7 @@ export default function ClassroomPlanner() {
 
     loadExistingMatrix();
     loadLicenses();
-  }, []);
+  }, [loadExistingMatrix]);
 
   const classrooms = useMemo(
     () => [...new Set(plans.map((p) => p.classroom_name).filter(Boolean))],
@@ -462,9 +468,7 @@ export default function ClassroomPlanner() {
         const matrixEnd = allDates.reduce((a, b) => (a > b ? a : b));
         const w = getWeeksInRange(matrixStart, matrixEnd);
         setWeeks(w);
-        setProcessingStatus(
-          `Completed! Planned ${offlinePlans.length} OFFLINE batches.`
-        );
+        setProcessingStatus(`Completed! Planned ${offlinePlans.length} OFFLINE batches.`);
       }
     } catch (err) {
       console.error("File processing error:", err);
@@ -485,11 +489,7 @@ export default function ClassroomPlanner() {
 
       // === CLASSROOM MATRIX SHEET ===
       const matrixSheet = workbook.addWorksheet("Classroom Matrix");
-      const headerRow = [
-        "Classroom",
-        "Slot",
-        ...weeks.map((w) => `${w.month} W${w.weekNum}`),
-      ];
+      const headerRow = ["Classroom", "Slot", ...weeks.map((w) => `${w.month} W${w.weekNum}`)];
       matrixSheet.addRow(headerRow);
 
       const headerRowExcel = matrixSheet.getRow(1);
@@ -528,9 +528,7 @@ export default function ClassroomPlanner() {
               const rgbHex =
                 `FF${rgb.r.toString(16).padStart(2, "0")}${rgb.g
                   .toString(16)
-                  .padStart(2, "0")}${rgb.b
-                  .toString(16)
-                  .padStart(2, "0")}`.toUpperCase();
+                  .padStart(2, "0")}${rgb.b.toString(16).padStart(2, "0")}`.toUpperCase();
 
               const excelCell = excelRow.getCell(colIdx + 1);
               excelCell.fill = {
@@ -555,11 +553,7 @@ export default function ClassroomPlanner() {
         };
       });
 
-      matrixSheet.columns = [
-        { width: 20 },
-        { width: 12 },
-        ...weeks.map(() => ({ width: 18 })),
-      ];
+      matrixSheet.columns = [{ width: 20 }, { width: 12 }, ...weeks.map(() => ({ width: 18 }))];
 
       // === OFFLINE PLANS SHEET ===
       const plansSheet = workbook.addWorksheet("Offline Plans");
@@ -634,7 +628,7 @@ export default function ClassroomPlanner() {
     }
   };
 
-  // FIXED: save to backend using API_BASE + include weeks
+  // Save to backend using API_BASE
   const handleSaveMatrix = async () => {
     if (!plans.length) {
       setError("No matrix to save. Upload a file first.");
@@ -676,13 +670,12 @@ export default function ClassroomPlanner() {
         throw new Error(data.error || `HTTP ${res.status}`);
       }
 
-      // Show smart summary
       const { inserted, updated, skipped } = data.summary || {};
       setSaveStatus(
         `✅ ${inserted || 0} NEW + ${updated || 0} UPDATED + ${skipped || 0} unchanged`
       );
 
-      // Refresh from backend
+      // ✅ FIXED: now loadExistingMatrix is in scope
       await loadExistingMatrix();
     } catch (err) {
       console.error("Save error:", err);
@@ -836,7 +829,9 @@ export default function ClassroomPlanner() {
                             License Status:{" "}
                             {isSufficient
                               ? "All licenses are sufficient for this batch."
-                              : `Insufficient license: ${worst.license_name} (have ${worst.count}, need ${worst.count + worst.additional_needed}).`}
+                              : `Insufficient license: ${worst.license_name} (have ${worst.count}, need ${
+                                  worst.count + worst.additional_needed
+                                }).`}
                           </Typography>
 
                           <TableContainer component={Paper} sx={{ maxWidth: 480, mt: 1 }}>
@@ -955,8 +950,7 @@ export default function ClassroomPlanner() {
                                       label={batch}
                                       size="small"
                                       sx={{
-                                        backgroundColor:
-                                          batchColorMap[batch] || "#e0e0e0",
+                                        backgroundColor: batchColorMap[batch] || "#e0e0e0",
                                         color: "#222",
                                         fontWeight: 600,
                                         height: 24,
