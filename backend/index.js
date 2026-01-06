@@ -1274,60 +1274,6 @@ app.get('/api/licenses', async (req, res) => {
   res.json(data); // plain array
 });
 
-// SAVE classroom matrix
-app.post("/api/save-classroom-matrix", async (req, res) => {
-  try {
-    const { occupancyRows, fullPlanRows, weeks } = req.body || {};
-
-    if (!Array.isArray(occupancyRows) || occupancyRows.length === 0) {
-      return res.status(400).json({ error: "occupancyRows is required (non-empty array)." });
-    }
-    if (!Array.isArray(fullPlanRows)) {
-      return res.status(400).json({ error: "fullPlanRows must be an array." });
-    }
-    if (!Array.isArray(weeks)) {
-      return res.status(400).json({ error: "weeks must be an array." });
-    }
-
-    // Minimal validation for occupancy rows
-    for (const r of occupancyRows) {
-      if (!r.classroom_name || !r.slot || !r.batch_no) {
-        return res.status(400).json({
-          error: "Each occupancy row must contain classroom_name, slot, batch_no.",
-        });
-      }
-      const start = r.occupancy_start || r.a_start;
-      const end = r.occupancy_end || r.a_end;
-      if (!start || !end) {
-        return res.status(400).json({
-          error: "Each occupancy row must contain occupancy_start/occupancy_end (or a_start/a_end).",
-        });
-      }
-    }
-
-    const payload = {
-      id: "default",
-      occupancy_rows: occupancyRows,
-      full_plan_rows: fullPlanRows,
-      weeks,
-    };
-
-    // Upsert = insert if missing, update if exists
-    const { error } = await supabase
-      .from("classroom_matrix_store")
-      .upsert(payload, { onConflict: "id" });
-
-    if (error) {
-      console.error("save-classroom-matrix error:", error);
-      return res.status(500).json({ error: "Failed to save matrix in DB." });
-    }
-
-    return res.status(200).json({ success: true });
-  } catch (err) {
-    console.error("Unhandled error in /api/save-classroom-matrix:", err);
-    return res.status(500).json({ error: "Server error" });
-  }
-});
 
 // GET saved classroom matrix
 app.get("/api/get-classroom-matrix", async (req, res) => {
@@ -1354,66 +1300,65 @@ app.get("/api/get-classroom-matrix", async (req, res) => {
   }
 });
 
-// ===============================
-// SAVE CLASSROOM MATRIX (UPLOAD)
-// ===============================
+// SAVE classroom matrix (single JSON store in Supabase)
 app.post("/api/save-classroom-matrix", async (req, res) => {
   try {
-    const rows = req.body.rows;
+    const { occupancyRows, fullPlanRows, weeks } = req.body;
 
-    if (!rows || !Array.isArray(rows)) {
-      return res.status(400).json({ error: "Invalid or missing rows data" });
+    if (!Array.isArray(occupancyRows) || occupancyRows.length === 0) {
+      return res
+        .status(400)
+        .json({ error: "occupancyRows is required non-empty array." });
+    }
+    if (!Array.isArray(fullPlanRows)) {
+      return res.status(400).json({ error: "fullPlanRows must be an array." });
+    }
+    if (!Array.isArray(weeks)) {
+      return res.status(400).json({ error: "weeks must be an array." });
     }
 
-    for (const row of rows) {
-      const course = row["COURSE"];
-      const actualStart = row["A.START DATE"];
-      const actualEnd = row["A.DUE DATE"];
-
-      if (!course || !actualStart || !actualEnd) {
-        console.log("Skipping row due to missing important fields:", row);
-        continue;
+    // Minimal validation for occupancy rows
+    for (const r of occupancyRows) {
+      // FRONTEND SENDS classroom_name & slot & batch_no
+      if (!r.classroom_name || !r.slot || !r.batch_no) {
+        return res.status(400).json({
+          error:
+            "Each occupancy row must contain classroom_name, slot, batch_no.",
+        });
       }
 
-      // Check existing entry
-      const [existing] = await db.query(
-        "SELECT * FROM classroom_occupancy WHERE batch_no = ?",
-        [course]
-      );
-
-      if (existing.length > 0) {
-        // UPDATE existing
-        await db.query(
-          `
-          UPDATE classroom_occupancy
-          SET occupancy_start = ?, occupancy_end = ?
-          WHERE batch_no = ?
-        `,
-          [actualStart, actualEnd, course]
-        );
-        console.log(`UPDATED: ${course}`);
-      } else {
-        // INSERT new
-        await db.query(
-          `
-          INSERT INTO classroom_occupancy 
-          (batch_no, occupancy_start, occupancy_end)
-          VALUES (?, ?, ?)
-        `,
-          [course, actualStart, actualEnd]
-        );
-        console.log(`INSERTED: ${course}`);
+      const start = r.occupancy_start || r.a_start;
+      const end = r.occupancy_end || r.a_end;
+      if (!start || !end) {
+        return res.status(400).json({
+          error:
+            "Each occupancy row must contain occupancy_start/occupancy_end or a_start/a_end.",
+        });
       }
     }
 
-    res.json({
-      success: true,
-      message: "Classroom occupancy saved successfully",
-    });
+    const payload = {
+      id: "default",
+      occupancyrows: occupancyRows,
+      fullplanrows: fullPlanRows,
+      weeks,
+    };
 
+    const { error } = await supabase
+      .from("classroommatrixstore")
+      .upsert(payload, { onConflict: "id" });
+
+    if (error) {
+      console.error("save-classroom-matrix error:", error);
+      return res
+        .status(500)
+        .json({ error: "Failed to save matrix in DB.", detail: error.message });
+    }
+
+    return res.status(200).json({ success: true });
   } catch (err) {
-    console.error("❌ Error saving classroom matrix:", err);
-    res.status(500).json({ error: err.message });
+    console.error("Unhandled error in /api/save-classroom-matrix", err);
+    return res.status(500).json({ error: "Server error" });
   }
 });
 

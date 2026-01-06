@@ -653,11 +653,11 @@ export default function ClassroomPlanner() {
       const occupancyRows = (plans || [])
         .filter((p) => p && p.classroom_name && p.slot)
         .map((p) => ({
+          // match backend validation exactly
           classroom_name: p.classroom_name,
           slot: p.slot,
           batch_no: p.batch_no,
 
-          // keep both naming styles to avoid backend mismatch
           occupancy_start: p.a_start,
           occupancy_end: p.a_end,
           a_start: p.a_start,
@@ -679,10 +679,12 @@ export default function ClassroomPlanner() {
         slot: p.slot,
       }));
 
-      // weeks must be serializable (Date -> ISO)
       const weeksPayload = (weeks || []).map((w) => ({
         ...w,
-        weekStart: w.weekStart instanceof Date ? w.weekStart.toISOString() : w.weekStart,
+        weekStart:
+          w.weekStart instanceof Date
+            ? w.weekStart.toISOString()
+            : w.weekStart,
       }));
 
       const payload = { occupancyRows, fullPlanRows, weeks: weeksPayload };
@@ -694,17 +696,11 @@ export default function ClassroomPlanner() {
       });
 
       if (!res.ok) {
-        // Try JSON first, then text fallback (many servers return HTML on 400)
         let msg = `Failed to save matrix (HTTP ${res.status})`;
         try {
           const data = await res.json();
           if (data?.error) msg = data.error;
-        } catch (_) {
-          try {
-            const t = await res.text();
-            if (t) msg = t;
-          } catch (_) {}
-        }
+        } catch (_) {}
         throw new Error(msg);
       }
 
