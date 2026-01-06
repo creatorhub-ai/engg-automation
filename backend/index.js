@@ -1916,28 +1916,63 @@ app.get("/api/get_batch_dates", async (req, res) => {
 });
 
 // PUT /api/learners/status
-app.put("/api/learners/status", async (req, res) => {
-  const { learner_email, batch_no, status } = req.body;
-
-  if (!learner_email || !batch_no || !status) {
-    return res.status(400).json({ error: "Missing fields" });
-  }
-
-  const validStatuses = ["Enabled", "Disabled", "Dropout"];
-  if (!validStatuses.includes(status)) {
-    return res.status(400).json({ error: "Invalid status" });
-  }
-
+app.put('/api/learners/status', async (req, res) => {
   try {
-    await supabase
-      .from("learners_data")
-      .update({ status })
-      .eq("email", learner_email)
-      .eq("batch_no", batch_no);
-    res.json({ success: true });
+    const { learner_email, batch_no, status } = req.body;
+    
+    if (!learner_email || !batch_no || !status) {
+      return res.status(400).json({ error: 'Missing required fields: learner_email, batch_no, status' });
+    }
+
+    const validStatuses = ['Enabled', 'Disabled', 'Dropout'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ error: 'Invalid status. Must be Enabled, Disabled, or Dropout' });
+    }
+
+    const { data, error } = await supabase
+      .from('learners_data')
+      .update({ status }) // ✅ Update status column
+      .eq('email', learner_email)
+      .eq('batch_no', batch_no)
+      .select('name, email, batch_no, status')
+      .single();
+    
+    if (error) throw error;
+    
+    // ✅ Optional: If Dropout, you might want to delete attendance records
+    if (status === 'Dropout') {
+      const { error: delError } = await supabase
+        .from('learnerattendance')
+        .delete()
+        .eq('learneremail', learner_email)
+        .eq('batchno', batch_no);
+      
+      if (delError) console.error('Failed to delete attendance for dropout:', delError);
+    }
+    
+    res.json({ success: true, data });
   } catch (err) {
-    console.error("Error updating learner status:", err);
-    res.status(500).json({ error: "Failed to update status" });
+    console.error('Error updating learner status:', err);
+    res.status(500).json({ success: false, error: 'Failed to update status' });
+  }
+});
+
+// Existing fallback endpoint (if needed)
+app.get('/api/getlearners', async (req, res) => {
+  try {
+    const { batchno } = req.query;
+    if (!batchno) return res.status(400).json({ error: 'Batch number is required' });
+    
+    const { data, error } = await supabase
+      .from('learners_data')
+      .select('name, email, batch_no:batchno, status') // ✅ Include status
+      .eq('batch_no', batchno);
+    
+    if (error) throw error;
+    res.json(data);
+  } catch (err) {
+    console.error('Error fetching learners by batch:', err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
