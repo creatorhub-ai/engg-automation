@@ -1915,45 +1915,40 @@ app.get("/api/get_batch_dates", async (req, res) => {
   }
 });
 
-// PUT /api/learners/status
+// ✅ CRITICAL: Status UPDATE endpoint
 app.put('/api/learners/status', async (req, res) => {
   try {
     const { learner_email, batch_no, status } = req.body;
     
+    console.log('Status update:', { learner_email, batch_no, status });
+    
     if (!learner_email || !batch_no || !status) {
-      return res.status(400).json({ error: 'Missing required fields: learner_email, batch_no, status' });
+      return res.status(400).json({ error: 'Missing: learner_email, batch_no, status' });
     }
 
     const validStatuses = ['Enabled', 'Disabled', 'Dropout'];
     if (!validStatuses.includes(status)) {
-      return res.status(400).json({ error: 'Invalid status. Must be Enabled, Disabled, or Dropout' });
+      return res.status(400).json({ error: 'Status must be: Enabled, Disabled, Dropout' });
     }
 
     const { data, error } = await supabase
       .from('learners_data')
-      .update({ status }) // ✅ Update status column
+      .update({ status })
       .eq('email', learner_email)
       .eq('batch_no', batch_no)
       .select('name, email, batch_no, status')
       .single();
     
-    if (error) throw error;
-    
-    // ✅ Optional: If Dropout, you might want to delete attendance records
-    if (status === 'Dropout') {
-      const { error: delError } = await supabase
-        .from('learnerattendance')
-        .delete()
-        .eq('learneremail', learner_email)
-        .eq('batchno', batch_no);
-      
-      if (delError) console.error('Failed to delete attendance for dropout:', delError);
+    if (error) {
+      console.error('Update error:', error);
+      return res.status(500).json({ success: false, error: error.message });
     }
     
+    console.log('Status updated successfully:', data);
     res.json({ success: true, data });
   } catch (err) {
-    console.error('Error updating learner status:', err);
-    res.status(500).json({ success: false, error: 'Failed to update status' });
+    console.error('PUT /api/learners/status error:', err);
+    res.status(500).json({ success: false, error: 'Server error' });
   }
 });
 
@@ -6641,42 +6636,54 @@ app.get('/api/tutors/modules/:email/:batch_no', async (req, res) => {
 
 // ==================== LEARNERS APIs ====================
 
-// Get all learners
+// ✅ CRITICAL: Primary learners endpoint WITH status
 app.get('/api/learners', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('learners_data')
-      .select('id, name, email, phone, batch_no')
+      .select('name, email, phone, batch_no, status')
       .order('name');
     
-    if (error) throw error;
-    res.json(data);
-  } catch (error) {
-    console.error('Error fetching learners:', error);
-    res.status(500).json({ error: error.message });
+    if (error) {
+      console.error('Supabase error:', error);
+      return res.status(500).json({ error: 'Database error' });
+    }
+    
+    // ✅ Ensure every learner has status
+    const learnersWithStatus = (data || []).map(l => ({
+      ...l,
+      status: l.status || 'Enabled'
+    }));
+    
+    res.json(learnersWithStatus);
+  } catch (err) {
+    console.error('GET /api/learners error:', err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
-// Add new learner
+// ✅ Add learner endpoint
 app.post('/api/learners/add', async (req, res) => {
   try {
     const { name, email, phone, batch_no } = req.body;
     
     const { data, error } = await supabase
       .from('learners_data')
-      .insert([{
-        name,
-        email,
-        phone,
-        batch_no
-      }])
-      .select();
+      .insert({
+        name: name.trim(),
+        email: email.trim().toLowerCase(),
+        phone: phone || null,
+        batch_no: batch_no.trim(),
+        status: 'Enabled'  // ✅ Default
+      })
+      .select()
+      .single();
     
     if (error) throw error;
     res.json({ success: true, data });
-  } catch (error) {
-    console.error('Error adding learner:', error);
-    res.status(500).json({ success: false, error: error.message });
+  } catch (err) {
+    console.error('POST /api/learners/add error:', err);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
