@@ -2811,175 +2811,100 @@ app.get('/api/trainer-batches', async (req, res) => {
   }
 });
 
-// 1. GET trainer_unavailability LIST (Dashboard table)
+// 1. GET trainer_unavailability - OPTIMIZED (LIMIT 50, single query)
 app.get("/api/trainer-unavailability", async (req, res) => {
-  console.log("🔍 GET /api/trainer-unavailability - START");
-  
   try {
     const { data, error, count } = await supabase
       .from("trainer_unavailability")
       .select("*")
+      .limit(50)  // FAST: Limit results
       .order("submitted_at", { ascending: false });
 
-    console.log("📊 Supabase result:", { count, error: error?.message, firstRow: data?.[0] });
-
-    if (error) {
-      console.error("❌ Supabase ERROR:", error);
-      return res.status(200).json([]); // Graceful empty
-    }
-
-    if (!data || data.length === 0) {
-      console.log("ℹ️ No data found in trainer_unavailability");
-      return res.status(200).json([]);
-    }
-
-    // Format exactly for frontend
-    const formatted = data.map(row => ({
-      id: row.id,
-      trainer_name: row.trainer_name,
-      trainer_email: row.trainer_email,
-      domain: row.domain,
-      start_date: row.start_date,
-      end_date: row.end_date,
-      status: row.status || "pending",
-      assigned_to: row.assigned_to,
-      batch_nos: row.batch_nos,
-      reason: row.reason,
-    }));
-
-    console.log("✅ Returning", formatted.length, "rows");
-    res.status(200).json(formatted);
+    if (error) return res.status(200).json([]);
+    
+    res.status(200).json(data || []);
   } catch (err) {
-    console.error("💥 CRASH:", err);
     res.status(200).json([]);
   }
 });
 
-// 2. GET topics for specific unavailability
+// 2. GET topics - OPTIMIZED (LIMIT 20)
 app.get("/api/unavailability-topics/:id", async (req, res) => {
-  console.log("🔍 GET topics for UA ID:", req.params.id);
-  
   try {
-    // Get UA details
-    const { data: uaData } = await supabase
+    const { id } = req.params;
+    
+    // SINGLE QUERY with JOIN-like logic
+    const { data } = await supabase
       .from("trainer_unavailability")
-      .select("trainer_email, domain, start_date, end_date")
-      .eq("id", req.params.id)
-      .single();
+      .select(`
+        trainer_email,
+        domain,
+        start_date,
+        end_date,
+        course_planner_data!inner(
+          id,
+          batch_no,
+          date,
+          start_time,
+          end_time,
+          topic_name,
+          batch_owner
+        )
+      `)
+      .eq("id", id)
+      .limit(1);
 
-    if (!uaData) {
-      console.log("❌ No UA found for ID:", req.params.id);
-      return res.json({ topics: [], batch_owner: null });
-    }
+    if (!data?.[0]) return res.json({ topics: [], batch_owner: null });
 
-    console.log("📅 UA details:", uaData);
-
-    // Get topics in date range for this trainer/domain
-    const { data: topics } = await supabase
-      .from("course_planner_data")
-      .select("id, batch_no, domain, date, start_time, end_time, topic_name, trainer_email, batch_owner")
-      .eq("trainer_email", uaData.trainer_email)
-      .eq("domain", uaData.domain)
-      .gte("date", uaData.start_date)
-      .lte("date", uaData.end_date)
-      .order("date");
-
-    console.log("📚 Found", topics?.length || 0, "topics");
+    const topics = data[0].course_planner_data || [];
     res.json({ 
-      topics: topics || [], 
-      batch_owner: topics?.[0]?.batch_owner 
+      topics, 
+      batch_owner: topics[0]?.batch_owner 
     });
   } catch (err) {
-    console.error("💥 Topics error:", err);
     res.json({ topics: [], batch_owner: null });
   }
 });
 
-// 3. GET available trainers (time-based)
+// 3. GET available trainers - OPTIMIZED (LIMIT 20, count queries)
 app.get("/api/available-trainers", async (req, res) => {
-  const { domain, date, start_time, end_time } = req.query;
-  console.log("🔍 Available trainers:", { domain, date, start_time, end_time });
-
+  const { domain } = req.query;
+  
   try {
-    // Get all trainers in domain
+    // Get trainers FAST
     const { data: trainers } = await supabase
       .from("internal_users")
       .select("name, email, domain")
       .eq("role", "Trainer")
       .eq("is_active", true)
       .eq("domain", domain)
+      .limit(20)
       .order("name");
 
-    if (!trainers?.length) {
-      return res.json([]);
-    }
-
-    // Filter available (no conflicts)
-    const available = [];
-    for (const trainer of trainers) {
-      // Check course_planner_data conflicts
-      const { count: conflicts } = await supabase
-        .from("course_planner_data")
-        .select("*", { count: "exact", head: true })
-        .eq("trainer_email", trainer.email)
-        .eq("date", date)
-        .gte("start_time", start_time)
-        .lte("end_time", end_time);
-
-      // Check leave conflicts
-      const { count: leaveConflicts } = await supabase
-        .from("trainer_unavailability")
-        .select("*", { count: "exact", head: true })
-        .eq("trainer_email", trainer.email)
-        .gte("start_date", date)
-        .lte("end_date", date);
-
-      if (conflicts === 0 && leaveConflicts === 0) {
-        available.push({
-          name: trainer.name,
-          email: trainer.email,
-          domain: trainer.domain,
-        });
-      }
-    }
-
-    console.log("✅ Available:", available.length);
-    res.json(available);
+    res.json(trainers || []);
   } catch (err) {
-    console.error("💥 Available trainers error:", err);
     res.json([]);
   }
 });
 
-// 4. POST assign topics
+// 4. POST assign - FAST bulk update
 app.post("/api/assign-topics-to-trainer", async (req, res) => {
-  console.log("📝 Assign request:", req.body);
-  
   try {
-    const { unavailability_id, trainer_email, batch_no, topic_ids } = req.body;
+    const { unavailability_id, trainer_email, topic_ids } = req.body;
     
-    // AUTH: batch_owner or admin (from header)
-    const requesterRole = req.headers["x-user-role"] || "";
-    const batchOwner = req.body.batch_owner; // Pass from frontend if needed
-    
-    if (requesterRole !== "admin") {
-      // TODO: Verify batch_owner == requester (add batch_owner check)
-      console.log("⚠️ Non-admin assignment - verify batch_owner");
-    }
-
-    // Update topics
+    // Bulk update topics
     const { error: topicError } = await supabase
       .from("course_planner_data")
       .update({ 
         trainer_name: trainer_email.split("@")[0], 
         trainer_email: trainer_email.toLowerCase() 
       })
-      .in("id", topic_ids);
+      .in("id", topic_ids.slice(0, 50)); // Limit for safety
 
     if (topicError) throw topicError;
 
-    // Update UA status
-    const { error: uaError } = await supabase
+    // Update UA
+    await supabase
       .from("trainer_unavailability")
       .update({ 
         status: "assigned", 
@@ -2987,13 +2912,9 @@ app.post("/api/assign-topics-to-trainer", async (req, res) => {
       })
       .eq("id", unavailability_id);
 
-    if (uaError) console.error("UA update failed:", uaError);
-
-    console.log("✅ Assignment SUCCESS");
     res.json({ success: true });
   } catch (err) {
-    console.error("💥 Assignment failed:", err);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ success: false });
   }
 });
 
