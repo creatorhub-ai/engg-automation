@@ -1,18 +1,25 @@
-// src/pages/TrainerAssignmentDashboard.js - SMART AVAILABILITY CHECK
+// src/pages/TrainerAssignmentDashboard.js - NO NOTISTACK REQUIRED
 import React, { useEffect, useState, useCallback } from "react";
 import {
   Box, Typography, Table, TableHead, TableBody, TableCell, TableRow,
   TableContainer, Chip, Button, Paper, Alert, CircularProgress,
   Dialog, DialogTitle, DialogContent, DialogActions, TextField,
   MenuItem, Select, FormControl, InputLabel, Checkbox, FormControlLabel,
-  Collapse, LinearProgress
+  Collapse, LinearProgress, Snackbar, Alert as MuiAlert, Fade
 } from "@mui/material";
-import { useSnackbar } from 'notistack';
 
 const API_BASE = "https://engg-automation.onrender.com";
 
 function TrainerAssignmentDashboard() {
-  const { enqueueSnackbar } = useSnackbar();
+  // Custom Toast State (replaces notistack)
+  const [toast, setToast] = useState({ open: false, message: "", severity: "info" });
+  
+  const showToast = (message, severity = "info") => {
+    setToast({ open: true, message, severity });
+  };
+
+  const closeToast = () => setToast({ open: false, message: "", severity: "info" });
+
   const [leaves, setLeaves] = useState([]);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState("Connecting to database...");
@@ -53,74 +60,19 @@ function TrainerAssignmentDashboard() {
       if (Array.isArray(data)) {
         setLeaves(data);
         setStatus(`✅ SUCCESS: Loaded ${data.length} records from trainer_unavailability table`);
-        enqueueSnackbar(`Loaded ${data.length} trainer records`, { variant: "success" });
+        showToast(`Loaded ${data.length} trainer records`, "success");
       } else {
         setLeaves([]);
         setStatus("⚠️ No data found in trainer_unavailability table");
+        showToast("No data found in trainer_unavailability table", "warning");
       }
     } catch (error) {
       console.error("💥 API ERROR:", error.message);
       setStatus(`❌ Failed: ${error.name} - ${error.message}`);
-      enqueueSnackbar(`Failed: ${error.message}`, { variant: "error" });
+      showToast(`Failed: ${error.message}`, "error");
       setLeaves([]);
     } finally {
       setLoading(false);
-    }
-  }, [enqueueSnackbar]);
-
-  // 🔥 SMART AVAILABILITY CHECK - NEW API ENDPOINT NEEDED
-  const fetchSmartAvailableTrainers = useCallback(async (leave) => {
-    setAvailabilityLoading(true);
-    try {
-      const response = await fetch(`${API_BASE}/api/smart-available-trainers`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          domain: leave.domain,
-          start_date: leave.start_date,
-          end_date: leave.end_date,
-          exclude_trainer: leave.trainer_email
-        })
-      });
-
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      
-      const data = await response.json();
-      setAvailableTrainers(data.available || []);
-      enqueueSnackbar(`${data.available?.length || 0} available trainers found`, { 
-        variant: data.available?.length ? "success" : "warning" 
-      });
-    } catch (error) {
-      console.error("Smart availability error:", error);
-      // Fallback to basic trainer list
-      await fetchBasicTrainers(leave.domain);
-      enqueueSnackbar("Using basic trainer list (smart check unavailable)", { variant: "info" });
-    } finally {
-      setAvailabilityLoading(false);
-    }
-  }, [enqueueSnackbar]);
-
-  // 🔥 FALLBACK - BASIC TRAINERS BY DOMAIN
-  const fetchBasicTrainers = useCallback(async (domain) => {
-    try {
-      const url = domain 
-        ? `${API_BASE}/api/available-trainers?domain=${domain}`
-        : `${API_BASE}/api/available-trainers`;
-      
-      const response = await fetch(url, {
-        headers: { 'Accept': 'application/json' }
-      });
-      
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      
-      const data = await response.json();
-      setAvailableTrainers(data || []);
-    } catch (error) {
-      console.error("Basic trainers error:", error);
-      setAvailableTrainers([]);
     }
   }, []);
 
@@ -139,14 +91,37 @@ function TrainerAssignmentDashboard() {
     } catch (error) {
       console.error("Topics error:", error);
       setTopics([]);
-      enqueueSnackbar("Failed to load topics", { variant: "warning" });
+      showToast("Failed to load topics", "warning");
     }
-  }, [enqueueSnackbar]);
+  }, []);
+
+  // 🔥 BASIC TRAINERS BY DOMAIN (FALLBACK)
+  const fetchAvailableTrainers = useCallback(async (domain) => {
+    try {
+      const url = domain 
+        ? `${API_BASE}/api/available-trainers?domain=${domain}`
+        : `${API_BASE}/api/available-trainers`;
+      
+      const response = await fetch(url, {
+        headers: { 'Accept': 'application/json' }
+      });
+      
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      
+      const data = await response.json();
+      setAvailableTrainers(data || []);
+      showToast(`${data.length || 0} trainers loaded for domain: ${domain}`, "info");
+    } catch (error) {
+      console.error("Trainers error:", error);
+      setAvailableTrainers([]);
+      showToast("No trainers available", "warning");
+    }
+  }, []);
 
   // 🔥 ASSIGN TOPICS TO TRAINER
   const assignTopics = useCallback(async () => {
     if (!selectedLeave || !selectedTrainer || selectedTopics.length === 0) {
-      enqueueSnackbar("Please select trainer and at least one topic", { variant: "warning" });
+      showToast("Please select trainer and at least one topic", "warning");
       return;
     }
 
@@ -169,38 +144,36 @@ function TrainerAssignmentDashboard() {
       
       const result = await response.json();
       if (result.success) {
-        enqueueSnackbar(`✅ Assigned ${selectedTopics.length} topics to ${selectedTrainer.split('@')[0]}!`, { 
-          variant: "success" 
-        });
+        showToast(`✅ Assigned ${selectedTopics.length} topics successfully!`, "success");
         setAssignDialogOpen(false);
         setSelectedTrainer("");
         setSelectedTopics([]);
         fetchUnavailability(); // Refresh main list
       } else {
-        enqueueSnackbar("Failed to assign topics", { variant: "error" });
+        showToast("Failed to assign topics", "error");
       }
     } catch (error) {
       console.error("Assign error:", error);
-      enqueueSnackbar(`Assign failed: ${error.message}`, { variant: "error" });
+      showToast(`Assign failed: ${error.message}`, "error");
     } finally {
       setAvailabilityLoading(false);
     }
-  }, [selectedLeave, selectedTrainer, selectedTopics, fetchUnavailability, enqueueSnackbar]);
+  }, [selectedLeave, selectedTrainer, selectedTopics, fetchUnavailability]);
 
   // 🔥 HANDLE ROW CLICK - FULL WORKFLOW
   const handleRowClick = async (leave) => {
     if (leave.status === "assigned") {
-      enqueueSnackbar("This trainer is already assigned", { variant: "info" });
+      showToast("This trainer is already assigned", "info");
       return;
     }
 
     setSelectedLeave(leave);
     
-    // 1. Load topics
+    // Load topics first
     await fetchTopics(leave.id);
     
-    // 2. Load SMART available trainers (domain + date conflict check)
-    await fetchSmartAvailableTrainers(leave);
+    // Load available trainers for domain
+    await fetchAvailableTrainers(leave.domain);
     
     setAssignDialogOpen(true);
   };
@@ -213,7 +186,7 @@ function TrainerAssignmentDashboard() {
   return (
     <Box sx={{ p: 3 }}>
       <Typography variant="h4" fontWeight="bold" mb={4} color="primary.main">
-        🧠 Smart Trainer Assignment Dashboard
+        🧠 Trainer Assignment Dashboard
       </Typography>
 
       {/* STATUS HEADER */}
@@ -358,7 +331,7 @@ function TrainerAssignmentDashboard() {
                           fontSize: '0.75rem'
                         }}
                       >
-                        {leave.status === "assigned" ? "ASSIGNED ✓" : "🤖 Assign Topics"}
+                        {leave.status === "assigned" ? "ASSIGNED ✓" : "Assign Topics"}
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -369,146 +342,137 @@ function TrainerAssignmentDashboard() {
         </TableContainer>
       </Paper>
 
-      {/* 🔥 SMART ASSIGN DIALOG */}
+      {/* ASSIGN TOPICS DIALOG */}
       <Dialog 
         open={assignDialogOpen} 
         onClose={() => setAssignDialogOpen(false)}
-        maxWidth="lg"
+        maxWidth="md"
         fullWidth
-        PaperProps={{ sx: { height: '80vh' } }}
+        PaperProps={{ sx: { height: '70vh' } }}
       >
-        <DialogTitle>
-          🤖 Smart Assignment: {selectedLeave?.trainer_name || "Trainer"}
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-            Domain: {selectedLeave?.domain} | {selectedLeave?.start_date} to {selectedLeave?.end_date}
-          </Typography>
-        </DialogTitle>
-        
-        <DialogContent sx={{ p: 3, overflow: 'hidden' }}>
-          {availabilityLoading && (
+        <DialogTitle>Assign Topics for {selectedLeave?.trainer_name}</DialogTitle>
+        <DialogContent sx={{ p: 3 }}>
+          {/* LEAVE DETAILS */}
+          {selectedLeave && (
             <Box sx={{ mb: 3 }}>
-              <LinearProgress />
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                Checking trainer availability for {selectedLeave?.start_date} to {selectedLeave?.end_date}...
+              <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
+                Unavailability Details
               </Typography>
+              <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mb: 2 }}>
+                <Chip label={`Domain: ${selectedLeave.domain}`} color="primary" />
+                <Chip label={`${selectedLeave.start_date} to ${selectedLeave.end_date}`} />
+                <Chip label={`ID: ${selectedLeave.id}`} variant="outlined" />
+              </Box>
             </Box>
           )}
 
-          {/* TRAINER SELECTION */}
-          <Box sx={{ mb: 4 }}>
-            <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
-              Available Trainers ({availableTrainers.length})
-            </Typography>
-            <FormControl fullWidth>
-              <InputLabel>Assign to Trainer</InputLabel>
-              <Select
-                value={selectedTrainer}
-                onChange={(e) => setSelectedTrainer(e.target.value)}
-                label="Assign to Trainer"
-                disabled={availabilityLoading}
-              >
-                {availableTrainers.length === 0 ? (
-                  <MenuItem disabled>No available trainers</MenuItem>
-                ) : (
-                  availableTrainers.map((trainer) => (
-                    <MenuItem key={trainer.email} value={trainer.email}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                        <Chip label="✅ FREE" size="small" color="success" />
-                        <Box>
-                          <Typography variant="body2" fontWeight={500}>
-                            {trainer.name}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            {trainer.email} • Domain: {trainer.domain || selectedLeave?.domain}
-                          </Typography>
-                        </Box>
-                      </Box>
-                    </MenuItem>
-                  ))
-                )}
-              </Select>
-            </FormControl>
-          </Box>
+          {/* SELECT TRAINER */}
+          <FormControl fullWidth sx={{ mb: 3 }}>
+            <InputLabel>Assign to Trainer</InputLabel>
+            <Select
+              value={selectedTrainer}
+              onChange={(e) => setSelectedTrainer(e.target.value)}
+              label="Assign to Trainer"
+            >
+              {availableTrainers.length === 0 ? (
+                <MenuItem disabled>No trainers available</MenuItem>
+              ) : (
+                availableTrainers.map((trainer) => (
+                  <MenuItem key={trainer.email} value={trainer.email}>
+                    {trainer.name} ({trainer.email})
+                  </MenuItem>
+                ))
+              )}
+            </Select>
+          </FormControl>
 
-          {/* TOPICS SELECTION */}
-          <Box sx={{ flex: 1 }}>
+          {/* TOPICS CHECKLIST */}
+          <Box>
             <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
-              Topics to Reassign ({topics.length} total)
+              Select Topics to Reassign ({topics.length} available)
             </Typography>
-            <Paper sx={{ maxHeight: 250, overflow: 'auto', p: 2 }}>
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                {topics.map((topic) => (
-                  <FormControlLabel
-                    key={topic.id}
-                    control={
-                      <Checkbox
-                        checked={selectedTopics.some(t => t.id === topic.id)}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setSelectedTopics([...selectedTopics, topic]);
-                          } else {
-                            setSelectedTopics(selectedTopics.filter(t => t.id !== topic.id));
-                          }
-                        }}
-                      />
-                    }
-                    label={
-                      <Box sx={{ minWidth: 0 }}>
-                        <Typography variant="body2" fontWeight={500} noWrap>
-                          {topic.topic_name}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          {topic.date}
-                        </Typography>
-                      </Box>
-                    }
-                    sx={{ m: 0 }}
-                  />
-                ))}
-                {topics.length === 0 && (
-                  <Typography variant="body2" color="text.secondary">
-                    No topics available for this period
-                  </Typography>
-                )}
-              </Box>
-            </Paper>
+            <Box sx={{ maxHeight: 250, overflow: 'auto', border: '1px solid #e0e0e0', borderRadius: 1, p: 2 }}>
+              {topics.map((topic) => (
+                <FormControlLabel
+                  key={topic.id}
+                  control={
+                    <Checkbox
+                      checked={selectedTopics.some(t => t.id === topic.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedTopics([...selectedTopics, topic]);
+                        } else {
+                          setSelectedTopics(selectedTopics.filter(t => t.id !== topic.id));
+                        }
+                      }}
+                    />
+                  }
+                  label={
+                    <Box>
+                      <Typography variant="body2" fontWeight={500}>
+                        {topic.topic_name}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {topic.date}
+                      </Typography>
+                    </Box>
+                  }
+                  sx={{ m: 0, width: '100%' }}
+                />
+              ))}
+              {topics.length === 0 && (
+                <Typography variant="body2" color="text.secondary">
+                  No topics found for this trainer
+                </Typography>
+              )}
+            </Box>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
               Selected: {selectedTopics.length} / {topics.length} topics
             </Typography>
           </Box>
         </DialogContent>
-        
         <DialogActions sx={{ p: 3 }}>
-          <Button onClick={() => setAssignDialogOpen(false)} disabled={availabilityLoading}>
-            Cancel
-          </Button>
+          <Button onClick={() => setAssignDialogOpen(false)}>Cancel</Button>
           <Button 
             variant="contained" 
             onClick={assignTopics}
             disabled={availabilityLoading || !selectedTrainer || selectedTopics.length === 0}
           >
-            {availabilityLoading ? (
-              <CircularProgress size={20} />
-            ) : (
-              `✅ Assign ${selectedTopics.length} Topics`
-            )}
+            {availabilityLoading ? <CircularProgress size={20} /> : `Assign ${selectedTopics.length} Topics`}
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* CUSTOM TOAST (replaces notistack) */}
+      <Snackbar
+        open={toast.open}
+        autoHideDuration={4000}
+        onClose={closeToast}
+        anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+        TransitionComponent={Fade}
+      >
+        <MuiAlert 
+          onClose={closeToast} 
+          severity={toast.severity}
+          sx={{ width: '100%' }}
+          elevation={6}
+          variant="filled"
+        >
+          {toast.message}
+        </MuiAlert>
+      </Snackbar>
 
       {/* RAW DATA DEBUG */}
       <Collapse in={leaves.length > 0}>
         <Paper sx={{ mt: 4, p: 2 }}>
           <Typography variant="h6" gutterBottom>
-            Debug: Available Trainers ({availableTrainers.length})
+            Debug Info:
           </Typography>
-          <pre style={{
-            fontSize: '11px', background: '#f8f9fa', padding: '12px',
-            borderRadius: '6px', maxHeight: '200px', overflow: 'auto',
-            fontFamily: 'Monaco, monospace', border: '1px solid #e0e0e0'
-          }}>
-            {JSON.stringify(availableTrainers.slice(0, 3), null, 2)}
-          </pre>
+          <Box sx={{ display: 'flex', gap: 2, fontSize: '0.875rem' }}>
+            <Chip label={`Records: ${leaves.length}`} />
+            <Chip label={`Trainers: ${availableTrainers.length}`} />
+            <Chip label={`Topics: ${topics.length}`} />
+          </Box>
         </Paper>
       </Collapse>
     </Box>
