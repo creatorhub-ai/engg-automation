@@ -1503,87 +1503,119 @@ app.post("/api/holidays/upload", upload.single("file"), async (req, res) => {
       return res.status(400).json({ error: "File is required" });
     }
 
-    const currentYear = getCurrentYear();
+    const currentYear = new Date().getFullYear();
     console.log(`POST /api/holidays/upload for year ${currentYear}`);
 
     const ext = req.file.originalname.split(".").pop().toLowerCase();
     if (!["xlsx", "xls", "csv"].includes(ext)) {
-      try {
-        fs.unlinkSync(req.file.path);
-      } catch {}
+      try { fs.unlinkSync(req.file.path); } catch {}
       return res.status(400).json({ error: "Only .xlsx, .xls or .csv files are supported" });
     }
 
-    // Parse xlsx
-    const workbook = xlsx.readFile(req.file.path);
+    // Read as RAW array of arrays (bypass xlsx date parsing)
+    const workbook = xlsx.readFile(req.file.path, { dateNF: "YYYY-MM-DD" });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const rows = xlsx.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: "" });
+    const rows = xlsx.utils.sheet_to_json(sheet, { 
+      header: 1, 
+      raw: false,  // ✅ Parse numbers as dates safely
+      defval: "",
+      dateNF: "dd-mmm-yyyy"  // ✅ Force Excel date format
+    });
 
-    // Your exact format: Row 0 = headers, Row 1+ = data
+    // Your format: Row 0=header, Row 1+=data
     // Col0=Date, Col1=Day, Col2=Holiday, Col3=Type of Holiday
-    const header = (rows[0] || []).map((x) => String(x).trim().toLowerCase());
-    let dateIdx = 0; // Date
-    let nameIdx = 2; // Holiday
-    let typeIdx = 3; // Type of Holiday
+    const dateIdx = 0;  // Fixed: col0
+    const nameIdx = 2;  // Fixed: col2  
+    const typeIdx = 3;  // Fixed: col3
 
-    if (header.includes("date")) dateIdx = header.indexOf("date");
-    if (header.includes("holiday")) nameIdx = header.indexOf("holiday");
-    if (header.includes("type")) typeIdx = header.indexOf("type");
-
-    // Fallback: use fixed positions for your format
-    dateIdx = 0; // Always col0
-    nameIdx = 2; // Always col2
-    typeIdx = 3; // Always col3
-
-    const startRow = 1; // Skip header row
+    const startRow = 1; // Skip header
     const toUpsert = [];
+    const skipped = [];
 
     for (let i = startRow; i < rows.length; i++) {
       const r = rows[i];
       if (!r || !r.length) continue;
 
-      const dateISO = parseHolidayDateCell(r[dateIdx], currentYear);
+      // ✅ ROBUST DATE PARSING (handles Excel serials, corrupted dates)
+      let dateRaw = r[dateIdx];
+      let dateISO = null;
+
+      // Case 1: Already ISO or valid date
+      if (dateRaw && /^\d{4}-\d{2}-\d{2}/.test(String(dateRaw))) {
+        dateISO = String(dateRaw).slice(0, 10);
+      }
+      // Case 2: Excel date serial → convert to ISO
+      else if (typeof dateRaw === "number" && dateRaw > 0) {
+        const excelEpoch = new Date(1899, 11, 30); // Excel epoch
+        const jsDate = new Date(excelEpoch.getTime() + dateRaw * 86400000);
+        dateISO = jsDate.toISOString().slice(0, 10);
+      }
+      // Case 3: "DD-MMM" → add current year
+      else if (typeof dateRaw === "string") {
+        const raw = String(dateRaw).trim();
+        const m1 = raw.match(/^(\d{1,2})\s*-\s*([A-Za-z]{3})(?:\s*-?\s*(\d{4}))?$/i);
+        if (m1) {
+          const dd = m1[1].padStart(2, "0");
+          const monStr = m1[2];
+          const yyyy = m1[3] || currentYear;
+          const monthIndex = new Date(`${monStr} 1, ${yyyy}`).getMonth();
+          if (!Number.isNaN(monthIndex)) {
+            const dt = new Date(Number(yyyy), monthIndex, Number(dd));
+            if (!Number.isNaN(dt.getTime())) {
+              dateISO = dt.toISOString().slice(0, 10);
+            }
+          }
+        }
+      }
+
       const name = String(r[nameIdx] || "").trim();
       const type = String(r[typeIdx] || "").trim();
 
-      if (!dateISO || !name) continue; // Skip invalid rows
+      if (!dateISO || !name) {
+        skipped.push({ row: i + 1, dateRaw, name, type, reason: "invalid date/name" });
+        continue;
+      }
 
       toUpsert.push({
         holiday_date: dateISO,
-        name,
-        type: type || "Holiday",
+        name: name.slice(0, 255), // DB safety
+        type: (type || "Holiday").slice(0, 100),
       });
 
-      console.log(`Parsed: ${dateISO} | ${name} | ${type}`);
+      console.log(`✅ Row ${i + 1}: ${dateISO} | ${name} | ${type}`);
     }
 
-    // Cleanup file
-    try {
-      fs.unlinkSync(req.file.path);
-    } catch {}
+    // Cleanup
+    try { fs.unlinkSync(req.file.path); } catch {}
 
     if (!toUpsert.length) {
-      return res.status(400).json({ error: "No valid holiday rows found" });
+      return res.status(400).json({ 
+        error: `No valid rows found. Skipped: ${skipped.length}`,
+        skipped 
+      });
     }
 
-    // Upsert (update if date exists, insert if new)
-    const { error, count } = await supabase
+    // Upsert (update existing dates)
+    const { data, error, count } = await supabase
       .from("holidays")
       .upsert(toUpsert, { onConflict: "holiday_date" })
       .select();
 
     if (error) {
       console.error("Upsert error:", error);
-      return res.status(500).json({ error: error.message || "Failed to save" });
+      return res.status(500).json({ error: error.message });
     }
 
     return res.status(200).json({
       success: true,
-      message: `✅ Saved ${toUpsert.length} holidays for ${currentYear} (${count} affected rows)`,
+      message: `✅ Saved ${toUpsert.length} holidays for ${currentYear}`,
+      count: count || 0,
+      skipped: skipped.length ? skipped : undefined,
     });
   } catch (err) {
     console.error("POST /api/holidays/upload CRASH:", err);
-    return res.status(500).json({ error: "Server error" });
+    try { fs.unlinkSync(req.file.path); } catch {}
+    return res.status(500).json({ error: "Server error: " + err.message });
   }
 });
 
