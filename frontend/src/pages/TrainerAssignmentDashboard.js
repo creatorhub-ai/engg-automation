@@ -45,30 +45,28 @@ function TrainerAssignmentDashboard({ user, token, batchNo }) {
 
   const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
 
-  // Load trainer leave list - ULTRA SAFE
+  // Load trainer leave list
   useEffect(() => {
     const fetchUA = async () => {
       try {
         const res = await axios.get(`${API_BASE}/api/trainer-unavailability`, {
           headers: authHeaders,
-          timeout: 10000, // 10s timeout
+          timeout: 10000,
         });
-        
-        // Ensure we always get an array
+
         const data = Array.isArray(res.data) ? res.data : [];
         setUnavailabilities(data);
       } catch (err) {
         console.error("Error fetching trainer-unavailability:", err);
-        // Never break UI - set empty array
         setUnavailabilities([]);
         setMessage("Failed to fetch trainer leaves (showing empty list)");
         setSnackbarOpen(true);
       }
     };
     fetchUA();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  // When "Assign Topics" is clicked - SIMPLIFIED & BULLETPROOF
   const handleAssignClick = async (ua) => {
     setSelectedUA(ua);
     setTopics([]);
@@ -76,58 +74,56 @@ function TrainerAssignmentDashboard({ user, token, batchNo }) {
     setLoading(true);
 
     try {
-      // 1) Topics (safe fallback to empty)
+      // 1) Topics
       try {
         const topicsRes = await axios.get(
           `${API_BASE}/api/unavailability-topics/${ua.id}`,
-          { headers: authHeaders, timeout: 5000 }
+          { headers: authHeaders, timeout: 8000 }
         );
-        setTopics(topicsRes.data?.topics || []);
+
+        const list = topicsRes.data?.topics;
+        setTopics(Array.isArray(list) ? list : []);
       } catch (topicErr) {
         console.warn("Topics fetch failed:", topicErr);
         setTopics([]);
       }
 
-      // 2) Available trainers - SIMPLIFIED PARAMS
+      // 2) Available trainers
       try {
-        // Simple params: batch_no OR just domain (backend handles ANY param)
-        const trainerParams = batchNo 
+        const trainerParams = batchNo
           ? { batch_no: batchNo }
-          : { domain: ua.domain || 'PD' }; // PD fallback for domain
+          : { domain: ua.domain || "PD" };
 
         const availRes = await axios.get(`${API_BASE}/api/available-trainers`, {
           headers: authHeaders,
           params: trainerParams,
-          timeout: 8000
+          timeout: 8000,
         });
-        
-        // Ensure array even if backend sends weird data
+
         const trainers = Array.isArray(availRes.data) ? availRes.data : [];
-        
-        // If no trainers from API, show helpful fallback
         if (trainers.length === 0) {
-          setAvailableTrainers([{
-            name: "No trainers available",
-            email: "contact-admin@company.com",
-            domain: ua.domain || "PD"
-          }]);
+          setAvailableTrainers([
+            {
+              name: "No trainers available",
+              email: "contact-admin@company.com",
+              domain: ua.domain || "PD",
+            },
+          ]);
         } else {
           setAvailableTrainers(trainers);
         }
-        
       } catch (availErr) {
         console.warn("Available trainers fetch failed:", availErr);
-        // Fallback: show dummy trainer so UI doesn't break
-        setAvailableTrainers([{
-          name: "Service temporarily unavailable",
-          email: "contact-admin@company.com",
-          domain: ua.domain || "PD"
-        }]);
+        setAvailableTrainers([
+          {
+            name: "Service temporarily unavailable",
+            email: "contact-admin@company.com",
+            domain: ua.domain || "PD",
+          },
+        ]);
       }
 
       setDialogOpen(true);
-    } catch (err) {
-      console.error("handleAssignClick error:", err);
     } finally {
       setLoading(false);
     }
@@ -146,32 +142,29 @@ function TrainerAssignmentDashboard({ user, token, batchNo }) {
 
     setLoading(true);
     try {
-      const topicIds = topics.map((t) => t.id);
+      const topicIds = topics.map((t) => t.id).filter(Boolean);
 
-      const assignRes = await axios.post(
+      await axios.post(
         `${API_BASE}/api/assign-topics-to-trainer`,
         {
           unavailability_id: selectedUA.id,
           trainer_email: selectedTrainer.email,
+          trainer_name: selectedTrainer.name || null,
           batch_no: batchNo || null,
           topic_ids: topicIds,
         },
-        { headers: authHeaders, timeout: 10000 }
+        { headers: authHeaders, timeout: 15000 }
       );
 
-      if (assignRes.data?.success !== false) {
-        setMessage("✅ Topics assigned successfully");
-        setSnackbarOpen(true);
+      setMessage("✅ Topics assigned successfully");
+      setSnackbarOpen(true);
 
-        // Refresh list
-        const refreshRes = await axios.get(`${API_BASE}/api/trainer-unavailability`, {
-          headers: authHeaders,
-        });
-        setUnavailabilities(Array.isArray(refreshRes.data) ? refreshRes.data : []);
-      } else {
-        setMessage("⚠️ Assignment completed with warnings");
-        setSnackbarOpen(true);
-      }
+      // Refresh list
+      const refreshRes = await axios.get(`${API_BASE}/api/trainer-unavailability`, {
+        headers: authHeaders,
+        timeout: 10000,
+      });
+      setUnavailabilities(Array.isArray(refreshRes.data) ? refreshRes.data : []);
 
       setConfirmOpen(false);
       setDialogOpen(false);
@@ -209,9 +202,10 @@ function TrainerAssignmentDashboard({ user, token, batchNo }) {
               )}
             </TableRow>
           </TableHead>
+
           <TableBody>
             {unavailabilities.map((ua) => (
-              <TableRow key={ua.id || Math.random()} hover>
+              <TableRow key={ua.id || `${ua.trainer_email}-${ua.start_date}`} hover>
                 <TableCell>{ua.trainer_name}</TableCell>
                 <TableCell>{ua.trainer_email}</TableCell>
                 <TableCell>
@@ -233,6 +227,7 @@ function TrainerAssignmentDashboard({ user, token, batchNo }) {
                   />
                 </TableCell>
                 <TableCell>{ua.assigned_to || "-"}</TableCell>
+
                 {isPrivileged && (
                   <TableCell>
                     {ua.status !== "assigned" && (
@@ -264,10 +259,15 @@ function TrainerAssignmentDashboard({ user, token, batchNo }) {
       </TableContainer>
 
       {/* Topics + trainers dialog */}
-      <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="md" fullWidth>
+      <Dialog
+        open={dialogOpen}
+        onClose={() => setDialogOpen(false)}
+        maxWidth="md"
+        fullWidth
+      >
         <DialogTitle>
-          Assign topics for {selectedUA?.trainer_name} (
-          {selectedUA?.start_date} to {selectedUA?.end_date})
+          Assign topics for {selectedUA?.trainer_name} ({selectedUA?.start_date} to{" "}
+          {selectedUA?.end_date})
           <IconButton
             onClick={() => setDialogOpen(false)}
             sx={{ position: "absolute", right: 8, top: 8 }}
@@ -275,15 +275,17 @@ function TrainerAssignmentDashboard({ user, token, batchNo }) {
             <CheckIcon />
           </IconButton>
         </DialogTitle>
+
         <DialogContent dividers>
           <Typography variant="subtitle1" mb={1}>
             Topics during this leave ({topics.length}):
           </Typography>
+
           <Box sx={{ mb: 2 }}>
             {topics.map((t) => (
               <Chip
                 key={t.id}
-                label={`${t.date} - ${t.topic_name}`}
+                label={`${t.date} - ${t.topic_name || t.topicname || "Topic"}`}
                 size="small"
                 sx={{ mr: 1, mb: 1 }}
               />
@@ -298,9 +300,10 @@ function TrainerAssignmentDashboard({ user, token, batchNo }) {
           <Typography variant="subtitle1" mb={1}>
             Available trainers in {batchNo ? `batch ${batchNo}` : selectedUA?.domain}:
           </Typography>
+
           <Grid container spacing={2}>
             {availableTrainers.map((tr) => (
-              <Grid item xs={12} sm={6} md={4} key={tr.email || Math.random()}>
+              <Grid item xs={12} sm={6} md={4} key={tr.email || tr.name}>
                 <Paper
                   sx={{
                     p: 2,
@@ -320,6 +323,7 @@ function TrainerAssignmentDashboard({ user, token, batchNo }) {
                 </Paper>
               </Grid>
             ))}
+
             {availableTrainers.length === 0 && (
               <Grid item xs={12}>
                 <Typography variant="body2" color="text.secondary">
@@ -332,7 +336,12 @@ function TrainerAssignmentDashboard({ user, token, batchNo }) {
       </Dialog>
 
       {/* Confirm assignment */}
-      <Dialog open={confirmOpen} onClose={() => setConfirmOpen(false)} maxWidth="xs" fullWidth>
+      <Dialog
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        maxWidth="xs"
+        fullWidth
+      >
         <DialogTitle>Confirm assignment</DialogTitle>
         <DialogContent dividers>
           <Typography mb={2}>
@@ -340,6 +349,7 @@ function TrainerAssignmentDashboard({ user, token, batchNo }) {
             <strong>{selectedUA?.trainer_name}</strong> to{" "}
             <strong>{selectedTrainer?.name || selectedTrainer?.email}</strong>?
           </Typography>
+
           <Button
             fullWidth
             variant="contained"
@@ -360,7 +370,9 @@ function TrainerAssignmentDashboard({ user, token, batchNo }) {
         anchorOrigin={{ vertical: "top", horizontal: "center" }}
       >
         <Alert
-          severity={message.startsWith("✅") || message.startsWith("⚠️") ? "success" : "error"}
+          severity={
+            message.startsWith("✅") || message.startsWith("⚠️") ? "success" : "error"
+          }
           sx={{ width: "100%" }}
         >
           {message}

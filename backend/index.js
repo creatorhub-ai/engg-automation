@@ -2811,124 +2811,91 @@ app.get('/api/trainer-batches', async (req, res) => {
   }
 });
 
-// 1. Get trainer unavailability for managers
-app.post('/api/trainer-unavailability', async (req, res) => {
+// ===============================
+// GET trainer unavailability (for dashboard)
+// ===============================
+app.get("/api/trainer-unavailability", async (req, res) => {
   try {
-    const { 
-      trainer_email, 
-      trainer_name, 
-      domain, 
-      start_date, 
-      end_date, 
-      reason, 
-      batch_nos 
-    } = req.body;
-
-    // Basic validation
-    if (!trainer_email || !start_date || !end_date) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'trainer_email, start_date, and end_date required' 
-      });
-    }
-
-    // Insert new unavailability record
     const { data, error } = await supabase
-      .from('trainer_unavailability')
-      .insert([{
-        trainer_email: trainer_email.trim().toLowerCase(),
-        trainer_name: trainer_name || trainer_email.split('@')[0],
-        domain: domain || '',
-        start_date,
-        end_date,
-        reason: reason || '',
-        batch_nos: batch_nos || '',
-        status: 'Pending', // default
-        submitted_at: new Date().toISOString()
-      }])
-      .select()
-      .single();
+      .from("trainer_unavailability")
+      .select("id, trainer_email, trainer_name, domain, start_date, end_date, reason, status, assigned_to, submitted_at")
+      .order("submitted_at", { ascending: false });
 
     if (error) {
-      console.error('Insert trainer_unavailability error:', error);
-      return res.status(500).json({ 
-        success: false, 
-        error: 'Failed to save leave request' 
-      });
+      console.error("GET /api/trainer-unavailability error:", error);
+      return res.status(200).json([]);
     }
 
-    console.log('Leave submitted:', trainer_email, start_date, 'to', end_date);
-    return res.json({ 
-      success: true, 
-      id: data.id 
-    });
+    const out = (data || []).map((r) => ({
+      id: r.id,
+      trainer_name: r.trainer_name || "",
+      trainer_email: r.trainer_email || "",
+      domain: r.domain || "",
+      start_date: r.start_date,                 // keep as YYYY-MM-DD
+      end_date: r.end_date || r.start_date,
+      reason: r.reason || "",
+      leave_type: r.reason || "",              // frontend uses leave_type OR reason
+      status: (r.status || "pending").toLowerCase(),
+      assigned_to: r.assigned_to || null,
+    }));
 
+    return res.status(200).json(out);
   } catch (err) {
-    console.error('POST /api/trainer-unavailability error:', err);
-    return res.status(500).json({ 
-      success: false, 
-      error: 'Server error' 
-    });
+    console.error("GET /api/trainer-unavailability crash:", err);
+    return res.status(200).json([]);
   }
 });
 
-//////////////////////////////////////////////
-// 2. Get topics for a given unavailability
-//    (by date range + domain + optional batch_no)
-//////////////////////////////////////////////
-app.get('/api/unavailability-topics/:id', async (req, res) => {
-  const { id } = req.params;
-
+// ===============================
+// GET topics impacted by unavailability
+// Returns: { topics: [...] } for frontend
+// ===============================
+app.get("/api/unavailability-topics/:id", async (req, res) => {
   try {
-    // 1) Get the unavailability row
+    const id = req.params.id;
+
     const { data: ua, error: uaError } = await supabase
-      .from('trainer_unavailability')
-      .select('id, domain, start_date, end_date, trainer_email, trainer_name')
-      .eq('id', id)
+      .from("trainer_unavailability")
+      .select("id, domain, start_date, end_date, trainer_email")
+      .eq("id", id)
       .maybeSingle();
 
     if (uaError) {
-      console.error('trainer_unavailability error:', uaError);
-      return res.status(200).json({ unavailability: null, topics: [] });
+      console.error("GET /api/unavailability-topics uaError:", uaError);
+      return res.status(200).json({ topics: [] });
     }
-    if (!ua) {
-      // No such leave; not fatal for UI
-      return res.status(200).json({ unavailability: null, topics: [] });
-    }
+    if (!ua) return res.status(200).json({ topics: [] });
 
-    const { domain, start_date, end_date, trainer_email } = ua;
-    if (!domain || !start_date || !end_date) {
-      return res.status(200).json({ unavailability: ua, topics: [] });
-    }
-
-    // 2) Fetch topics from course_planner_data
-    //    - matching domain
-    //    - date between start_date and end_date
-    //    - assigned to this trainer (trainer_email)
-    const { data: topics, error: topicsError } = await supabase
-      .from('course_planner_data')
-      .select(
-        'id, batch_no, domain, week_no, date, start_time, end_time, module_name, module_topic, topic_name, trainer_name, trainer_email, topic_status'
-      )
-      .gte('date', start_date)
-      .lte('date', end_date)
-      .eq('domain', domain)
-      .eq('trainer_email', trainer_email);
+    const { data: rows, error: topicsError } = await supabase
+      .from("course_planner_data")
+      .select("id, batch_no, domain, week_no, date, topic_name, trainer_name, trainer_email")
+      .gte("date", ua.start_date)
+      .lte("date", ua.end_date)
+      .eq("domain", ua.domain)
+      .eq("traineremail", ua.trainer_email)
+      .order("date", { ascending: true });
 
     if (topicsError) {
-      console.error('course_planner_data error:', topicsError);
-      return res.status(200).json({ unavailability: ua, topics: [] });
+      console.error("GET /api/unavailability-topics topicsError:", topicsError);
+      return res.status(200).json({ topics: [] });
     }
 
-    return res.status(200).json({
-      unavailability: ua,
-      topics: topics || [],
-    });
+    const topics = (rows || []).map((t) => ({
+      id: t.id,
+      date: t.date,
+      topic_name: t.topic_name,        // keep old
+      topic_name: t.topic_name,       // add for your current frontend
+      batch_no: t.batch_no,
+      domain: t.domain,
+      week_no: t.week_no,
+      trainer_name: t.trainer_name,
+      trainer_email: t.trainer_email,
+    }));
+
+    return res.status(200).json({ topics });
   } catch (err) {
-    console.error('Unhandled error in /api/unavailability-topics/:id:', err);
-    return res
-      .status(200)
-      .json({ unavailability: null, topics: [] });
+    console.error("GET /api/unavailability-topics crash:", err);
+    return res.status(200).json({ topics: [] });
   }
 });
 
@@ -3014,61 +2981,70 @@ app.get('/api/available-trainers', async (req, res) => {
   }
 });
 
-//////////////////////////////////////////////
-// 4. Assign topics to a trainer
-//    - Only batch_owner/manager/admin allowed
-//////////////////////////////////////////////
-app.post('/api/assign-topics-to-trainer', async (req, res) => {
+// ===============================
+// Assign topics (courseplannerdata rows) to another trainer
+// Accepts both naming styles from frontend
+// ===============================
+app.post("/api/assign-topics-to-trainer", async (req, res) => {
   try {
-    const { unavailability_id, trainer_email, batch_no, topic_ids } = req.body;
-    const requesterEmail = req.headers['x-user-email'];
-    const requesterRole = req.headers['x-user-role'];
+    const unavailabilityId =
+      req.body.unavailability_id ?? req.body.unavailabilityid ?? req.body.unavailabilityId;
+    const trainerEmail =
+      req.body.trainer_email ?? req.body.traineremail ?? req.body.trainerEmail;
+    const trainerName =
+      req.body.trainer_name ?? req.body.trainername ?? req.body.trainerName ?? null;
+    const batchNo = req.body.batch_no ?? req.body.batchno ?? req.body.batchNo ?? null;
+    const topicIds = req.body.topic_ids ?? req.body.topicids ?? req.body.topicIds;
 
-    if (!unavailability_id || !trainer_email || !batch_no || !Array.isArray(topic_ids)) {
-      return res.status(400).json({ error: 'Missing required fields' });
+    if (!unavailabilityId || !trainerEmail || !Array.isArray(topicIds) || topicIds.length === 0) {
+      return res.status(400).json({ success: false, error: "Missing required fields" });
     }
 
-    // Check course_planner_data for batch_owner
-    const { data: plannerRow, error: plannerError } = await supabase
-      .from('course_planner_data')
-      .select('batch_owner')
-      .eq('batch_no', batch_no)
-      .single();
-
-    if (plannerError || !plannerRow) {
-      return res.status(404).json({ error: 'course_planner_data not found for this batch' });
+    // If trainerName not provided, derive from internalusers (optional)
+    let finalTrainerName = trainerName;
+    if (!finalTrainerName) {
+      const { data: tr, error: trErr } = await supabase
+        .from("internal_users")
+        .select("name")
+        .eq("email", String(trainerEmail).trim().toLowerCase())
+        .maybeSingle();
+      if (!trErr && tr?.name) finalTrainerName = tr.name;
     }
 
-    const isOwner = plannerRow.batch_owner === requesterEmail;
-    const isManagerOrAdmin = requesterRole === 'manager' || requesterRole === 'admin';
+    // Update courseplannerdata rows (topics) to new trainer
+    const patch = {
+      traineremail: String(trainerEmail).trim().toLowerCase(),
+    };
+    if (finalTrainerName) patch.trainername = finalTrainerName;
 
-    if (!isOwner && !isManagerOrAdmin) {
-      return res.status(403).json({ error: 'Not authorized to assign topics for this batch' });
+    // If batchNo provided, ensure we only update those IDs within that batch (extra safety)
+    let upd = supabase.from("course_planner_data").update(patch).in("id", topicIds);
+    if (batchNo) upd = upd.eq("batch_no", batchNo);
+
+    const { error: updateErr } = await upd;
+    if (updateErr) {
+      console.error("assign-topics update courseplannerdata error:", updateErr);
+      return res.status(500).json({ success: false, error: "Failed to update topics" });
     }
 
-    // Update topics
-    const { data: updatedTopics, error: updateError } = await supabase
-      .from('topics')
-      .update({ trainer_email })
-      .in('id', topic_ids);
-
-    if (updateError) throw updateError;
-
-    // update trainer_unavailability row: status & assigned_to
-    const { error: uaUpdateError } = await supabase
-      .from('trainer_unavailability')
+    // Update trainerunavailability record
+    const { error: uaErr } = await supabase
+      .from("trainer_unavailability")
       .update({
-        status: 'assigned',
-        assigned_to: trainer_email,
+        status: "assigned",
+        assignedto: String(trainerEmail).trim().toLowerCase(),
       })
-      .eq('id', unavailability_id);
+      .eq("id", unavailabilityId);
 
-    if (uaUpdateError) throw uaUpdateError;
+    if (uaErr) {
+      console.error("assign-topics update trainerunavailability error:", uaErr);
+      // Not fatal for assignment: topics updated already
+    }
 
-    res.json({ success: true, updatedTopics });
+    return res.status(200).json({ success: true });
   } catch (err) {
-    console.error('Error assigning topics to trainer', err);
-    res.status(500).json({ error: 'Failed to assign topics to trainer' });
+    console.error("POST /api/assign-topics-to-trainer crash:", err);
+    return res.status(500).json({ success: false, error: "Server error" });
   }
 });
 
