@@ -3064,6 +3064,70 @@ app.get('/apiperiods/:batchno/:type', async (req, res) => {
   }
 });
 
+app.post('/api/trainer-leaves', async (req, res) => {
+  try {
+    console.log('🆕 Trainer Leave Request:', req.body);
+    
+    const { 
+      trainer_email, 
+      trainer_name, 
+      domain, 
+      start_date, 
+      end_date, 
+      reason, 
+      batch_nos 
+    } = req.body;
+
+    // 🔥 VALIDATION
+    if (!trainer_email || !domain || !start_date || !end_date) {
+      return res.status(400).json({ 
+        error: 'Missing required fields: trainer_email, domain, start_date, end_date' 
+      });
+    }
+
+    // 🔥 SAVE TO trainer_unavailability table (same table as manager dashboard)
+    const { data, error } = await supabase
+      .from('trainer_unavailability')
+      .insert([{
+        trainer_email,
+        trainer_name: trainer_name || 'Unknown Trainer',
+        domain,
+        start_date,
+        end_date,
+        reason: reason || null,
+        batch_nos: batch_nos || null,
+        status: 'pending',  // Default: pending (for manager approval)
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }])
+      .select('id, trainer_email, trainer_name, domain, start_date, end_date, status')
+      .single();
+
+    if (error) {
+      console.error('❌ Supabase Error:', error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    console.log('✅ Leave saved:', data.id);
+    res.status(201).json({ 
+      success: true, 
+      message: 'Leave request submitted successfully!',
+      data: {
+        id: data.id,
+        trainer_email: data.trainer_email,
+        status: data.status
+      }
+    });
+
+  } catch (err) {
+    console.error('💥 Trainer leaves API error:', err);
+    res.status(500).json({ 
+      error: 'Failed to create leave request',
+      details: err.message 
+    });
+  }
+});
+
 // Add or update Weekly Assessment Score
 app.post('/api/marks/weekly-assessment', async (req, res) => {
   try {
