@@ -1,10 +1,5 @@
 // ManagerLeaveDashboard.js
-import React, {
-  useEffect,
-  useMemo,
-  useState,
-  useRef,
-} from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import axios from "axios";
 import {
   Box,
@@ -22,16 +17,7 @@ import {
   Button,
   Alert,
 } from "@mui/material";
-import {
-  blue,
-  deepPurple,
-  green,
-  red,
-  indigo,
-  teal,
-  amber,
-  pink,
-} from "@mui/material/colors";
+import { blue, deepPurple, green, red } from "@mui/material/colors";
 import ArrowBackIosNewIcon from "@mui/icons-material/ArrowBackIosNew";
 import ArrowForwardIosIcon from "@mui/icons-material/ArrowForwardIos";
 
@@ -44,15 +30,6 @@ function formatDate(d) {
   const day = `${d.getDate()}`.padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
-
-const TRAINER_COLORS = [
-  { bg: deepPurple[100], border: deepPurple[200], text: deepPurple[900] },
-  { bg: indigo[100], border: indigo[200], text: indigo[900] },
-  { bg: teal[100], border: teal[200], text: teal[900] },
-  { bg: amber[100], border: amber[200], text: amber[900] },
-  { bg: pink[100], border: pink[200], text: pink[900] },
-  { bg: blue[100], border: blue[200], text: blue[900] },
-];
 
 function hashString(str) {
   let hash = 0;
@@ -76,7 +53,8 @@ function ManagerLeaveDashboard({ user, token }) {
     return d;
   });
 
-  const trainerColorMapRef = useRef({});
+  // stores hue per trainer key so colors are stable across renders
+  const trainerHueMapRef = useRef({});
 
   // Upload state
   const [holidayFile, setHolidayFile] = useState(null);
@@ -86,6 +64,27 @@ function ManagerLeaveDashboard({ user, token }) {
     () => (token ? { Authorization: `Bearer ${token}` } : {}),
     [token]
   );
+
+  const getTrainerHue = (key) => {
+    const k = String(key || "").trim().toLowerCase() || "trainer";
+    const map = trainerHueMapRef.current;
+    if (map[k] == null) {
+      // 0..359
+      map[k] = hashString(k) % 360;
+    }
+    return map[k];
+  };
+
+  const getTrainerChipStyle = (trainerKey) => {
+    const hue = getTrainerHue(trainerKey);
+
+    // Pastel background + readable text (same hue family)
+    const bg = `hsl(${hue}, 75%, 88%)`;
+    const border = `hsl(${hue}, 70%, 75%)`;
+    const text = `hsl(${hue}, 55%, 25%)`;
+
+    return { bg, border, text };
+  };
 
   async function loadAllData(year) {
     try {
@@ -101,6 +100,7 @@ function ManagerLeaveDashboard({ user, token }) {
           headers: authHeaders,
         }),
       ]);
+
       setRequests(Array.isArray(unavailRes.data) ? unavailRes.data : []);
       setHolidays(Array.isArray(holRes.data) ? holRes.data : []);
       setTrainers(Array.isArray(trainersRes.data) ? trainersRes.data : []);
@@ -114,22 +114,6 @@ function ManagerLeaveDashboard({ user, token }) {
   useEffect(() => {
     loadAllData(cursor.getFullYear());
   }, [authHeaders, cursor.getFullYear()]);
-
-  const trainerColorMap = useMemo(() => {
-    const map = { ...trainerColorMapRef.current };
-
-    requests.forEach((req) => {
-      const name = (req.trainer_name || "").trim();
-      if (!name) return;
-      if (!map[name]) {
-        const idx = hashString(name) % TRAINER_COLORS.length;
-        map[name] = idx;
-      }
-    });
-
-    trainerColorMapRef.current = map;
-    return map;
-  }, [requests]);
 
   // Merge leave + holidays into dayEventsMap, with name filter applied
   const dayEventsMap = useMemo(() => {
@@ -162,9 +146,16 @@ function ManagerLeaveDashboard({ user, token }) {
           category = "holiday";
         }
 
+        // ✅ Use email as stable unique key if present; else fallback to name/id
+        const trainerKey =
+          (req.trainer_email || req.traineremail || "").trim().toLowerCase() ||
+          (req.trainer_id != null ? `id:${req.trainer_id}` : "") ||
+          (req.trainer_name || "").trim().toLowerCase();
+
         map[key].push({
           id: `leave-${req.id}-${key}`,
           trainer_name: req.trainer_name,
+          trainer_key: trainerKey,
           domain: req.domain,
           reason: req.reason,
           category,
@@ -185,6 +176,7 @@ function ManagerLeaveDashboard({ user, token }) {
       map[key].push({
         id: `holiday-${key}`,
         trainer_name: "",
+        trainer_key: "",
         domain: "",
         reason: h.name,
         category,
@@ -290,6 +282,7 @@ function ManagerLeaveDashboard({ user, token }) {
         {events.map((ev) => {
           let chipBg;
           let chipColor;
+          let chipBorder = "transparent";
 
           if (ev.category === "holiday") {
             chipBg = green[200];
@@ -298,16 +291,17 @@ function ManagerLeaveDashboard({ user, token }) {
             chipBg = red[200];
             chipColor = red[900];
           } else {
-            const name = (ev.trainer_name || "Trainer").trim();
-            const idx = trainerColorMap[name] ?? 0;
-            const palette = TRAINER_COLORS[idx];
-            chipBg = palette.bg;
-            chipColor = palette.text;
+            // ✅ Unique per trainer using HSL derived from trainer_key/email
+            const style = getTrainerChipStyle(ev.trainer_key || ev.trainer_name);
+            chipBg = style.bg;
+            chipColor = style.text;
+            chipBorder = style.border;
           }
 
+          // ✅ Show trainer name instead of "Trainer Leave"
           const label =
             ev.category === "trainer"
-              ? ev.trainer_name || "Trainer Leave"
+              ? (ev.trainer_name || "").trim() || "Trainer"
               : ev.category === "holiday"
               ? ev.reason || "Holiday"
               : ev.reason || "Optional Holiday";
@@ -326,6 +320,7 @@ function ManagerLeaveDashboard({ user, token }) {
                 sx={{
                   bgcolor: chipBg,
                   color: chipColor,
+                  border: `1px solid ${chipBorder}`,
                   fontSize: 11,
                   height: 22,
                   maxWidth: "100%",
@@ -360,12 +355,8 @@ function ManagerLeaveDashboard({ user, token }) {
         let borderColor = "#e0e0e0";
 
         const hasHoliday = events.some((e) => e.category === "holiday");
-        const hasOptional = events.some(
-          (e) => e.category === "optionalHoliday"
-        );
-        const hasTrainerLeave = events.some(
-          (e) => e.category === "trainer"
-        );
+        const hasOptional = events.some((e) => e.category === "optionalHoliday");
+        const hasTrainerLeave = events.some((e) => e.category === "trainer");
 
         if (hasHoliday) {
           bgColor = green[50];
@@ -515,12 +506,8 @@ function ManagerLeaveDashboard({ user, token }) {
             let borderColor = "#e0e0e0";
 
             const hasHoliday = events.some((e) => e.category === "holiday");
-            const hasOptional = events.some(
-              (e) => e.category === "optionalHoliday"
-            );
-            const hasTrainerLeave = events.some(
-              (e) => e.category === "trainer"
-            );
+            const hasOptional = events.some((e) => e.category === "optionalHoliday");
+            const hasTrainerLeave = events.some((e) => e.category === "trainer");
 
             if (hasHoliday) {
               bgColor = green[50];
@@ -568,10 +555,7 @@ function ManagerLeaveDashboard({ user, token }) {
           minHeight: 150,
         }}
       >
-        <Typography
-          variant="subtitle1"
-          sx={{ fontWeight: "bold", mb: 1 }}
-        >
+        <Typography variant="subtitle1" sx={{ fontWeight: "bold", mb: 1 }}>
           {d.toLocaleDateString("default", {
             weekday: "long",
             day: "numeric",
@@ -664,7 +648,7 @@ function ManagerLeaveDashboard({ user, token }) {
         </Typography>
         <input
           type="file"
-          accept=".xlsx,.xls,.csv,.pdf"
+          accept=".xlsx,.xls,.csv"
           onChange={handleHolidayFileChange}
           style={{ maxWidth: 260 }}
         />
@@ -680,9 +664,7 @@ function ManagerLeaveDashboard({ user, token }) {
 
       {uploadStatus && (
         <Box sx={{ mb: 2 }}>
-          <Alert severity={uploadStatus.type}>
-            {uploadStatus.msg}
-          </Alert>
+          <Alert severity={uploadStatus.type}>{uploadStatus.msg}</Alert>
         </Box>
       )}
 
@@ -705,9 +687,7 @@ function ManagerLeaveDashboard({ user, token }) {
               border: `1px solid ${red[200]}`,
             }}
           />
-          <Typography variant="body2">
-            Restricted / Optional Holiday
-          </Typography>
+          <Typography variant="body2">Restricted / Optional Holiday</Typography>
         </Box>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <Box
@@ -730,7 +710,7 @@ function ManagerLeaveDashboard({ user, token }) {
             }}
           />
           <Typography variant="body2">
-            Trainer Leave (per-trainer color)
+            Trainer Leave (unique per trainer)
           </Typography>
         </Box>
       </Box>
