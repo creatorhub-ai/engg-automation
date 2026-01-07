@@ -2949,6 +2949,45 @@ app.post("/api/assign-topics-to-trainer", async (req, res) => {
   }
 });
 
+// 🔥 NEW SMART AVAILABILITY API
+app.post("/api/smart-available-trainers", async (req, res) => {
+  try {
+    const { domain, start_date, end_date, exclude_trainer } = req.body;
+    
+    // 1. Get all trainers for domain
+    const { data: allTrainers } = await supabase
+      .from("internal_users")
+      .select("id, name, email, domain")
+      .eq("role", "Trainer")
+      .eq("is_active", true)
+      .eq("domain", domain);
+
+    // 2. Find busy trainers in date range
+    const { data: busyTrainers } = await supabase
+      .from("course_planner_data")
+      .select("trainer_email")
+      .gte("date", start_date)
+      .lte("date", end_date);
+
+    const busyEmails = [...new Set(busyTrainers?.map(t => t.trainer_email) || [])];
+    
+    // 3. Filter available trainers
+    const available = allTrainers?.filter(t => 
+      t.email !== exclude_trainer && !busyEmails.includes(t.email)
+    ) || [];
+
+    res.json({ 
+      available, 
+      total: allTrainers?.length || 0, 
+      busy: busyEmails.length,
+      message: `${available.length} trainers available` 
+    });
+  } catch (err) {
+    console.error("Smart availability error:", err);
+    res.status(500).json({ error: err.message, available: [] });
+  }
+});
+
 
 //=== Progress update based on the trainer email ===
 app.get('/api/batch-owner/:batch_no', async (req, res) => {
