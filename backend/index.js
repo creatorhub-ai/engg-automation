@@ -2813,69 +2813,52 @@ app.get('/api/trainer-batches', async (req, res) => {
 
 // 1. GET trainer_unavailability - BULLETPROOF
 app.get("/api/trainer-unavailability", async (req, res) => {
-  console.log("🔍 [DEBUG] GET /api/trainer-unavailability HIT");
+  console.log("🔍 GET /api/trainer-unavailability - NO AUTH REQUIRED");
   
   try {
-    // TEST 1: Check if table exists and has data
-    const { data: testData, error: testError } = await supabase
+    const { data, error, count } = await supabase
       .from("trainer_unavailability")
-      .select("id, trainer_name, trainer_email, domain, start_date, end_date, status, assigned_to")
-      .limit(5);
+      .select("*")
+      .order("submitted_at", { ascending: false })
+      .limit(50);
 
-    console.log("🔍 [DEBUG] Raw Supabase response:", {
-      count: testData?.length || 0,
-      error: testError?.message,
-      firstRow: testData?.[0] || "EMPTY"
-    });
+    console.log("✅ DATA FOUND:", data?.length || 0, "rows");
+    console.log("FIRST ROW:", data?.[0]);
 
-    if (testError) {
-      console.error("❌ [ERROR] Supabase:", testError);
-      // TRY ALTERNATE TABLE NAME
-      const { data: altData } = await supabase
-        .from("trainerunavailability")
-        .select("*")
-        .limit(5);
-      
-      console.log("🔍 [DEBUG] Alternate table trainerunavailability:", altData?.length || 0);
-      return res.json(altData || []);
+    if (error) {
+      console.error("❌ ERROR:", error.message);
+      return res.status(500).json({ error: error.message, data: [] });
     }
 
-    res.json(testData || []);
+    res.json(data || []);
   } catch (err) {
-    console.error("💥 [CRASH]", err);
-    res.json([]);
+    console.error("💥 CRASH:", err);
+    res.status(500).json([]);
   }
 });
 
 // 2. GET topics - SIMPLIFIED
 app.get("/api/unavailability-topics/:id", async (req, res) => {
+  console.log("🔍 Topics for ID:", req.params.id);
   try {
     const { id } = req.params;
-    console.log("🔍 Topics for UA ID:", id);
-
     const { data: ua } = await supabase
       .from("trainer_unavailability")
       .select("trainer_email, domain, start_date, end_date")
       .eq("id", id)
       .single();
 
-    if (!ua) {
-      console.log("❌ No UA found");
-      return res.json({ topics: [], batch_owner: null });
-    }
+    if (!ua) return res.json({ topics: [], batch_owner: null });
 
     const { data: topics } = await supabase
       .from("course_planner_data")
-      .select("id, date, topic_name, batch_owner")
+      .select("id, date, topic_name")
       .eq("trainer_email", ua.trainer_email)
       .eq("domain", ua.domain)
-      .gte("date", ua.start_date)
-      .lte("date", ua.end_date)
       .limit(10);
 
-    res.json({ topics: topics || [], batch_owner: topics?.[0]?.batch_owner });
+    res.json({ topics: topics || [], batch_owner: "test" });
   } catch (err) {
-    console.error("Topics error:", err);
     res.json({ topics: [], batch_owner: null });
   }
 });
