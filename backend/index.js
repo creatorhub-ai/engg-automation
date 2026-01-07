@@ -68,9 +68,18 @@ app.use(
       "Content-Type",
       "Accept",
       "Authorization",
+      "Cache-Control",
     ],
   })
 );
+
+// 🔥 GLOBAL OPTIONS HANDLER - BEFORE ALL ROUTES
+app.options("*", (req, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cache-Control, Accept');
+  res.status(200).end();
+});
 
 // Mount routers
 app.use("/api/marks", marksWindowsRouter);
@@ -2813,13 +2822,9 @@ app.get('/api/trainer-batches', async (req, res) => {
 
 // 1. GET trainer_unavailability - BULLETPROOF
 app.get("/api/trainer-unavailability", async (req, res) => {
-  console.log("🔥 TRAINER API CALLED - PURE DATABASE");
-  
-  res.setHeader('Content-Type', 'application/json');
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  console.log("🔥 TRAINER API HIT ✅ - PURE DATABASE");
   
   try {
-    // DIRECT DATABASE QUERY
     const { data, error, count } = await supabase
       .from("trainer_unavailability")
       .select(`
@@ -2837,23 +2842,21 @@ app.get("/api/trainer-unavailability", async (req, res) => {
       .order("submitted_at", { ascending: false })
       .limit(50);
 
-    console.log("✅ DATABASE QUERY:", {
+    console.log("✅ DATABASE:", {
       count: data?.length || 0,
       first: data?.[0]?.trainer_name,
-      error: error?.message
+      sample: data?.[0]
     });
 
     if (error) {
-      console.error("❌ DATABASE ERROR:", error.message);
+      console.error("❌ DB ERROR:", error.message);
       return res.status(500).json({ error: error.message, data: [] });
     }
 
-    // ALWAYS RETURN DATABASE DATA (empty or not)
     res.status(200).json(data || []);
-    
   } catch (err) {
-    console.error("💥 CRITICAL ERROR:", err);
-    res.status(500).json({ error: "Server crash", data: [] });
+    console.error("💥 CRASH:", err);
+    res.status(500).json({ error: "Server error", data: [] });
   }
 });
 
@@ -2864,11 +2867,13 @@ app.get("/api/unavailability-topics/:id", async (req, res) => {
     const { id } = req.params;
     const { data: ua } = await supabase
       .from("trainer_unavailability")
-      .select("trainer_email, domain, start_date, end_date")
+      .select("trainer_email, domain")
       .eq("id", id)
       .single();
 
-    if (!ua) return res.json({ topics: [], batch_owner: null });
+    if (!ua) {
+      return res.json({ topics: [], batch_owner: null });
+    }
 
     const { data: topics } = await supabase
       .from("course_planner_data")
@@ -2877,16 +2882,21 @@ app.get("/api/unavailability-topics/:id", async (req, res) => {
       .eq("domain", ua.domain)
       .limit(10);
 
-    res.json({ topics: topics || [], batch_owner: "test" });
+    res.json({ 
+      topics: topics || [], 
+      batch_owner: "Coordinator" 
+    });
   } catch (err) {
+    console.error("Topics error:", err);
     res.json({ topics: [], batch_owner: null });
   }
 });
 
 // 3. GET trainers - SIMPLE
 app.get("/api/available-trainers", async (req, res) => {
-  const { domain } = req.query;
+  console.log("🔍 Available trainers, domain:", req.query.domain);
   try {
+    const { domain } = req.query;
     const { data } = await supabase
       .from("internal_users")
       .select("name, email")
@@ -2897,6 +2907,7 @@ app.get("/api/available-trainers", async (req, res) => {
 
     res.json(data || []);
   } catch (err) {
+    console.error("Trainers error:", err);
     res.json([]);
   }
 });
@@ -2906,21 +2917,35 @@ app.post("/api/assign-topics-to-trainer", async (req, res) => {
   try {
     const { unavailability_id, trainer_email, topic_ids } = req.body;
     
-    // Update topics
-    await supabase
-      .from("course_planner_data")
-      .update({ trainer_email: trainer_email.toLowerCase() })
-      .in("id", topic_ids);
+    console.log("Assigning:", { unavailability_id, trainer_email, topic_ids: topic_ids?.length });
 
-    // Update UA
-    await supabase
+    // Update topics
+    if (topic_ids && topic_ids.length > 0) {
+      const { error: topicError } = await supabase
+        .from("course_planner_data")
+        .update({ trainer_email: trainer_email.toLowerCase() })
+        .in("id", topic_ids);
+      
+      if (topicError) console.error("Topic update error:", topicError);
+    }
+
+    // Update unavailability status
+    const { error: uaError } = await supabase
       .from("trainer_unavailability")
-      .update({ status: "assigned", assigned_to: trainer_email })
+      .update({ 
+        status: "assigned", 
+        assigned_to: trainer_email 
+      })
       .eq("id", unavailability_id);
 
-    res.json({ success: true });
+    if (uaError) {
+      return res.status(500).json({ error: uaError.message });
+    }
+
+    res.json({ success: true, message: "Topics assigned successfully" });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error("Assign error:", err);
+    res.status(500).json({ error: err.message });
   }
 });
 
