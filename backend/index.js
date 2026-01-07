@@ -2850,11 +2850,11 @@ app.get("/api/unavailability-topics/:id", async (req, res) => {
     const { data: topics, error } = await supabase
       .from("course_planner_data")
       .select("id, date, start_time, end_time, topic_name, trainer_name, trainer_email, batch_no, domain, batch_owner")
-      .gte("date", ua.data.startdate)
-      .lte("date", ua.data.enddate)
+      .gte("date", ua.data.start_date)
+      .lte("date", ua.data.end_date)
       .eq("domain", ua.data.domain)
-      .eq("trainer_email", ua.data.traineremail)
-      .eq("trainer_email", ua.data.traineremail)
+      .eq("trainer_email", ua.data.trainer_email)
+      .eq("trainer_email", ua.data.trainer_email)
       .order("date", { ascending: true });
 
     if (error) {
