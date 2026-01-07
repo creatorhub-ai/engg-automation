@@ -1932,7 +1932,7 @@ app.put("/api/learners/status", async (req, res) => {
     }
 
     const { error } = await supabase
-      .from("learnersdata")
+      .from("learners_data")
       .update({ status })
       .eq("email", learneremail)
       .eq("batchno", batchno);
@@ -1964,7 +1964,7 @@ app.get("/api/getlearners", async (req, res) => {
 
     for (const sel of selectCandidates) {
       const result = await supabase
-        .from("learnersdata")
+        .from("learners_data")
         .select(sel)
         .eq("batchno", batchno);
 
@@ -6677,7 +6677,7 @@ app.get("/api/learners", async (req, res) => {
 
     for (const sel of selectCandidates) {
       const result = await supabase
-        .from("learnersdata")
+        .from("learners_data")
         .select(sel)
         .order("name", { ascending: true });
 
@@ -6723,7 +6723,7 @@ app.post("/api/learners/add", async (req, res) => {
     }
 
     const { data, error } = await supabase
-      .from("learnersdata")
+      .from("learners_data")
       .insert({
         name: name.toString().trim(),
         email: mail,
