@@ -1,275 +1,293 @@
+// src/pages/TrainerAssignmentDashboard.js - BULLETPROOF VERSION
 import React, { useEffect, useState } from "react";
 import axios from "axios";
 import {
-  Box, Paper, Typography, Table, TableHead, TableBody, TableCell, TableRow,
-  TableContainer, Chip, Button, Dialog, DialogTitle, DialogContent, Alert,
-  Snackbar, IconButton, Grid, CircularProgress
+  Box, Typography, Table, TableHead, TableBody, TableCell, TableRow,
+  TableContainer, Chip, Button, Dialog, DialogTitle, DialogContent,
+  Snackbar, Alert, IconButton, CircularProgress, Paper, Grid
 } from "@mui/material";
 import CheckIcon from "@mui/icons-material/Check";
 
 const API_BASE = "https://engg-automation.onrender.com";
 
 function TrainerAssignmentDashboard({ user, token }) {
-  const [unavailabilities, setUnavailabilities] = useState([]);
-  const [loadingUA, setLoadingUA] = useState(true);
-  const [selectedUA, setSelectedUA] = useState(null);
-  const [topics, setTopics] = useState([]);
-  const [availableTrainers, setAvailableTrainers] = useState([]);
+  const [leaves, setLeaves] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [dialog, setDialog] = useState(null);
   const [selectedTrainer, setSelectedTrainer] = useState(null);
-  const [batchOwner, setBatchOwner] = useState(null);
-  const [canAssign, setCanAssign] = useState(false);
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [confirmOpen, setConfirmOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [snackbarOpen, setSnackbarOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
 
-  const authHeaders = {
+  const headers = {
     Authorization: `Bearer ${token}`,
-    "x-user-email": user?.email || "",
-    "x-user-role": user?.role || "",
+    "Content-Type": "application/json",
   };
 
-  // Load leaves
+  // BULLETPROOF DATA FETCH
   useEffect(() => {
-    if (!token) return;
-    
     const fetchLeaves = async () => {
-      console.log("🚀 Loading trainer leaves...");
-      setLoadingUA(true);
+      console.log("🚀 [DEBUG] Starting fetch - token:", !!token);
+      
+      if (!token) {
+        setLoading(false);
+        return;
+      }
+
+      setLoading(true);
       
       try {
-        const res = await axios.get(`${API_BASE}/api/trainer-unavailability`, {
-          headers: authHeaders,
-          timeout: 20000,
+        console.log("🌐 [DEBUG] Calling API:", `${API_BASE}/api/trainer-unavailability`);
+        
+        const response = await axios.get(`${API_BASE}/api/trainer-unavailability`, {
+          headers,
+          timeout: 10000,
+        });
+
+        console.log("📊 [DEBUG] API Response:", {
+          status: response.status,
+          dataLength: response.data?.length || 0,
+          firstItem: response.data?.[0],
+          fullData: response.data
+        });
+
+        const data = Array.isArray(response.data) ? response.data : [];
+        setLeaves(data);
+        
+        if (data.length === 0) {
+          console.log("⚠️ [DEBUG] No data returned - table might be empty");
+          setMessage("No trainer leaves found in database");
+          setSnackbarOpen(true);
+        }
+
+      } catch (error) {
+        console.error("💥 [ERROR] Fetch failed:", {
+          message: error.message,
+          status: error.response?.status,
+          data: error.response?.data,
+          url: error.config?.url
         });
         
-        console.log("📋 Leaves loaded:", res.data?.length || 0);
-        setUnavailabilities(Array.isArray(res.data) ? res.data : []);
-      } catch (error) {
-        console.error("❌ Leaves fetch failed:", error.response?.status, error.message);
-        setMessage("Failed to load leaves. Check backend logs.");
+        setMessage(`Failed to fetch: ${error.message}`);
         setSnackbarOpen(true);
-        setUnavailabilities([]);
+        setLeaves([]);
       } finally {
-        setLoadingUA(false);
+        setLoading(false);
       }
     };
 
     fetchLeaves();
   }, [token]);
 
-  const handleAssignClick = async (ua) => {
-    console.log("🎯 Assign clicked:", ua.id);
-    setSelectedUA(ua);
-    setLoading(true);
-
+  const handleAssignClick = async (leave) => {
+    console.log("🎯 [DEBUG] Assign clicked:", leave.id);
+    
     try {
-      const res = await axios.get(`${API_BASE}/api/unavailability-topics/${ua.id}`, {
-        headers: authHeaders,
-        timeout: 20000,
+      setLoading(true);
+      
+      const [topicsRes, trainersRes] = await Promise.all([
+        axios.get(`${API_BASE}/api/unavailability-topics/${leave.id}`, { headers, timeout: 8000 }),
+        axios.get(`${API_BASE}/api/available-trainers?domain=${leave.domain}`, { headers, timeout: 8000 })
+      ]);
+
+      console.log("📋 [DEBUG] Topics:", topicsRes.data.topics?.length || 0);
+      console.log("👥 [DEBUG] Trainers:", trainersRes.data?.length || 0);
+
+      setDialog({
+        leave,
+        topics: topicsRes.data.topics || [],
+        trainers: trainersRes.data || [],
+        batchOwner: topicsRes.data.batch_owner
       });
-
-      setTopics(res.data.topics || []);
-      setBatchOwner(res.data.batch_owner);
-      
-      const isAuthorized = requesterRole === "admin" || 
-        (batchOwner && batchOwner.toLowerCase() === user?.email.toLowerCase());
-      setCanAssign(isAuthorized);
-      
-      // Load available trainers
-      if (res.data.topics?.[0]) {
-        const params = {
-          domain: ua.domain,
-          date: res.data.topics[0].date,
-          start_time: res.data.topics[0].start_time,
-          end_time: res.data.topics[0].end_time,
-        };
-        
-        const trainersRes = await axios.get(`${API_BASE}/api/available-trainers`, {
-          headers: authHeaders,
-          params,
-        });
-        setAvailableTrainers(trainersRes.data || []);
-      }
-
-      setDialogOpen(true);
     } catch (error) {
-      console.error("Assign load error:", error);
-      setMessage("Failed to load topics");
+      console.error("💥 [ERROR] Dialog load failed:", error);
+      setMessage("Failed to load assignment dialog");
       setSnackbarOpen(true);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleAssignConfirm = async () => {
-    setLoading(true);
+  const handleConfirmAssign = async () => {
     try {
+      console.log("✅ [DEBUG] Confirming assignment:", selectedTrainer?.email);
+      
       await axios.post(`${API_BASE}/api/assign-topics-to-trainer`, {
-        unavailability_id: selectedUA.id,
+        unavailability_id: dialog.leave.id,
         trainer_email: selectedTrainer.email,
-        topic_ids: topics.map(t => t.id),
-        batch_owner: batchOwner,
-      }, { headers: authHeaders });
+        topic_ids: dialog.topics.map(t => t.id),
+      }, { headers, timeout: 10000 });
 
-      setMessage("✅ Assigned successfully!");
+      setMessage("✅ Topics assigned successfully!");
       setSnackbarOpen(true);
       
-      // Refresh list
-      const res = await axios.get(`${API_BASE}/api/trainer-unavailability`, { headers: authHeaders });
-      setUnavailabilities(res.data || []);
+      // Refresh data
+      const response = await axios.get(`${API_BASE}/api/trainer-unavailability`, { headers });
+      setLeaves(Array.isArray(response.data) ? response.data : []);
       
-      setDialogOpen(false);
-      setConfirmOpen(false);
+      setDialog(null);
+      setSelectedTrainer(null);
     } catch (error) {
-      setMessage("❌ Assignment failed: " + (error.response?.data?.error || error.message));
+      console.error("💥 [ERROR] Assignment failed:", error);
+      setMessage(`Assignment failed: ${error.response?.data?.error || error.message}`);
       setSnackbarOpen(true);
-    } finally {
-      setLoading(false);
     }
   };
-
-  const requesterRole = (user?.role || "").toLowerCase();
 
   return (
     <Box sx={{ p: 3 }}>
-      <Typography variant="h5" fontWeight="bold" mb={3}>
+      <Typography variant="h4" fontWeight="bold" mb={3} color="primary">
         Trainer Assignment Dashboard
       </Typography>
 
-      <TableContainer component={Paper}>
-        <Table size="small">
-          <TableHead>
-            <TableRow sx={{ bgcolor: "#1976d2" }}>
-              <TableCell sx={{ color: "white", fontWeight: "bold" }}>Trainer</TableCell>
-              <TableCell sx={{ color: "white", fontWeight: "bold" }}>Email</TableCell>
-              <TableCell sx={{ color: "white", fontWeight: "bold" }}>Domain</TableCell>
-              <TableCell sx={{ color: "white", fontWeight: "bold" }}>Dates</TableCell>
-              <TableCell sx={{ color: "white", fontWeight: "bold" }}>Status</TableCell>
-              <TableCell sx={{ color: "white", fontWeight: "bold" }}>Assigned</TableCell>
-              <TableCell sx={{ color: "white", fontWeight: "bold" }}>Action</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {unavailabilities.map((ua) => (
-              <TableRow key={ua.id} hover>
-                <TableCell>{ua.trainer_name}</TableCell>
-                <TableCell>{ua.trainer_email}</TableCell>
-                <TableCell><Chip label={ua.domain} color="primary" size="small" /></TableCell>
-                <TableCell>{ua.start_date} → {ua.end_date}</TableCell>
-                <TableCell>
-                  <Chip 
-                    label={ua.status?.toUpperCase() || "PENDING"} 
-                    color={ua.status === "assigned" ? "success" : "warning"}
-                    size="small" 
-                  />
-                </TableCell>
-                <TableCell>{ua.assigned_to || "-"}</TableCell>
-                <TableCell>
-                  {ua.status !== "assigned" && (
-                    <Button 
-                      size="small" 
-                      variant="contained"
-                      onClick={() => handleAssignClick(ua)}
-                      disabled={loading}
-                    >
-                      Assign
-                    </Button>
-                  )}
-                </TableCell>
-              </TableRow>
-            ))}
-            {loadingUA ? (
-              <TableRow>
-                <TableCell colSpan={7} align="center">
-                  <CircularProgress size={24} />
-                </TableCell>
-              </TableRow>
-            ) : unavailabilities.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={7} align="center">
-                  <Typography color="text.secondary">
-                    No trainer leaves found
-                    <br />
-                    <small>Check browser console & backend logs</small>
-                  </Typography>
-                </TableCell>
-              </TableRow>
-            ) : null}
-          </TableBody>
-        </Table>
-      </TableContainer>
+      {/* DEBUG INFO */}
+      <Paper sx={{ p: 2, mb: 2, bgcolor: "#f5f5f5" }}>
+        <Typography variant="caption" color="text.secondary">
+          Debug: {leaves.length} leaves | Loading: {loading.toString()} | Token: {token ? "OK" : "MISSING"}
+        </Typography>
+      </Paper>
 
-      {/* ASSIGN DIALOG */}
-      <Dialog open={dialogOpen} maxWidth="md" fullWidth>
-        <DialogTitle>
-          {selectedUA?.trainer_name} ({selectedUA?.start_date} to {selectedUA?.end_date})
-          <IconButton onClick={() => setDialogOpen(false)} sx={{ position: 'absolute', right: 16, top: 16 }}>
-            <CheckIcon />
-          </IconButton>
-        </DialogTitle>
-        <DialogContent sx={{ p: 3 }}>
-          <Typography variant="h6" mb={2}>
-            Topics ({topics.length}){batchOwner && ` | Owner: ${batchOwner}`}
-          </Typography>
-          
-          <Box sx={{ mb: 3 }}>
-            {topics.map(topic => (
-              <Chip 
-                key={topic.id}
-                label={`${topic.date} ${topic.start_time}-${topic.end_time}: ${topic.topic_name}`}
-                size="small" sx={{ mr: 1, mb: 1 }}
-              />
-            ))}
-          </Box>
+      <Paper elevation={3}>
+        <TableContainer sx={{ maxHeight: 600 }}>
+          <Table stickyHeader size="small">
+            <TableHead>
+              <TableRow sx={{ bgcolor: "#1976d2" }}>
+                <TableCell sx={{ color: "white", fontWeight: "bold", py: 2 }}>Trainer</TableCell>
+                <TableCell sx={{ color: "white", fontWeight: "bold", py: 2 }}>Email</TableCell>
+                <TableCell sx={{ color: "white", fontWeight: "bold", py: 2 }}>Domain</TableCell>
+                <TableCell sx={{ color: "white", fontWeight: "bold", py: 2 }}>Start Date</TableCell>
+                <TableCell sx={{ color: "white", fontWeight: "bold", py: 2 }}>Status</TableCell>
+                <TableCell sx={{ color: "white", fontWeight: "bold", py: 2 }}>Assigned To</TableCell>
+                <TableCell sx={{ color: "white", fontWeight: "bold", py: 2 }}>Action</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {loading ? (
+                <TableRow>
+                  <TableCell colSpan={7} align="center" sx={{ py: 8 }}>
+                    <CircularProgress size={32} />
+                    <Typography variant="h6" mt={2}>Loading trainer leaves...</Typography>
+                  </TableCell>
+                ) : leaves.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={7} align="center" sx={{ py: 8 }}>
+                    <Typography variant="h6" color="text.secondary">
+                      No trainer leaves found
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                      Check browser console (F12) for detailed logs
+                    </Typography>
+                  </TableCell>
+                ) : (
+                  leaves.map((leave) => (
+                    <TableRow key={leave.id} hover>
+                      <TableCell sx={{ py: 2 }}>{leave.trainer_name}</TableCell>
+                      <TableCell sx={{ py: 2, fontSize: '0.875rem' }}>{leave.trainer_email}</TableCell>
+                      <TableCell sx={{ py: 2 }}>
+                        <Chip label={leave.domain} size="small" color="primary" />
+                      </TableCell>
+                      <TableCell sx={{ py: 2 }}>{leave.start_date}</TableCell>
+                      <TableCell sx={{ py: 2 }}>
+                        <Chip 
+                          label={leave.status?.toUpperCase() || "PENDING"}
+                          size="small"
+                          color={leave.status === "assigned" ? "success" : "warning"}
+                        />
+                      </TableCell>
+                      <TableCell sx={{ py: 2 }}>{leave.assigned_to || "-"}</TableCell>
+                      <TableCell sx={{ py: 2 }}>
+                        {leave.status !== "assigned" && (
+                          <Button
+                            variant="contained"
+                            size="small"
+                            onClick={() => handleAssignClick(leave)}
+                            disabled={loading}
+                          >
+                            Assign Topics
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </Paper>
 
-          <Typography variant="h6" mb={2}>Available Trainers</Typography>
-          <Grid container spacing={2}>
-            {availableTrainers.map(trainer => (
-              <Grid item xs={12} sm={6} key={trainer.email}>
-                <Paper 
-                  sx={{ p: 2, cursor: canAssign ? 'pointer' : 'default' }}
-                  onClick={() => canAssign && setSelectedTrainer(trainer)}
-                >
-                  <Typography fontWeight="bold">{trainer.name}</Typography>
-                  <Typography variant="body2">{trainer.email}</Typography>
-                  <Button 
-                    fullWidth size="small" 
-                    variant="contained" 
-                    sx={{ mt: 1 }}
-                    disabled={!canAssign}
-                    onClick={() => setConfirmOpen(true)}
+      {/* ASSIGNMENT DIALOG */}
+      {dialog && (
+        <Dialog open={true} onClose={() => setDialog(null)} maxWidth="md" fullWidth>
+          <DialogTitle>
+            Assign Topics: {dialog.leave.trainer_name}
+            <IconButton onClick={() => setDialog(null)} sx={{ position: 'absolute', right: 16, top: 16 }}>
+              <CheckIcon />
+            </IconButton>
+          </DialogTitle>
+          <DialogContent sx={{ p: 3 }}>
+            <Typography variant="h6" mb={2}>
+              Topics Found ({dialog.topics.length})
+              {dialog.batchOwner && ` | Batch Owner: ${dialog.batchOwner}`}
+            </Typography>
+            
+            <Grid container spacing={2} sx={{ mb: 4 }}>
+              {dialog.topics.slice(0, 8).map((topic) => (
+                <Grid item xs={12} sm={6} key={topic.id}>
+                  <Paper sx={{ p: 2 }}>
+                    <Typography variant="body2">{topic.date}</Typography>
+                    <Typography variant="subtitle2" fontWeight="bold">
+                      {topic.topic_name || "Unnamed Topic"}
+                    </Typography>
+                  </Paper>
+                </Grid>
+              ))}
+            </Grid>
+
+            <Typography variant="h6" mb={2}>Available Trainers ({dialog.trainers.length})</Typography>
+            <Grid container spacing={2}>
+              {dialog.trainers.map((trainer) => (
+                <Grid item xs={12} sm={6} md={4} key={trainer.email}>
+                  <Paper
+                    sx={{
+                      p: 2,
+                      cursor: 'pointer',
+                      border: selectedTrainer?.email === trainer.email ? '2px solid #1976d2' : '1px solid #e0e0e0',
+                      '&:hover': { bgcolor: selectedTrainer?.email === trainer.email ? '#e3f2fd' : '#f5f5f5' }
+                    }}
+                    onClick={() => setSelectedTrainer(trainer)}
                   >
-                    Assign
-                  </Button>
-                </Paper>
-              </Grid>
-            ))}
-          </Grid>
-        </DialogContent>
-      </Dialog>
+                    <Typography fontWeight="bold">{trainer.name}</Typography>
+                    <Typography variant="body2" color="text.secondary">{trainer.email}</Typography>
+                  </Paper>
+                </Grid>
+              ))}
+            </Grid>
 
-      {/* CONFIRM */}
-      <Dialog open={confirmOpen} maxWidth="sm">
-        <DialogTitle>Confirm Assignment</DialogTitle>
-        <DialogContent>
-          <Typography>Assign {topics.length} topics to <strong>{selectedTrainer?.name}</strong>?</Typography>
-          <Box sx={{ mt: 2, display: 'flex', gap: 1 }}>
-            <Button 
-              fullWidth variant="contained" 
-              onClick={handleAssignConfirm}
-              disabled={loading}
-            >
-              {loading ? <CircularProgress size={20} /> : "Yes, Assign"}
-            </Button>
-            <Button fullWidth onClick={() => setConfirmOpen(false)}>Cancel</Button>
-          </Box>
-        </DialogContent>
-      </Dialog>
+            {selectedTrainer && (
+              <Box sx={{ mt: 4 }}>
+                <Button
+                  variant="contained"
+                  size="large"
+                  onClick={handleConfirmAssign}
+                  disabled={loading}
+                  sx={{ px: 4, py: 1.5 }}
+                >
+                  ✅ Assign {dialog.topics.length} Topics to {selectedTrainer.name}
+                </Button>
+              </Box>
+            )}
+          </DialogContent>
+        </Dialog>
+      )}
 
-      <Snackbar open={snackbarOpen} autoHideDuration={5000} onClose={() => setSnackbarOpen(false)}>
-        <Alert severity="info">{message}</Alert>
+      <Snackbar 
+        open={snackbarOpen} 
+        autoHideDuration={6000}
+        onClose={() => setSnackbarOpen(false)}
+        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+      >
+        <Alert severity={message.includes("✅") ? "success" : "error"} sx={{ width: '100%' }}>
+          {message}
+        </Alert>
       </Snackbar>
     </Box>
   );

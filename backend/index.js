@@ -2811,110 +2811,113 @@ app.get('/api/trainer-batches', async (req, res) => {
   }
 });
 
-// 1. GET trainer_unavailability - OPTIMIZED (LIMIT 50, single query)
+// 1. GET trainer_unavailability - BULLETPROOF
 app.get("/api/trainer-unavailability", async (req, res) => {
+  console.log("🔍 [DEBUG] GET /api/trainer-unavailability HIT");
+  
   try {
-    const { data, error, count } = await supabase
+    // TEST 1: Check if table exists and has data
+    const { data: testData, error: testError } = await supabase
       .from("trainer_unavailability")
-      .select("*")
-      .limit(50)  // FAST: Limit results
-      .order("submitted_at", { ascending: false });
+      .select("id, trainer_name, trainer_email, domain, start_date, end_date, status, assigned_to")
+      .limit(5);
 
-    if (error) return res.status(200).json([]);
-    
-    res.status(200).json(data || []);
+    console.log("🔍 [DEBUG] Raw Supabase response:", {
+      count: testData?.length || 0,
+      error: testError?.message,
+      firstRow: testData?.[0] || "EMPTY"
+    });
+
+    if (testError) {
+      console.error("❌ [ERROR] Supabase:", testError);
+      // TRY ALTERNATE TABLE NAME
+      const { data: altData } = await supabase
+        .from("trainerunavailability")
+        .select("*")
+        .limit(5);
+      
+      console.log("🔍 [DEBUG] Alternate table trainerunavailability:", altData?.length || 0);
+      return res.json(altData || []);
+    }
+
+    res.json(testData || []);
   } catch (err) {
-    res.status(200).json([]);
+    console.error("💥 [CRASH]", err);
+    res.json([]);
   }
 });
 
-// 2. GET topics - OPTIMIZED (LIMIT 20)
+// 2. GET topics - SIMPLIFIED
 app.get("/api/unavailability-topics/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    
-    // SINGLE QUERY with JOIN-like logic
-    const { data } = await supabase
+    console.log("🔍 Topics for UA ID:", id);
+
+    const { data: ua } = await supabase
       .from("trainer_unavailability")
-      .select(`
-        trainer_email,
-        domain,
-        start_date,
-        end_date,
-        course_planner_data!inner(
-          id,
-          batch_no,
-          date,
-          start_time,
-          end_time,
-          topic_name,
-          batch_owner
-        )
-      `)
+      .select("trainer_email, domain, start_date, end_date")
       .eq("id", id)
-      .limit(1);
+      .single();
 
-    if (!data?.[0]) return res.json({ topics: [], batch_owner: null });
+    if (!ua) {
+      console.log("❌ No UA found");
+      return res.json({ topics: [], batch_owner: null });
+    }
 
-    const topics = data[0].course_planner_data || [];
-    res.json({ 
-      topics, 
-      batch_owner: topics[0]?.batch_owner 
-    });
+    const { data: topics } = await supabase
+      .from("course_planner_data")
+      .select("id, date, topic_name, batch_owner")
+      .eq("trainer_email", ua.trainer_email)
+      .eq("domain", ua.domain)
+      .gte("date", ua.start_date)
+      .lte("date", ua.end_date)
+      .limit(10);
+
+    res.json({ topics: topics || [], batch_owner: topics?.[0]?.batch_owner });
   } catch (err) {
+    console.error("Topics error:", err);
     res.json({ topics: [], batch_owner: null });
   }
 });
 
-// 3. GET available trainers - OPTIMIZED (LIMIT 20, count queries)
+// 3. GET trainers - SIMPLE
 app.get("/api/available-trainers", async (req, res) => {
   const { domain } = req.query;
-  
   try {
-    // Get trainers FAST
-    const { data: trainers } = await supabase
+    const { data } = await supabase
       .from("internal_users")
-      .select("name, email, domain")
+      .select("name, email")
       .eq("role", "Trainer")
       .eq("is_active", true)
-      .eq("domain", domain)
-      .limit(20)
-      .order("name");
+      .eq("domain", domain || "PD")
+      .limit(20);
 
-    res.json(trainers || []);
+    res.json(data || []);
   } catch (err) {
     res.json([]);
   }
 });
 
-// 4. POST assign - FAST bulk update
+// 4. POST assign - SAFE
 app.post("/api/assign-topics-to-trainer", async (req, res) => {
   try {
     const { unavailability_id, trainer_email, topic_ids } = req.body;
     
-    // Bulk update topics
-    const { error: topicError } = await supabase
+    // Update topics
+    await supabase
       .from("course_planner_data")
-      .update({ 
-        trainer_name: trainer_email.split("@")[0], 
-        trainer_email: trainer_email.toLowerCase() 
-      })
-      .in("id", topic_ids.slice(0, 50)); // Limit for safety
-
-    if (topicError) throw topicError;
+      .update({ trainer_email: trainer_email.toLowerCase() })
+      .in("id", topic_ids);
 
     // Update UA
     await supabase
       .from("trainer_unavailability")
-      .update({ 
-        status: "assigned", 
-        assigned_to: trainer_email.toLowerCase() 
-      })
+      .update({ status: "assigned", assigned_to: trainer_email })
       .eq("id", unavailability_id);
 
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ success: false });
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
