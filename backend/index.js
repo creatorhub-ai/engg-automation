@@ -2813,10 +2813,14 @@ app.get('/api/trainer-batches', async (req, res) => {
 
 // 1. GET trainer_unavailability - BULLETPROOF
 app.get("/api/trainer-unavailability", async (req, res) => {
-  console.log("🔥 TRAINER UNAVAILABILITY API CALLED");
+  console.log("🔥 TRAINER API CALLED - PURE DATABASE");
+  
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Access-Control-Allow-Origin', '*');
   
   try {
-    const { data, error } = await supabase
+    // DIRECT DATABASE QUERY
+    const { data, error, count } = await supabase
       .from("trainer_unavailability")
       .select(`
         id,
@@ -2827,23 +2831,29 @@ app.get("/api/trainer-unavailability", async (req, res) => {
         end_date,
         status,
         assigned_to,
-        submitted_at
+        submitted_at,
+        reason
       `)
       .order("submitted_at", { ascending: false })
-      .limit(20);
+      .limit(50);
 
-    console.log("✅ SUCCESS - Found", data?.length || 0, "rows");
-    console.log("FIRST ROW:", data?.[0]);
+    console.log("✅ DATABASE QUERY:", {
+      count: data?.length || 0,
+      first: data?.[0]?.trainer_name,
+      error: error?.message
+    });
 
     if (error) {
-      console.error("❌ ERROR:", error);
+      console.error("❌ DATABASE ERROR:", error.message);
       return res.status(500).json({ error: error.message, data: [] });
     }
 
-    res.json(data || []);
+    // ALWAYS RETURN DATABASE DATA (empty or not)
+    res.status(200).json(data || []);
+    
   } catch (err) {
-    console.error("💥 CRASH:", err);
-    res.json([]);
+    console.error("💥 CRITICAL ERROR:", err);
+    res.status(500).json({ error: "Server crash", data: [] });
   }
 });
 

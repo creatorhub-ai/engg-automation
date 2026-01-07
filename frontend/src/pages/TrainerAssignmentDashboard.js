@@ -1,9 +1,8 @@
-// src/pages/TrainerAssignmentDashboard.js - 100% WORKING
+// src/pages/TrainerAssignmentDashboard.js - DATABASE ONLY
 import React, { useEffect, useState } from "react";
-import axios from "axios";
 import {
   Box, Typography, Table, TableHead, TableBody, TableCell, TableRow,
-  TableContainer, Chip, Button, Paper, CircularProgress
+  TableContainer, Chip, Button, Paper, Alert, CircularProgress
 } from "@mui/material";
 
 const API_BASE = "https://engg-automation.onrender.com";
@@ -11,78 +10,48 @@ const API_BASE = "https://engg-automation.onrender.com";
 function TrainerAssignmentDashboard() {
   const [leaves, setLeaves] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [status, setStatus] = useState("Connecting to database...");
 
   useEffect(() => {
-    let attempts = 0;
-    const maxAttempts = 5;
-
     const fetchData = async () => {
-      console.log(`🚀 Attempt ${attempts + 1}/${maxAttempts} - Fetching data...`);
+      setStatus("Querying trainer_unavailability table...");
       
-      while (attempts < maxAttempts) {
-        try {
-          setLoading(true);
-          
-          // INCREASED TIMEOUT TO 30s
-          const response = await axios.get(`${API_BASE}/api/trainer-unavailability`, {
-            timeout: 30000, // 30 seconds
-          });
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-          console.log("✅ API SUCCESS:", response.data.length, "rows");
-          
-          if (response.data && response.data.length > 0) {
-            setLeaves(response.data);
-            setError(null);
-            return; // SUCCESS - EXIT
-          }
+        const response = await fetch(`${API_BASE}/api/trainer-unavailability`, {
+          method: 'GET',
+          headers: {
+            'Accept': 'application/json',
+            'Cache-Control': 'no-cache'
+          },
+          signal: controller.signal
+        });
 
-          // Empty response - retry
-          attempts++;
-          console.log("⚠️ Empty response - retrying...");
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          
-        } catch (err) {
-          attempts++;
-          console.error(`💥 Attempt ${attempts} failed:`, err.message);
-          
-          if (attempts >= maxAttempts) {
-            setError(`All ${maxAttempts} attempts failed: ${err.message}`);
-            
-            // SHOW YOUR ACTUAL CSV DATA AS FALLBACK
-            const csvData = [
-              {
-                id: 15,
-                trainer_name: "Hari",
-                trainer_email: "imdhariharan@gmail.com",
-                domain: "PD",
-                start_date: "2026-03-04",
-                end_date: "2026-03-07",
-                status: "pending",
-                assigned_to: null,
-                reason: "Personal"
-              },
-              {
-                id: 5,
-                trainer_name: "Chaitanya", 
-                trainer_email: "ratnachaitanya@chipedge.com",
-                domain: "PD",
-                start_date: "2026-03-04",
-                end_date: "2026-03-07",
-                status: "pending",
-                assigned_to: null,
-                reason: "Vacation"
-              }
-            ];
-            setLeaves(csvData);
-            console.log("📋 LOADED YOUR CSV DATA AS FALLBACK");
-          }
-          
-          // Wait before retry
-          await new Promise(resolve => setTimeout(resolve, 3000));
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
+
+        const data = await response.json();
+        
+        if (Array.isArray(data)) {
+          setLeaves(data);
+          setStatus(`✅ SUCCESS: Loaded ${data.length} records from trainer_unavailability table`);
+          console.log("✅ DATABASE DATA:", data);
+        } else {
+          setLeaves([]);
+          setStatus("⚠️ No data found in trainer_unavailability table");
+        }
+      } catch (error) {
+        console.error("💥 API ERROR:", error.message);
+        setStatus(`❌ Failed: ${error.name} - ${error.message}`);
+        setLeaves([]);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     };
 
     fetchData();
@@ -90,72 +59,135 @@ function TrainerAssignmentDashboard() {
 
   return (
     <Box sx={{ p: 3 }}>
-      <Typography variant="h4" fontWeight="bold" mb={3} color="primary">
-        Trainer Assignment Dashboard
+      <Typography variant="h4" fontWeight="bold" mb={4} color="primary.main">
+        Trainer Unavailability Dashboard
       </Typography>
 
-      {/* STATUS BOX */}
-      <Paper sx={{ p: 3, mb: 3, bgcolor: leaves[0]?.id !== 999 ? "#e8f5e8" : "#fff3e0" }}>
-        <Typography variant="h6" color={error ? "error" : "success"} gutterBottom>
-          {error ? `❌ ${error}` : `✅ ${leaves.length} trainer leaves loaded`}
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          Data source: {leaves[0]?.trainer_email?.includes('@chipedge') ? "LIVE DATABASE" : "CSV BACKUP"}
-        </Typography>
+      {/* STATUS HEADER */}
+      <Paper elevation={2} sx={{ p: 3, mb: 4 }}>
+        <Alert 
+          severity={status.includes("✅") ? "success" : status.includes("❌") ? "error" : "info"}
+          sx={{ 
+            '& .MuiAlert-message': { fontSize: '1.1rem', fontWeight: 500 }
+          }}
+        >
+          {status}
+        </Alert>
+        {leaves.length > 0 && (
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            Showing {leaves.length} trainer records • Last updated: {new Date().toLocaleTimeString()}
+          </Typography>
+        )}
       </Paper>
 
-      {/* MAIN TABLE */}
-      <Paper elevation={4} sx={{ borderRadius: 2 }}>
+      {/* TRAINER TABLE */}
+      <Paper elevation={3} sx={{ borderRadius: 2, overflow: 'hidden' }}>
         <TableContainer sx={{ maxHeight: 600 }}>
-          <Table stickyHeader>
+          <Table stickyHeader size="small">
             <TableHead>
-              <TableRow sx={{ bgcolor: "#1976d2" }}>
-                <TableCell sx={{ color: "white", fontWeight: "bold", py: 2 }}>Trainer</TableCell>
-                <TableCell sx={{ color: "white", fontWeight: "bold", py: 2 }}>Email</TableCell>
-                <TableCell sx={{ color: "white", fontWeight: "bold", py: 2 }}>Domain</TableCell>
-                <TableCell sx={{ color: "white", fontWeight: "bold", py: 2 }}>Date Range</TableCell>
-                <TableCell sx={{ color: "white", fontWeight: "bold", py: 2 }}>Status</TableCell>
-                <TableCell sx={{ color: "white", fontWeight: "bold", py: 2 }}>Action</TableCell>
+              <TableRow sx={{ bgcolor: "primary.main" }}>
+                <TableCell sx={{ color: "white", fontWeight: "bold", py: 2.5 }}>
+                  Trainer Name
+                </TableCell>
+                <TableCell sx={{ color: "white", fontWeight: "bold", py: 2.5 }}>
+                  Email
+                </TableCell>
+                <TableCell sx={{ color: "white", fontWeight: "bold", py: 2.5, minWidth: 80 }}>
+                  Domain
+                </TableCell>
+                <TableCell sx={{ color: "white", fontWeight: "bold", py: 2.5 }}>
+                  Date Range
+                </TableCell>
+                <TableCell sx={{ color: "white", fontWeight: "bold", py: 2.5, minWidth: 100 }}>
+                  Status
+                </TableCell>
+                <TableCell sx={{ color: "white", fontWeight: "bold", py: 2.5, minWidth: 140 }}>
+                  Action
+                </TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {loading ? (
                 <TableRow>
                   <TableCell colSpan={6} align="center" sx={{ py: 8 }}>
-                    <CircularProgress size={40} sx={{ mb: 2 }} />
-                    <Typography variant="h6">Loading trainer leaves (up to 30s)...</Typography>
+                    <CircularProgress size={32} sx={{ mb: 2 }} />
+                    <Typography variant="h6" color="text.secondary">
+                      Connecting to database (10s max)...
+                    </Typography>
+                  </TableCell>
+                </TableRow>
+              ) : leaves.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={6} align="center" sx={{ py: 8 }}>
+                    <Typography variant="h6" color="text.secondary">
+                      No trainer unavailability records found
+                    </Typography>
+                    <Typography variant="body2" sx={{ mt: 1 }}>
+                      Table "trainer_unavailability" is empty
+                    </Typography>
                   </TableCell>
                 </TableRow>
               ) : (
                 leaves.map((leave) => (
-                  <TableRow key={leave.id} hover sx={{ '&:hover': { bgcolor: '#f5f5f5' } }}>
-                    <TableCell sx={{ py: 2, fontWeight: 500 }}>
-                      {leave.trainer_name}
+                  <TableRow 
+                    key={leave.id} 
+                    hover 
+                    sx={{ 
+                      '&:hover': { bgcolor: '#f5f5f5' },
+                      transition: 'all 0.2s'
+                    }}
+                  >
+                    <TableCell sx={{ py: 2.5 }}>
+                      <Typography variant="subtitle1" fontWeight="bold">
+                        {leave.trainer_name || "Unknown"}
+                      </Typography>
                     </TableCell>
-                    <TableCell sx={{ py: 2 }}>
-                      {leave.trainer_email}
+                    <TableCell sx={{ py: 2.5 }}>
+                      <Typography variant="body2" sx={{ maxWidth: 220 }}>
+                        {leave.trainer_email || "No email"}
+                      </Typography>
                     </TableCell>
-                    <TableCell sx={{ py: 2 }}>
-                      <Chip label={leave.domain} color="primary" size="small" />
+                    <TableCell sx={{ py: 2.5 }}>
+                      <Chip 
+                        label={leave.domain || "N/A"} 
+                        color="primary" 
+                        size="small" 
+                        variant="outlined"
+                      />
                     </TableCell>
-                    <TableCell sx={{ py: 2 }}>
-                      {leave.start_date} → {leave.end_date}
+                    <TableCell sx={{ py: 2.5 }}>
+                      <Box>
+                        <Typography variant="body2" fontWeight={500}>
+                          {leave.start_date || "N/A"}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          to {leave.end_date || "N/A"}
+                        </Typography>
+                      </Box>
                     </TableCell>
-                    <TableCell sx={{ py: 2 }}>
+                    <TableCell sx={{ py: 2.5 }}>
                       <Chip 
                         label={leave.status?.toUpperCase() || "PENDING"}
-                        color={leave.status === "assigned" ? "success" : "warning"}
+                        color={
+                          leave.status === "assigned" ? "success" : 
+                          leave.status === "rejected" ? "error" : 
+                          "warning"
+                        }
                         size="small"
                       />
                     </TableCell>
-                    <TableCell sx={{ py: 2 }}>
+                    <TableCell sx={{ py: 2.5 }}>
                       <Button 
                         variant="contained" 
-                        size="small" 
+                        size="small"
                         disabled={leave.status === "assigned"}
-                        sx={{ minWidth: 120 }}
+                        sx={{ 
+                          minWidth: 130,
+                          px: 2,
+                          fontSize: '0.75rem'
+                        }}
                       >
-                        {leave.status === "assigned" ? "ASSIGNED" : "Assign Topics"}
+                        {leave.status === "assigned" ? "ASSIGNED ✓" : "Assign Topics"}
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -167,16 +199,19 @@ function TrainerAssignmentDashboard() {
       </Paper>
 
       {/* RAW DATA DEBUG */}
-      <Paper sx={{ mt: 3, p: 2 }}>
-        <Typography variant="subtitle1" gutterBottom>RAW DATA DEBUG:</Typography>
-        <pre style={{ 
-          fontSize: '11px', 
-          background: '#f8f9fa', 
-          padding: '12px', 
-          borderRadius: '4px',
-          maxHeight: '200px',
+      <Paper sx={{ mt: 4, p: 2 }}>
+        <Typography variant="h6" gutterBottom sx={{ mb: 2 }}>
+          Raw Database Response:
+        </Typography>
+        <pre style={{
+          fontSize: '11px',
+          background: '#f8f9fa',
+          padding: '16px',
+          borderRadius: '8px',
+          maxHeight: '300px',
           overflow: 'auto',
-          fontFamily: 'monospace'
+          fontFamily: 'Monaco, Consolas, monospace',
+          border: '1px solid #e0e0e0'
         }}>
           {JSON.stringify(leaves, null, 2)}
         </pre>
