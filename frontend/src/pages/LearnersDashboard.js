@@ -37,24 +37,27 @@ import EditIcon from "@mui/icons-material/Edit";
 const API_BASE =
   process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 
-const normalizeLearner = (l) => {
-  const batchNo = l.batch_no ?? l.batchno ?? l.batch_no?.toString?.() ?? l.batchno?.toString?.();
+function normalizeLearner(raw) {
+  const batchno = raw?.batchno ?? raw?.batch_no ?? raw?.batchNo ?? "";
+  const batchNoStr = batchno != null ? String(batchno).trim() : "";
+  const email = (raw?.email || "").trim();
+  const name = (raw?.name || "").trim();
+
   return {
-    ...l,
-    batch_no: batchNo ? String(batchNo).trim() : "",
-    email: (l.email || "").trim(),
-    name: (l.name || "").trim(),
-    phone: l.phone || "",
-    status: l.status || "Enabled",
+    ...raw,
+    batchno: batchNoStr,
+    batch_no: batchNoStr, // keep both so UI never breaks on key mismatch
+    email,
+    name,
+    phone: raw?.phone || "",
+    status: raw?.status || "Enabled",
   };
-};
+}
 
 export default function LearnersDashboard({ user, token }) {
-  // Search mode + value
   const [searchType, setSearchType] = useState("email"); // 'email' | 'name' | 'batch'
   const [searchText, setSearchText] = useState("");
 
-  // ✅ NEW: Status filter
   const [statusFilter, setStatusFilter] = useState("all"); // all | Enabled | Disabled | Dropout
 
   const [allLearners, setAllLearners] = useState([]);
@@ -73,7 +76,6 @@ export default function LearnersDashboard({ user, token }) {
     batch_no: "",
   });
 
-  // Status change dialog state
   const [statusDialogOpen, setStatusDialogOpen] = useState(false);
   const [selectedLearner, setSelectedLearner] = useState(null);
   const [newStatus, setNewStatus] = useState("");
@@ -99,12 +101,10 @@ export default function LearnersDashboard({ user, token }) {
     }
   };
 
-  // ✅ NEW: filtered learners derived from allLearners + statusFilter
   const filteredLearners = useMemo(() => {
     if (statusFilter === "all") return allLearners;
     return allLearners.filter(
-      (l) =>
-        (l.status || "Enabled").toLowerCase() === statusFilter.toLowerCase()
+      (l) => (l.status || "Enabled").toLowerCase() === statusFilter.toLowerCase()
     );
   }, [allLearners, statusFilter]);
 
@@ -112,82 +112,36 @@ export default function LearnersDashboard({ user, token }) {
     async function loadLearnersData() {
       setLoading(true);
       setMessage("");
+
       try {
         const headers = token ? { Authorization: `Bearer ${token}` } : {};
+        const res = await axios.get(`${API_BASE}/api/learners`, { headers });
 
-        let learnersData = [];
-        let loadedFromPrimary = false;
+        const rows = (Array.isArray(res.data) ? res.data : []).map(normalizeLearner);
 
-        // 1) Try /api/learners (but your backend currently may not return status)
-        try {
-          const res = await axios.get(`${API_BASE}/api/learners`, { headers });
-          learnersData = Array.isArray(res.data) ? res.data : [];
-          loadedFromPrimary = true;
-        } catch {
-          loadedFromPrimary = false;
-        }
-
-        // If primary worked BUT doesn't contain status, force fallback load
-        const primaryMissingStatus =
-          loadedFromPrimary &&
-          learnersData.length > 0 &&
-          learnersData.some((l) => l.status == null);
-
-        // 2) Fallback: load per batch via /api/getlearners (this endpoint includes status in your backend)
-        if (!loadedFromPrimary || learnersData.length === 0 || primaryMissingStatus) {
-          learnersData = [];
-          const batchesRes = await axios.get(`${API_BASE}/api/batches`, {
-            headers,
-          });
-          const batches = Array.isArray(batchesRes.data) ? batchesRes.data : [];
-
-          for (let i = 0; i < batches.length; i++) {
-            const batchNo = batches[i].batch_no || batches[i].batchno || batches[i];
-            if (!batchNo) continue;
-
-            try {
-              const batchLearnersRes = await axios.get(
-                `${API_BASE}/api/getlearners?batchno=${encodeURIComponent(batchNo)}`,
-                { headers }
-              );
-              const rows = Array.isArray(batchLearnersRes.data) ? batchLearnersRes.data : [];
-              learnersData = [...learnersData, ...rows];
-            } catch {
-              // ignore a batch fetch failure
-            }
-          }
-        }
-
-        // Normalize + dedupe by email+batch_no
-        const normalized = (learnersData || []).map(normalizeLearner);
-        const uniqueLearners = normalized.filter(
+        // de-dupe by email+batchno
+        const unique = rows.filter(
           (learner, index, self) =>
-            index ===
-            self.findIndex(
-              (l) => l.email === learner.email && l.batch_no === learner.batch_no
+            index === self.findIndex(
+              (l) => l.email === learner.email && l.batchno === learner.batchno
             )
         );
 
-        setAllLearners(uniqueLearners);
+        setAllLearners(unique);
 
-        const batches = [
+        const batchesList = [
           ...new Set(
-            uniqueLearners
-              .map((l) => l.batch_no)
-              .filter((b) => b && String(b).trim() !== "")
+            unique.map((l) => l.batchno).filter((b) => b && String(b).trim() !== "")
           ),
         ].sort();
 
-        setDistinctBatches(batches);
-
-        // Optional: if user already searched, keep table stable by re-running search
-        setBatchLearners((prev) => (prev.length ? prev : []));
+        setDistinctBatches(batchesList);
       } catch (err) {
-        console.error("Error loading learners data:", err);
+        console.error("Error loading learners:", err);
         setAllLearners([]);
         setDistinctBatches([]);
         setBatchLearners([]);
-        setMessage("Failed to load learners list");
+        setMessage("❌ Failed to load learners list");
       } finally {
         setLoading(false);
       }
@@ -199,12 +153,12 @@ export default function LearnersDashboard({ user, token }) {
   function handleSearch() {
     const value = (searchText || "").trim();
 
-    // ✅ If search box empty, show ALL filtered learners
+    // Empty search -> show everything in current status filter
     if (!value) {
       setBatchLearners(filteredLearners);
       setMessage(
         `✅ Showing ${filteredLearners.length} learner${
-          filteredLearners.length !== 1 ? "s" : ""
+          filteredLearners.length === 1 ? "" : "s"
         }${statusFilter !== "all" ? ` (Status: ${statusFilter})` : ""}`
       );
       return;
@@ -222,27 +176,17 @@ export default function LearnersDashboard({ user, token }) {
         (l.name || "").toLowerCase().includes(v)
       );
     } else if (searchType === "batch") {
-      list = filteredLearners.filter((l) => String(l.batch_no).trim() === value);
+      list = filteredLearners.filter((l) => String(l.batchno).trim() === value);
     }
 
     setBatchLearners(list);
 
     if (list.length > 0) {
-      if (searchType === "batch") {
-        setMessage(
-          `✅ Found ${list.length} learner${list.length > 1 ? "s" : ""} in batch ${value}${
-            statusFilter !== "all" ? ` (Status: ${statusFilter})` : ""
-          }`
-        );
-      } else {
-        setMessage(
-          `✅ Found ${list.length} learner${list.length > 1 ? "s" : ""}${
-            statusFilter !== "all" ? ` (Status: ${statusFilter})` : ""
-          }`
-        );
-      }
+      setMessage(
+        `✅ Showing ${list.length} of ${filteredLearners.length} filtered learners`
+      );
     } else {
-      setMessage("❌ No learners found (try different value or Status Filter)");
+      setMessage("❌ No learners found");
     }
   }
 
@@ -257,28 +201,28 @@ export default function LearnersDashboard({ user, token }) {
 
     try {
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+      // Match your backend "batchno" style
       const payload = {
-        ...newLearner,
+        name: newLearner.name.trim(),
         email: newLearner.email.trim().toLowerCase(),
-        batch_no: String(newLearner.batch_no).trim(),
+        phone: newLearner.phone.trim(),
+        batchno: String(newLearner.batch_no).trim(),
       };
 
-      const res = await axios.post(`${API_BASE}/api/learners/add`, payload, {
-        headers,
-      });
+      const res = await axios.post(`${API_BASE}/api/learners/add`, payload, { headers });
 
       if (res.data?.success) {
-        setMessage("✅ Learner added successfully");
-        setOpenAddDialog(false);
+        const added = normalizeLearner({ ...payload, status: "Enabled" });
 
-        // Update local list (status defaults to Enabled)
-        const learnerToAdd = normalizeLearner({ ...payload, status: "Enabled" });
-        setAllLearners((prev) => [...prev, learnerToAdd]);
+        setAllLearners((prev) => [...prev, added]);
 
-        if (!distinctBatches.includes(learnerToAdd.batch_no)) {
-          setDistinctBatches((prev) => [...prev, learnerToAdd.batch_no].sort());
+        if (!distinctBatches.includes(added.batchno)) {
+          setDistinctBatches((prev) => [...prev, added.batchno].sort());
         }
 
+        setMessage("✅ Learner added successfully");
+        setOpenAddDialog(false);
         setNewLearner({ name: "", email: "", phone: "", batch_no: "" });
       } else {
         setMessage("❌ Failed to add learner: " + (res.data?.error || ""));
@@ -291,64 +235,58 @@ export default function LearnersDashboard({ user, token }) {
     }
   }
 
+  function handleStatusChange(learner) {
+    const l = normalizeLearner(learner);
+    setSelectedLearner(l);
+    setNewStatus(l.status || "Enabled");
+    setStatusDialogOpen(true);
+  }
+
   async function handleStatusChangeConfirm() {
     if (!selectedLearner || !newStatus) return;
 
     setStatusUpdating(true);
-    setStatusDialogOpen(false);
     setMessage("");
 
     try {
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-      // ✅ IMPORTANT: send keys that your backend currently expects: learneremail + batchno
-      const res = await axios.put(
-        `${API_BASE}/api/learners/status`,
-        {
-          learneremail: selectedLearner.email,
-          batchno: selectedLearner.batch_no, // normalized
-          status: newStatus,
-        },
-        { headers }
-      );
+      const payload = {
+        learneremail: selectedLearner.email,
+        batchno: selectedLearner.batchno,
+        status: newStatus,
+      };
+
+      const res = await axios.put(`${API_BASE}/api/learners/status`, payload, { headers });
 
       if (res.data?.success) {
-        setMessage(
-          `✅ Status changed for ${selectedLearner.name} (${selectedLearner.email}) to "${newStatus}"`
-        );
-
-        // Update local state immediately
         const match = (l) =>
-          l.email === selectedLearner.email && l.batch_no === selectedLearner.batch_no;
+          l.email === selectedLearner.email && l.batchno === selectedLearner.batchno;
 
         setAllLearners((prev) => prev.map((l) => (match(l) ? { ...l, status: newStatus } : l)));
         setBatchLearners((prev) => prev.map((l) => (match(l) ? { ...l, status: newStatus } : l)));
+
+        setMessage(`✅ Status updated for ${selectedLearner.name}: ${newStatus}`);
+        setStatusDialogOpen(false);
       } else {
         setMessage("❌ Failed to update learner status");
       }
     } catch (err) {
       console.error(err);
-      setMessage("❌ Error updating learner status");
+      setMessage("❌ Network/server error updating status");
     } finally {
       setStatusUpdating(false);
     }
   }
 
-  function handleStatusChange(learner) {
-    setSelectedLearner(learner);
-    setNewStatus(learner.status || "Enabled");
-    setStatusDialogOpen(true);
-  }
-
   function handleReset() {
     setSearchType("email");
     setSearchText("");
-    setStatusFilter("all");       // ✅ Reset status filter too
+    setStatusFilter("all");
     setBatchLearners([]);
     setMessage("");
   }
 
-  // Options for main search input based on searchType (use filtered list so options match filter)
   const searchOptions =
     searchType === "email"
       ? filteredLearners.map((l) => l.email || "")
@@ -387,6 +325,7 @@ export default function LearnersDashboard({ user, token }) {
               Learners Management
             </Typography>
           </Box>
+
           <Button
             variant="contained"
             startIcon={<PersonAddIcon />}
@@ -413,9 +352,8 @@ export default function LearnersDashboard({ user, token }) {
           </Button>
         </Box>
 
-        {/* Search + Filter Section */}
+        {/* Search + Status Filter */}
         <Grid container spacing={2} mb={3}>
-          {/* Search type */}
           <Grid item xs={12} sm={3}>
             <TextField
               select
@@ -428,14 +366,7 @@ export default function LearnersDashboard({ user, token }) {
                 setBatchLearners([]);
                 setMessage("");
               }}
-              sx={{
-                bgcolor: "white",
-                borderRadius: 2,
-                "& .MuiOutlinedInput-root": {
-                  "&:hover fieldset": { borderColor: "#fa709a" },
-                  "&.Mui-focused fieldset": { borderColor: "#fa709a" },
-                },
-              }}
+              sx={{ bgcolor: "white", borderRadius: 2 }}
             >
               <MenuItem value="email">Email</MenuItem>
               <MenuItem value="name">Name</MenuItem>
@@ -443,16 +374,15 @@ export default function LearnersDashboard({ user, token }) {
             </TextField>
           </Grid>
 
-          {/* ✅ NEW: Status Filter */}
           <Grid item xs={12} sm={3}>
             <FormControl fullWidth sx={{ bgcolor: "white", borderRadius: 2 }}>
-              <InputLabel>Status Filter</InputLabel>
+              <InputLabel>Status</InputLabel>
               <Select
                 value={statusFilter}
-                label="Status Filter"
+                label="Status"
                 onChange={(e) => {
                   setStatusFilter(e.target.value);
-                  setBatchLearners([]); // user can hit Search or press enter
+                  setBatchLearners([]);
                   setMessage("");
                 }}
               >
@@ -464,7 +394,6 @@ export default function LearnersDashboard({ user, token }) {
             </FormControl>
           </Grid>
 
-          {/* Search input */}
           <Grid item xs={12} sm={6} md={4}>
             <Autocomplete
               freeSolo
@@ -473,9 +402,7 @@ export default function LearnersDashboard({ user, token }) {
               value={searchText}
               onChange={(e, value) => setSearchText(value || "")}
               onInputChange={(e, value) => setSearchText(value || "")}
-              ListboxProps={{
-                style: { maxHeight: 320, maxWidth: 600, width: 600 },
-              }}
+              ListboxProps={{ style: { maxHeight: 320, maxWidth: 600, width: 600 } }}
               sx={{
                 "& .MuiAutocomplete-inputRoot": { width: 400 },
                 "& .MuiInputBase-input": { minWidth: 300 },
@@ -486,20 +413,12 @@ export default function LearnersDashboard({ user, token }) {
                   label={searchLabel}
                   placeholder={searchPlaceholder}
                   onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-                  sx={{
-                    bgcolor: "white",
-                    borderRadius: 2,
-                    "& .MuiOutlinedInput-root": {
-                      "&:hover fieldset": { borderColor: "#fa709a" },
-                      "&.Mui-focused fieldset": { borderColor: "#fa709a" },
-                    },
-                  }}
+                  sx={{ bgcolor: "white", borderRadius: 2 }}
                 />
               )}
             />
           </Grid>
 
-          {/* Search button */}
           <Grid item xs={12} sm={2}>
             <Button
               variant="contained"
@@ -512,16 +431,12 @@ export default function LearnersDashboard({ user, token }) {
                 background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
                 fontWeight: "bold",
                 borderRadius: 2,
-                "&:hover": {
-                  background: "linear-gradient(135deg, #764ba2 0%, #667eea 100%)",
-                },
               }}
             >
               {loading ? <CircularProgress size={24} color="inherit" /> : "Search"}
             </Button>
           </Grid>
 
-          {/* Reset button */}
           <Grid item xs={12} sm={2}>
             <Button
               variant="outlined"
@@ -534,10 +449,6 @@ export default function LearnersDashboard({ user, token }) {
                 borderColor: "#f57c00",
                 color: "#f57c00",
                 fontWeight: "bold",
-                "&:hover": {
-                  borderColor: "#e65100",
-                  bgcolor: "rgba(245, 124, 0, 0.1)",
-                },
               }}
             >
               Reset
@@ -546,19 +457,18 @@ export default function LearnersDashboard({ user, token }) {
         </Grid>
 
         <Typography variant="caption" sx={{ mb: 2, display: "block", color: "gray" }}>
-          Loaded: {allLearners.length} learners, {distinctBatches.length} batches | Filtered: {filteredLearners.length}
+          Loaded: {allLearners.length} learners | Filtered: {filteredLearners.length} | Results: {batchLearners.length}
         </Typography>
 
         {message && (
           <Alert
-            severity={message.startsWith("✅") ? "success" : message.includes("No") ? "info" : "warning"}
+            severity={message.startsWith("✅") ? "success" : message.startsWith("❌") ? "warning" : "info"}
             sx={{ mb: 2, borderRadius: 2 }}
           >
             {message}
           </Alert>
         )}
 
-        {/* Results table */}
         {batchLearners.length > 0 && (
           <Box mt={1}>
             <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
@@ -580,11 +490,13 @@ export default function LearnersDashboard({ user, token }) {
                 </TableHead>
 
                 <TableBody>
-                  {batchLearners.map((l, idx) => {
+                  {batchLearners.map((row, idx) => {
+                    const l = normalizeLearner(row);
                     const isDropout = (l.status || "Enabled").toLowerCase() === "dropout";
+
                     return (
                       <TableRow
-                        key={`${l.email}-${l.batch_no}`}
+                        key={`${l.email}-${l.batchno}`}
                         hover={!isDropout}
                         sx={{
                           opacity: isDropout ? 0.55 : 1,
@@ -596,7 +508,7 @@ export default function LearnersDashboard({ user, token }) {
                         <TableCell>{l.name}</TableCell>
                         <TableCell>{l.email}</TableCell>
                         <TableCell>{l.phone || "-"}</TableCell>
-                        <TableCell>{l.batch_no}</TableCell>
+                        <TableCell>{l.batchno}</TableCell>
                         <TableCell>
                           <Chip
                             label={l.status || "Enabled"}
@@ -608,7 +520,7 @@ export default function LearnersDashboard({ user, token }) {
 
                         {isManagerOrAdmin && (
                           <TableCell>
-                            <Tooltip title={isDropout ? "Dropout learner (read-only)" : "Change Status"}>
+                            <Tooltip title={isDropout ? "Dropout learners cannot be edited" : "Change Status"}>
                               <span>
                                 <IconButton
                                   size="small"
@@ -690,10 +602,7 @@ export default function LearnersDashboard({ user, token }) {
           </DialogContent>
 
           <DialogActions sx={{ p: 3 }}>
-            <Button
-              onClick={() => setOpenAddDialog(false)}
-              sx={{ color: "#666", "&:hover": { bgcolor: "#f5f5f5" } }}
-            >
+            <Button onClick={() => setOpenAddDialog(false)} sx={{ color: "#666" }}>
               Cancel
             </Button>
             <Button
@@ -705,9 +614,6 @@ export default function LearnersDashboard({ user, token }) {
                 color: "#333",
                 px: 3,
                 fontWeight: "bold",
-                "&:hover": {
-                  background: "linear-gradient(135deg, #fee140 0%, #fa709a 100%)",
-                },
               }}
             >
               {loading ? "Adding..." : "Add Learner"}
@@ -737,6 +643,7 @@ export default function LearnersDashboard({ user, token }) {
             <Typography variant="body2" gutterBottom>
               Current status: <strong>{selectedLearner?.status || "Enabled"}</strong>
             </Typography>
+
             <TextField
               select
               fullWidth
@@ -753,13 +660,10 @@ export default function LearnersDashboard({ user, token }) {
           </DialogContent>
 
           <DialogActions sx={{ p: 3 }}>
-            <Button
-              onClick={() => setStatusDialogOpen(false)}
-              disabled={statusUpdating}
-              sx={{ color: "#666" }}
-            >
+            <Button onClick={() => setStatusDialogOpen(false)} disabled={statusUpdating} sx={{ color: "#666" }}>
               Cancel
             </Button>
+
             <Button
               onClick={handleStatusChangeConfirm}
               variant="contained"
@@ -767,9 +671,6 @@ export default function LearnersDashboard({ user, token }) {
               sx={{
                 background: "linear-gradient(135deg, #4caf50 0%, #45a049 100%)",
                 color: "white",
-                "&:hover": {
-                  background: "linear-gradient(135deg, #45a049 0%, #4caf50 100%)",
-                },
               }}
             >
               {statusUpdating ? <CircularProgress size={20} /> : "Update Status"}

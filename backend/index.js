@@ -1915,64 +1915,68 @@ app.get("/api/get_batch_dates", async (req, res) => {
   }
 });
 
-// PUT /api/learners/status
-app.put('/api/learners/status', async (req, res) => {
+// PUT api/learners/status
+app.put("/api/learners/status", async (req, res) => {
   try {
-    const { learner_email, batch_no, status } = req.body;
-    
-    if (!learner_email || !batch_no || !status) {
-      return res.status(400).json({ error: 'Missing required fields: learner_email, batch_no, status' });
+    const learneremail = req.body.learneremail || req.body.learner_email;
+    const batchno = req.body.batchno || req.body.batch_no;
+    const status = req.body.status;
+
+    if (!learneremail || !batchno || !status) {
+      return res.status(400).json({ success: false, error: "Missing fields" });
     }
 
-    const validStatuses = ['Enabled', 'Disabled', 'Dropout'];
+    const validStatuses = ["Enabled", "Disabled", "Dropout"];
     if (!validStatuses.includes(status)) {
-      return res.status(400).json({ error: 'Invalid status. Must be Enabled, Disabled, or Dropout' });
+      return res.status(400).json({ success: false, error: "Invalid status" });
     }
 
-    const { data, error } = await supabase
-      .from('learners_data')
-      .update({ status }) // ✅ Update status column
-      .eq('email', learner_email)
-      .eq('batch_no', batch_no)
-      .select('name, email, batch_no, status')
-      .single();
-    
+    const { error } = await supabase
+      .from("learners_data")
+      .update({ status })
+      .eq("email", learneremail)
+      .eq("batchno", batchno);
+
     if (error) throw error;
-    
-    // ✅ Optional: If Dropout, you might want to delete attendance records
-    if (status === 'Dropout') {
-      const { error: delError } = await supabase
-        .from('learnerattendance')
-        .delete()
-        .eq('learneremail', learner_email)
-        .eq('batchno', batch_no);
-      
-      if (delError) console.error('Failed to delete attendance for dropout:', delError);
-    }
-    
-    res.json({ success: true, data });
+
+    return res.json({ success: true });
   } catch (err) {
-    console.error('Error updating learner status:', err);
-    res.status(500).json({ success: false, error: 'Failed to update status' });
+    console.error("Error updating learner status:", err);
+    return res.status(500).json({ success: false, error: err.message || "Failed to update status" });
   }
 });
 
-// Existing fallback endpoint (if needed)
-app.get('/api/getlearners', async (req, res) => {
+// Get learners by batchno (include status; fallback if status column missing)
+app.get("/api/getlearners", async (req, res) => {
   try {
-    const { batchno } = req.query;
-    if (!batchno) return res.status(400).json({ error: 'Batch number is required' });
-    
-    const { data, error } = await supabase
-      .from('learners_data')
-      .select('name, email, batch_no:batchno, status') // ✅ Include status
-      .eq('batch_no', batchno);
-    
+    const batchno = req.query.batchno;
+    if (!batchno) return res.status(400).json({ error: "Batch number is required" });
+
+    let data, error;
+
+    ({ data, error } = await supabase
+      .from("learners_data")
+      .select("name, email, phone, batchno, status")
+      .eq("batchno", batchno));
+
+    // Fallback if status column missing
+    if (error && String(error.message || "").toLowerCase().includes("status")) {
+      ({ data, error } = await supabase
+        .from("learners_data")
+        .select("name, email, phone, batchno")
+        .eq("batchno", batchno));
+
+      if (!error) {
+        data = (data || []).map((l) => ({ ...l, status: "Enabled" }));
+      }
+    }
+
     if (error) throw error;
-    res.json(data);
+
+    return res.json((data || []).map((l) => ({ ...l, status: l.status || "Enabled" })));
   } catch (err) {
-    console.error('Error fetching learners by batch:', err);
-    res.status(500).json({ error: 'Server error' });
+    console.error("Error fetching learners:", err);
+    return res.status(500).json({ error: err.message || "Server error" });
   }
 });
 
@@ -6642,18 +6646,39 @@ app.get('/api/tutors/modules/:email/:batch_no', async (req, res) => {
 // ==================== LEARNERS APIs ====================
 
 // Get all learners
-app.get('/api/learners', async (req, res) => {
+app.get("/api/learners", async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('learners_data')
-      .select('id, name, email, phone, batch_no')
-      .order('name');
-    
+    let data, error;
+
+    // Try with status
+    ({ data, error } = await supabase
+      .from("learners_data")
+      .select("id, name, email, phone, batchno, status")
+      .order("name"));
+
+    // Fallback: if status column doesn't exist yet, query without it
+    if (error && String(error.message || "").toLowerCase().includes("status")) {
+      ({ data, error } = await supabase
+        .from("learners_data")
+        .select("id, name, email, phone, batchno")
+        .order("name"));
+
+      if (!error) {
+        data = (data || []).map((l) => ({ ...l, status: "Enabled" }));
+      }
+    }
+
     if (error) throw error;
-    res.json(data);
-  } catch (error) {
-    console.error('Error fetching learners:', error);
-    res.status(500).json({ error: error.message });
+
+    const rows = (data || []).map((l) => ({
+      ...l,
+      status: l.status || "Enabled",
+    }));
+
+    return res.json(rows);
+  } catch (err) {
+    console.error("Error fetching learners:", err);
+    return res.status(500).json({ error: err.message || "Failed to fetch learners" });
   }
 });
 
