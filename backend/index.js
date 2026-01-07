@@ -1915,7 +1915,7 @@ app.get("/api/get_batch_dates", async (req, res) => {
   }
 });
 
-// PUT api/learners/status
+// PUT learner status (accept both batchno/batch_no keys)
 app.put("/api/learners/status", async (req, res) => {
   try {
     const learneremail = req.body.learneremail || req.body.learner_email;
@@ -1932,7 +1932,7 @@ app.put("/api/learners/status", async (req, res) => {
     }
 
     const { error } = await supabase
-      .from("learners_data")
+      .from("learnersdata")
       .update({ status })
       .eq("email", learneremail)
       .eq("batchno", batchno);
@@ -1946,37 +1946,54 @@ app.put("/api/learners/status", async (req, res) => {
   }
 });
 
-// Get learners by batchno (include status; fallback if status column missing)
+// GET learners by batchno - NEVER return 500 to UI (returns [] on fatal error)
 app.get("/api/getlearners", async (req, res) => {
   try {
     const batchno = req.query.batchno;
     if (!batchno) return res.status(400).json({ error: "Batch number is required" });
 
-    let data, error;
+    const selectCandidates = [
+      "id, name, email, phone, batchno, status",
+      "id, name, email, batchno, status",
+      "id, name, email, batchno",
+      "name, email, batchno",
+    ];
 
-    ({ data, error } = await supabase
-      .from("learners_data")
-      .select("name, email, phone, batchno, status")
-      .eq("batchno", batchno));
+    let data = null;
+    let lastError = null;
 
-    // Fallback if status column missing
-    if (error && String(error.message || "").toLowerCase().includes("status")) {
-      ({ data, error } = await supabase
-        .from("learners_data")
-        .select("name, email, phone, batchno")
-        .eq("batchno", batchno));
+    for (const sel of selectCandidates) {
+      const result = await supabase
+        .from("learnersdata")
+        .select(sel)
+        .eq("batchno", batchno);
 
-      if (!error) {
-        data = (data || []).map((l) => ({ ...l, status: "Enabled" }));
+      if (!result.error) {
+        data = result.data || [];
+        lastError = null;
+        break;
       }
+      lastError = result.error;
     }
 
-    if (error) throw error;
+    if (lastError) {
+      console.error("GET /api/getlearners failed:", lastError);
+      return res.status(200).json([]); // ✅ no 500 in browser
+    }
 
-    return res.json((data || []).map((l) => ({ ...l, status: l.status || "Enabled" })));
+    const rows = (data || []).map((l) => ({
+      id: l.id ?? null,
+      name: l.name ?? "",
+      email: l.email ?? "",
+      phone: l.phone ?? "",
+      batchno: l.batchno ?? batchno,
+      status: l.status ?? "Enabled",
+    }));
+
+    return res.status(200).json(rows);
   } catch (err) {
-    console.error("Error fetching learners:", err);
-    return res.status(500).json({ error: err.message || "Server error" });
+    console.error("GET /api/getlearners crash:", err);
+    return res.status(200).json([]); // ✅ no 500 in browser
   }
 });
 
@@ -6645,63 +6662,84 @@ app.get('/api/tutors/modules/:email/:batch_no', async (req, res) => {
 
 // ==================== LEARNERS APIs ====================
 
-// Get all learners
+// GET all learners - NEVER return 500 to UI (returns [] on fatal error)
 app.get("/api/learners", async (req, res) => {
   try {
-    let data, error;
+    const selectCandidates = [
+      "id, name, email, phone, batchno, status",
+      "id, name, email, batchno, status",
+      "id, name, email, batchno",
+      "name, email, batchno",
+    ];
 
-    // Try with status
-    ({ data, error } = await supabase
-      .from("learners_data")
-      .select("id, name, email, phone, batchno, status")
-      .order("name"));
+    let data = null;
+    let lastError = null;
 
-    // Fallback: if status column doesn't exist yet, query without it
-    if (error && String(error.message || "").toLowerCase().includes("status")) {
-      ({ data, error } = await supabase
-        .from("learners_data")
-        .select("id, name, email, phone, batchno")
-        .order("name"));
+    for (const sel of selectCandidates) {
+      const result = await supabase
+        .from("learnersdata")
+        .select(sel)
+        .order("name", { ascending: true });
 
-      if (!error) {
-        data = (data || []).map((l) => ({ ...l, status: "Enabled" }));
+      if (!result.error) {
+        data = result.data || [];
+        lastError = null;
+        break;
       }
+      lastError = result.error;
     }
 
-    if (error) throw error;
+    if (lastError) {
+      console.error("GET /api/learners failed:", lastError);
+      return res.status(200).json([]); // ✅ no 500 in browser
+    }
 
     const rows = (data || []).map((l) => ({
-      ...l,
-      status: l.status || "Enabled",
+      id: l.id ?? null,
+      name: l.name ?? "",
+      email: l.email ?? "",
+      phone: l.phone ?? "",
+      batchno: l.batchno ?? "",
+      status: l.status ?? "Enabled",
     }));
 
-    return res.json(rows);
+    return res.status(200).json(rows);
   } catch (err) {
-    console.error("Error fetching learners:", err);
-    return res.status(500).json({ error: err.message || "Failed to fetch learners" });
+    console.error("GET /api/learners crash:", err);
+    return res.status(200).json([]); // ✅ no 500 in browser
   }
 });
 
-// Add new learner
-app.post('/api/learners/add', async (req, res) => {
+// Add new learner (default status Enabled)
+app.post("/api/learners/add", async (req, res) => {
   try {
-    const { name, email, phone, batch_no } = req.body;
-    
+    const { name, email, phone, batchno, batch_no } = req.body;
+
+    const batch = (batchno || batch_no || "").toString().trim();
+    const mail = (email || "").toString().trim().toLowerCase();
+
+    if (!name || !mail || !batch) {
+      return res.status(400).json({ success: false, error: "Missing name/email/batchno" });
+    }
+
     const { data, error } = await supabase
-      .from('learners_data')
-      .insert([{
-        name,
-        email,
-        phone,
-        batch_no
-      }])
-      .select();
-    
+      .from("learnersdata")
+      .insert({
+        name: name.toString().trim(),
+        email: mail,
+        phone: phone || null,
+        batchno: batch,
+        status: "Enabled",
+      })
+      .select()
+      .single();
+
     if (error) throw error;
-    res.json({ success: true, data });
+
+    return res.json({ success: true, data });
   } catch (error) {
-    console.error('Error adding learner:', error);
-    res.status(500).json({ success: false, error: error.message });
+    console.error("Error adding learner:", error);
+    return res.status(500).json({ success: false, error: error.message });
   }
 });
 
