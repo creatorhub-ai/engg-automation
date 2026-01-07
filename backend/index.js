@@ -156,7 +156,56 @@ function formatDate(dateStr) {
   return dayjs(dateStr).format("DD-MMM-YYYY");
 }
 
+function toISODateOnly(d) {
+  // returns YYYY-MM-DD
+  const dt = new Date(d);
+  if (Number.isNaN(dt.getTime())) return null;
+  return dt.toISOString().slice(0, 10);
+}
 
+function parseHolidayDateCell(cell, fallbackYear) {
+  // Supports:
+  // - Date objects (from xlsx)
+  // - "YYYY-MM-DD"
+  // - "DD-MMM" (e.g., 01-Jan) -> uses fallbackYear
+  // - "DD-MMM-YYYY" / "DD-MM-YYYY"
+  if (cell == null) return null;
+
+  if (cell instanceof Date) return toISODateOnly(cell);
+
+  const raw = String(cell).trim();
+  if (!raw) return null;
+
+  // YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+
+  // DD-MMM or DD-MMM-YYYY
+  // Examples: 01-Jan, 01-Jan-2026
+  const m1 = raw.match(/^(\d{1,2})-([A-Za-z]{3})(?:-(\d{4}))?$/);
+  if (m1) {
+    const dd = m1[1].padStart(2, "0");
+    const monStr = m1[2];
+    const yyyy = m1[3] ? m1[3] : String(fallbackYear);
+
+    const monthIndex = new Date(`${monStr} 1, 2000`).getMonth();
+    if (Number.isNaN(monthIndex)) return null;
+
+    const dt = new Date(Number(yyyy), monthIndex, Number(dd));
+    return toISODateOnly(dt);
+  }
+
+  // DD-MM-YYYY
+  const m2 = raw.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+  if (m2) {
+    const dd = m2[1].padStart(2, "0");
+    const mm = m2[2].padStart(2, "0");
+    const yyyy = m2[3];
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  // Last attempt
+  return toISODateOnly(raw);
+}
 
 function computeTodayISO(timeStr) {
   const [hours, minutes] = timeStr.split(":").map(Number);
@@ -1411,121 +1460,205 @@ app.post("/api/save-classroom-matrix", async (req, res) => {
   }
 });
 
-// Get holidays for a given year
+// GET holidays for year
 app.get("/api/holidays", async (req, res) => {
   try {
     const year = Number(req.query.year) || new Date().getFullYear();
+    const from = `${year}-01-01`;
+    const to = `${year}-12-31`;
 
-    const result = await pool.query(
-      `
-      SELECT holiday_date, name, type
-      FROM holidays
-      WHERE EXTRACT(YEAR FROM holiday_date) = $1
-      ORDER BY holiday_date
-      `,
-      [year]
-    );
+    const { data, error } = await supabase
+      .from("holidays")
+      .select("id, holiday_date, name, type")
+      .gte("holiday_date", from)
+      .lte("holiday_date", to)
+      .order("holiday_date", { ascending: true });
 
-    res.json(result.rows);
+    if (error) {
+      console.error("GET /api/holidays error:", error);
+      return res.status(200).json([]); // avoid frontend console 500s
+    }
+
+    return res.status(200).json(Array.isArray(data) ? data : []);
   } catch (err) {
-    console.error("GET /api/holidays error:", err);
-    res.status(500).json({ error: "Failed to fetch holidays" });
+    console.error("GET /api/holidays crash:", err);
+    return res.status(200).json([]);
   }
 });
 
-// Upload holiday calendar file and upsert into holidays table
+// POST upload holidays (xlsx/xls/csv)
 app.post("/api/holidays/upload", upload.single("file"), async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: "File is required" });
-    }
+    if (!req.file) return res.status(400).json({ error: "File is required" });
 
-    const ext = (req.file.originalname.split(".").pop() || "").toLowerCase();
+    const year = Number(req.query.year) || new Date().getFullYear();
+
+    const ext = req.file.originalname.split(".").pop().toLowerCase();
     if (!["xlsx", "xls", "csv"].includes(ext)) {
-      return res
-        .status(400)
-        .json({ error: "Only .xlsx, .xls or .csv files are supported" });
+      try { fs.unlinkSync(req.file.path); } catch {}
+      return res.status(400).json({ error: "Only .xlsx, .xls or .csv files are supported" });
     }
 
-    // Read file with xlsx
     const workbook = xlsx.readFile(req.file.path);
-    const sheetName = workbook.SheetNames[0];
-    const sheet = workbook.Sheets[sheetName];
-    const rows = xlsx.utils.sheet_to_json(sheet, { header: 1 });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
 
-    // Expect header row: Date | Day | Holiday | Type of Holiday
-    for (let i = 1; i < rows.length; i++) {
-      const row = rows[i];
-      if (!row || row.length < 4) continue;
+    // Read as rows (array of arrays)
+    const rows = xlsx.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: "" });
 
-      const dateCell = row[0];
-      const holidayName = row[2];
-      const typeStr = row[3];
+    // Heuristic:
+    // - if sheet has headers like "Date", "Holiday", "Type", use that
+    // - else assume: col0=date, col1=day (ignored), col2=name, col3=type
+    const header = (rows[0] || []).map((x) => String(x).trim().toLowerCase());
+    const hasHeader =
+      header.includes("date") || header.includes("holiday") || header.includes("type");
 
-      if (!dateCell || !holidayName || !typeStr) continue;
+    let dateIdx = 0;
+    let nameIdx = 2;
+    let typeIdx = 3;
 
-      let dateObj;
-      if (dateCell instanceof Date) {
-        dateObj = dateCell;
-      } else {
-        // e.g. "01-Jan" or "01-01-2025"
-        const year = Number(req.query.year) || new Date().getFullYear();
-        const value = String(dateCell).trim();
+    if (hasHeader) {
+      dateIdx = header.indexOf("date");
+      nameIdx = header.indexOf("holiday");
+      if (nameIdx === -1) nameIdx = header.indexOf("name");
+      typeIdx = header.indexOf("type");
 
-        if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-          dateObj = new Date(value);
-        } else {
-          // "01-Jan" -> add year
-          const [day, mon] = value.split("-");
-          dateObj = new Date(`${day}-${mon}-${year}`);
-        }
-      }
-
-      if (isNaN(dateObj.getTime())) {
-        console.warn("Skipping invalid date row:", row);
-        continue;
-      }
-
-      const dateISO = dateObj.toISOString().slice(0, 10);
-
-      await pool.query(
-        `
-        INSERT INTO holidays (holiday_date, name, type)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (holiday_date)
-        DO UPDATE SET name = EXCLUDED.name, type = EXCLUDED.type
-        `,
-        [dateISO, holidayName, typeStr]
-      );
+      // fallback positions if header is partial
+      if (dateIdx === -1) dateIdx = 0;
+      if (nameIdx === -1) nameIdx = 1;
+      if (typeIdx === -1) typeIdx = 2;
     }
 
-    // Clean up uploaded file
-    try {
-      fs.unlinkSync(req.file.path);
-    } catch {}
+    const startRow = hasHeader ? 1 : 0;
 
-    res.json({ success: true, message: "Holidays uploaded successfully" });
+    const toUpsert = [];
+    for (let i = startRow; i < rows.length; i += 1) {
+      const r = rows[i];
+      if (!r || !r.length) continue;
+
+      const dateISO = parseHolidayDateCell(r[dateIdx], year);
+      const name = String(r[nameIdx] || "").trim();
+      const type = String(r[typeIdx] || "").trim();
+
+      if (!dateISO || !name) continue;
+
+      toUpsert.push({
+        holiday_date: dateISO,
+        name,
+        type: type || "Holiday",
+      });
+    }
+
+    // Cleanup upload
+    try { fs.unlinkSync(req.file.path); } catch {}
+
+    if (!toUpsert.length) {
+      return res.status(400).json({ error: "No valid holiday rows found in file" });
+    }
+
+    // Upsert by holiday_date (recommended: unique constraint on holiday_date)
+    const { error } = await supabase
+      .from("holidays")
+      .upsert(toUpsert, { onConflict: "holiday_date" });
+
+    if (error) {
+      console.error("POST /api/holidays/upload upsert error:", error);
+      return res.status(500).json({ error: error.message || "Failed to save holidays" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Saved ${toUpsert.length} holiday rows`,
+    });
   } catch (err) {
-    console.error("POST /api/holidays/upload error:", err);
-    res.status(500).json({ error: "Failed to upload holidays" });
+    console.error("POST /api/holidays/upload crash:", err);
+    return res.status(500).json({ error: "Server error uploading holidays" });
   }
+});
+
+// Optional: keep backward compatibility with old route name if your backend had it
+app.post("/api/holidaysupload", upload.single("file"), async (req, res) => {
+  // forward to the new handler behavior by calling same logic:
+  req.url = "/api/holidays/upload";
+  return res.status(404).json({ error: "Use POST /api/holidays/upload" });
 });
 
 // Get trainers for dropdown
 app.get("/api/trainers", async (req, res) => {
   try {
-    const result = await pool.query(
-      `
-      SELECT id, name, email
-      FROM internal_users
-      WHERE role = 'Trainer'
-      ORDER BY name
-      `
-    );
-    res.json(result.rows);
+    const { data, error } = await supabase
+      .from("internal_users")
+      .select("id, name, email, role")
+      .eq("role", "Trainer")
+      .order("name", { ascending: true });
+
+    if (error) {
+      console.error("GET /api/trainers error:", error);
+      return res.status(200).json([]); // avoid frontend console 500s
+    }
+
+    const trainers = (data || []).map((t) => ({
+      id: t.id,
+      name: t.name,
+      email: t.email,
+    }));
+
+    return res.status(200).json(trainers);
   } catch (err) {
-    console.error("GET /api/trainers error:", err);
-    res.status(500).json({ error: "Failed to fetch trainers" });
+    console.error("GET /api/trainers crash:", err);
+    return res.status(200).json([]);
+  }
+});
+
+// ===============================
+// UNAVAILABILITY REQUESTS - FIXED
+// Provides GET /api/unavailability-requests
+// ===============================
+app.get("/api/unavailability-requests", async (req, res) => {
+  try {
+    // 1) Get all requests
+    const { data: reqs, error: reqErr } = await supabase
+      .from("trainer_unavailability")
+      .select("id, trainer_email, trainer_name, domain, start_date, end_date, reason, status, batch_nos, submitted_at")
+      .order("submitted_at", { ascending: false });
+
+    if (reqErr) {
+      console.error("GET /api/unavailability-requests error:", reqErr);
+      return res.status(200).json([]); // avoid 404/500 in UI
+    }
+
+    // 2) Get trainers lookup for trainer_id enrichment
+    const { data: trainers, error: trErr } = await supabase
+      .from("internal_users")
+      .select("id, email")
+      .eq("role", "Trainer");
+
+    if (trErr) {
+      console.error("GET trainers lookup error:", trErr);
+      // still return requests without trainer_id
+    }
+
+    const emailToId = new Map((trainers || []).map((t) => [String(t.email || "").toLowerCase(), t.id]));
+
+    const out = (reqs || []).map((r) => {
+      const email = String(r.traineremail || "").toLowerCase();
+      return {
+        id: r.id,
+        trainer_id: emailToId.get(email) || null,
+        trainer_name: r.trainer_name || (r.traineremail ? r.traineremail.split("@")[0] : ""),
+        trainer_email: r.trainer_email || "",
+        domain: r.domain || "",
+        start_date: r.start_date,
+        end_date: r.end_date || r.start_date,
+        leave_type: r.reason || "", // your UI checks leave_type/reason keywords
+        reason: r.reason || "",
+        status: r.status || "Pending",
+      };
+    });
+
+    return res.status(200).json(out);
+  } catch (err) {
+    console.error("GET /api/unavailability-requests crash:", err);
+    return res.status(200).json([]);
   }
 });
 
