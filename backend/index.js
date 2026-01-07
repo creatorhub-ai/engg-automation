@@ -2816,20 +2816,51 @@ app.get('/api/trainer-batches', async (req, res) => {
 // ================================
 app.get("/api/trainer-unavailability", async (req, res) => {
   try {
+    console.log("Fetching trainer unavailability..."); // Debug log
+    
     const { data, error } = await supabase
-      .from("trainer_unavailability")
-      .select("id, trainer_name, trainer_email, domain, start_date, end_date, status, assigned_to")
+      .from("trainer_unavailability")  // Exact table name
+      .select(`
+        id,
+        trainer_email,
+        trainer_name,
+        domain,
+        start_date,
+        end_date,
+        reason,
+        submitted_at,
+        status,
+        assigned_to,
+        batch_nos
+      `)
       .order("submitted_at", { ascending: false });
 
+    console.log("Query result:", { count: data?.length || 0, error: error?.message }); // Debug
+
     if (error) {
-      console.error("GET /api/trainer-unavailability error:", error);
-      return res.status(200).json([]);
+      console.error("Supabase error:", error);
+      return res.status(200).json([]); // Graceful empty response
     }
 
-    res.status(200).json(data || []);
+    // Transform data to frontend format
+    const formattedData = (data || []).map(row => ({
+      id: row.id,
+      trainer_name: row.trainer_name || "",
+      trainer_email: row.trainer_email || "",
+      domain: row.domain || "",
+      start_date: row.start_date,  // Keep as-is (YYYY-MM-DD)
+      end_date: row.end_date,
+      reason: row.reason || "",
+      status: row.status || "pending",
+      assigned_to: row.assigned_to || null,
+      batch_nos: row.batch_nos || null,
+    }));
+
+    console.log("Returning formatted data:", formattedData.length, "rows");
+    res.status(200).json(formattedData);
   } catch (err) {
-    console.error("GET /api/trainer-unavailability crash:", err);
-    res.status(200).json([]);
+    console.error("GET /api/trainer-unavailability CRASH:", err);
+    res.status(200).json([]); // Never break UI
   }
 });
 
@@ -2839,33 +2870,55 @@ app.get("/api/trainer-unavailability", async (req, res) => {
 app.get("/api/unavailability-topics/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const ua = await supabase
+
+    // Get unavailability details (exact column names)
+    const { data: ua, error: uaError } = await supabase
       .from("trainer_unavailability")
-      .select("id, domain, start_date, end_date, trainer_email")
+      .select("id, trainer_email, domain, start_date, end_date")
       .eq("id", id)
-      .maybeSingle();
+      .single();
 
-    if (!ua.data) return res.status(200).json({ topics: [] });
-
-    const { data: topics, error } = await supabase
-      .from("course_planner_data")
-      .select("id, date, start_time, end_time, topic_name, trainer_name, trainer_email, batch_no, domain, batch_owner")
-      .gte("date", ua.data.start_date)
-      .lte("date", ua.data.end_date)
-      .eq("domain", ua.data.domain)
-      .eq("trainer_email", ua.data.trainer_email)
-      .eq("trainer_email", ua.data.trainer_email)
-      .order("date", { ascending: true });
-
-    if (error) {
-      console.error("Topics fetch error:", error);
-      return res.status(200).json({ topics: [] });
+    if (uaError || !ua) {
+      console.log("No UA found for id:", id);
+      return res.status(200).json({ topics: [], batch_owner: null });
     }
 
-    res.status(200).json({ topics: topics || [], batch_owner: ua.data?.batch_owner });
+    console.log("UA found:", ua.trainer_email, ua.domain, ua.start_date, ua.end_date);
+
+    // Find topics in course_planner_data for this trainer/domain/date range
+    const { data: topics, error: topicsError } = await supabase
+      .from("course_planner_data")
+      .select(`
+        id,
+        batch_no,
+        domain,
+        date,
+        start_time,
+        end_time,
+        topic_name,
+        trainer_name,
+        trainer_email,
+        batch_owner
+      `)
+      .eq("domain", ua.domain)
+      .eq("trainer_email", ua.trainer_email)
+      .gte("date", ua.start_date)
+      .lte("date", ua.end_date)
+      .order("date", { ascending: true });
+
+    if (topicsError) {
+      console.error("Topics error:", topicsError);
+      return res.status(200).json({ topics: [], batch_owner: null });
+    }
+
+    console.log("Found topics:", topics?.length || 0);
+    res.status(200).json({ 
+      topics: topics || [], 
+      batch_owner: topics?.[0]?.batch_owner || null 
+    });
   } catch (err) {
-    console.error("GET /api/unavailability-topics crash:", err);
-    res.status(200).json({ topics: [] });
+    console.error("GET /api/unavailability-topics error:", err);
+    res.status(200).json({ topics: [], batch_owner: null });
   }
 });
 

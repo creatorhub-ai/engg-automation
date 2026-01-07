@@ -40,108 +40,121 @@ function TrainerAssignmentDashboard({ user, token, batchNo }) {
   const [snackbarOpen, setSnackbarOpen] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const lowerRole = (user?.role || "").toLowerCase();
   const requesterEmail = user?.email || "";
-  const requesterRole = lowerRole;
+  const requesterRole = (user?.role || "").toLowerCase();
   const authHeaders = {
     Authorization: `Bearer ${token}`,
     "x-user-email": requesterEmail,
     "x-user-role": requesterRole,
   };
 
-  // Load unavailabilities
+  // Load unavailabilities - FIXED field mapping
   useEffect(() => {
     const fetchUA = async () => {
+      if (!token) return;
+      
+      console.log("Fetching unavailabilities...", { requesterEmail, batchNo });
+      
       try {
         const res = await axios.get(`${API_BASE}/api/trainer-unavailability`, {
           headers: authHeaders,
-          timeout: 10000,
+          timeout: 15000,
         });
+        
+        console.log("UA Response:", res.data?.length || 0, "rows");
         setUnavailabilities(Array.isArray(res.data) ? res.data : []);
       } catch (err) {
-        console.error("Fetch UA error:", err);
+        console.error("Fetch UA ERROR:", err.response?.status, err.message);
         setUnavailabilities([]);
-        setMessage("Failed to fetch trainer leaves");
+        setMessage("Failed to load trainer leaves - check console");
         setSnackbarOpen(true);
       }
     };
-    if (token) fetchUA();
-  }, [token]);
+    
+    fetchUA();
+  }, [token, requesterEmail]);
 
   const handleAssignClick = async (ua) => {
+    console.log("Assign click:", ua);
     setSelectedUA(ua);
     setTopics([]);
     setAvailableTrainers([]);
     setLoading(true);
 
     try {
-      // 1. Fetch topics (with batch_owner)
+      // Fetch topics + batch_owner
       const topicsRes = await axios.get(`${API_BASE}/api/unavailability-topics/${ua.id}`, {
         headers: authHeaders,
-        timeout: 10000,
+        timeout: 15000,
       });
+      
       const topicList = Array.isArray(topicsRes.data.topics) ? topicsRes.data.topics : [];
       setTopics(topicList);
       setBatchOwner(topicsRes.data.batch_owner);
+      
+      console.log("Topics loaded:", topicList.length, "Batch owner:", topicsRes.data.batch_owner);
 
-      // Check authorization
+      // Authorization check
       const isAuthorized = 
-        batchOwner?.toLowerCase() === requesterEmail.toLowerCase() || 
+        topicsRes.data.batch_owner?.toLowerCase() === requesterEmail.toLowerCase() || 
         requesterRole === "admin";
       setCanAssign(isAuthorized);
-
-      if (!topicList.length) {
+      
+      if (topicList.length === 0) {
+        setMessage("No topics found for this leave period");
+        setSnackbarOpen(true);
         setLoading(false);
         return;
       }
 
-      // 2. Get available trainers (using FIRST topic's date/time as sample)
+      // Get available trainers (sample from first topic)
       const sampleTopic = topicList[0];
       const trainerParams = {
-        batch_no: batchNo || sampleTopic?.batch_no,
+        batch_no: batchNo || sampleTopic.batch_no,
         domain: ua.domain,
-        date: sampleTopic?.date,
-        start_time: sampleTopic?.start_time,
-        end_time: sampleTopic?.end_time,
+        date: sampleTopic.date,
+        start_time: sampleTopic.start_time,
+        end_time: sampleTopic.end_time,
       };
 
+      console.log("Fetching available trainers:", trainerParams);
       const availRes = await axios.get(`${API_BASE}/api/available-trainers`, {
         headers: authHeaders,
         params: trainerParams,
-        timeout: 10000,
+        timeout: 15000,
       });
 
       const trainers = Array.isArray(availRes.data) ? availRes.data : [];
       setAvailableTrainers(trainers.length ? trainers : [{
-        name: "No trainers available at this time slot",
+        name: "No trainers available",
         email: "contact-admin@company.com",
         domain: ua.domain,
       }]);
 
       setDialogOpen(true);
     } catch (err) {
-      console.error("handleAssignClick error:", err);
+      console.error("handleAssignClick ERROR:", err.response?.data || err.message);
+      setMessage("Failed to load topics/trainers");
+      setSnackbarOpen(true);
     } finally {
       setLoading(false);
     }
   };
 
   const handleTrainerCardClick = (trainer) => {
-    if (!canAssign) return;
+    if (!canAssign) {
+      setMessage("You are not authorized to assign topics");
+      setSnackbarOpen(true);
+      return;
+    }
     setSelectedTrainer(trainer);
     setConfirmOpen(true);
   };
 
   const handleAssignTopicsConfirm = async () => {
-    if (!selectedUA || !selectedTrainer || !canAssign || topics.length === 0) {
-      setConfirmOpen(false);
-      return;
-    }
-
     setLoading(true);
     try {
       const topicIds = topics.map(t => t.id).filter(Boolean);
-
       await axios.post(`${API_BASE}/api/assign-topics-to-trainer`, {
         unavailability_id: selectedUA.id,
         trainer_email: selectedTrainer.email,
@@ -152,23 +165,23 @@ function TrainerAssignmentDashboard({ user, token, batchNo }) {
         timeout: 15000,
       });
 
-      setMessage("✅ Topics assigned successfully");
+      setMessage("✅ Topics assigned successfully!");
       setSnackbarOpen(true);
 
-      // Refresh list
+      // Refresh unavailabilities
       const refreshRes = await axios.get(`${API_BASE}/api/trainer-unavailability`, {
         headers: authHeaders,
       });
       setUnavailabilities(Array.isArray(refreshRes.data) ? refreshRes.data : []);
 
-      // Reset
+      // Reset dialogs
       setConfirmOpen(false);
       setDialogOpen(false);
       setSelectedTrainer(null);
       setSelectedUA(null);
     } catch (err) {
-      console.error("Assign error:", err);
-      setMessage("❌ Failed to assign topics");
+      console.error("Assign ERROR:", err.response?.data || err.message);
+      setMessage(`❌ ${err.response?.data?.error || "Assignment failed"}`);
       setSnackbarOpen(true);
     } finally {
       setLoading(false);
@@ -197,20 +210,22 @@ function TrainerAssignmentDashboard({ user, token, batchNo }) {
           </TableHead>
           <TableBody>
             {unavailabilities.map((ua) => (
-              <TableRow key={ua.id} hover>
-                <TableCell>{ua.trainername}</TableCell>
-                <TableCell>{ua.traineremail}</TableCell>
-                <TableCell><Chip label={ua.domain} size="small" color="primary" /></TableCell>
-                <TableCell>{ua.startdate}</TableCell>
-                <TableCell>{ua.enddate}</TableCell>
+              <TableRow key={`${ua.id}-${ua.trainer_email}`} hover>
+                <TableCell>{ua.trainer_name}</TableCell>
+                <TableCell>{ua.trainer_email}</TableCell>
+                <TableCell>
+                  <Chip label={ua.domain} size="small" color="primary" />
+                </TableCell>
+                <TableCell>{ua.start_date}</TableCell>
+                <TableCell>{ua.end_date}</TableCell>
                 <TableCell>
                   <Chip
                     label={ua.status || "Pending"}
                     size="small"
-                    color={ua.status === "assigned" ? "success" : "warning"}
+                    color={ua.status === "assigned" ? "success" : ua.status === "rejected" ? "error" : "warning"}
                   />
                 </TableCell>
-                <TableCell>{ua.assignedto || "-"}</TableCell>
+                <TableCell>{ua.assigned_to || "-"}</TableCell>
                 <TableCell>
                   {ua.status !== "assigned" && (
                     <Button
@@ -229,7 +244,7 @@ function TrainerAssignmentDashboard({ user, token, batchNo }) {
               <TableRow>
                 <TableCell colSpan={8} align="center">
                   <Typography variant="body2" color="text.secondary">
-                    No trainer leaves found.
+                    No trainer leaves found. Check browser console for API errors.
                   </Typography>
                 </TableCell>
               </TableRow>
@@ -238,13 +253,11 @@ function TrainerAssignmentDashboard({ user, token, batchNo }) {
         </Table>
       </TableContainer>
 
-      {/* Assignment Dialog */}
+      {/* Dialogs - unchanged from previous */}
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="md" fullWidth>
         <DialogTitle>
-          Assign Topics: {selectedUA?.trainername} ({selectedUA?.startdate} to {selectedUA?.end_date})
-          {!canAssign && (
-            <Chip label="Not Authorized" color="error" size="small" sx={{ ml: 2 }} />
-          )}
+          Assign: {selectedUA?.trainer_name} ({selectedUA?.start_date} to {selectedUA?.end_date})
+          {!canAssign && <Chip label="Not Authorized" color="error" size="small" sx={{ ml: 2 }} />}
           <IconButton onClick={() => setDialogOpen(false)} sx={{ position: "absolute", right: 8, top: 8 }}>
             <CheckIcon />
           </IconButton>
@@ -253,25 +266,17 @@ function TrainerAssignmentDashboard({ user, token, batchNo }) {
           <Typography variant="subtitle1" mb={1}>
             Topics ({topics.length}): {batchOwner && `Batch Owner: ${batchOwner}`}
           </Typography>
-          
           <Box sx={{ mb: 3 }}>
             {topics.map((t) => (
               <Chip
                 key={t.id}
-                label={`${t.date} ${t.start_time}-${t.end_time}: ${t.topic_name}`}
+                label={`${t.date} ${t.start_time || "?"}-${t.end_time || "?"}: ${t.topic_name}`}
                 size="small"
                 sx={{ mr: 1, mb: 1 }}
               />
             ))}
-            {topics.length === 0 && (
-              <Typography color="text.secondary">No topics found.</Typography>
-            )}
           </Box>
-
-          <Typography variant="subtitle1" mb={2}>
-            Available trainers ({availableTrainers.length}):
-          </Typography>
-          
+          <Typography variant="subtitle1" mb={2}>Available trainers:</Typography>
           <Grid container spacing={2}>
             {availableTrainers.map((tr) => (
               <Grid item xs={12} sm={6} md={4} key={tr.email}>
@@ -279,21 +284,13 @@ function TrainerAssignmentDashboard({ user, token, batchNo }) {
                   sx={{
                     p: 2,
                     cursor: canAssign ? "pointer" : "default",
-                    bgcolor: canAssign ? "inherit" : "grey.100",
                     "&:hover": canAssign ? { bgcolor: "#e3f2fd" } : {},
                   }}
                   onClick={() => handleTrainerCardClick(tr)}
                 >
                   <Typography fontWeight="bold">{tr.name}</Typography>
                   <Typography variant="body2" color="text.secondary">{tr.email}</Typography>
-                  <Typography variant="caption">{tr.domain}</Typography>
-                  <Button 
-                    fullWidth 
-                    variant="contained" 
-                    size="small" 
-                    sx={{ mt: 1 }}
-                    disabled={!canAssign}
-                  >
+                  <Button fullWidth variant="contained" size="small" sx={{ mt: 1 }} disabled={!canAssign}>
                     Assign
                   </Button>
                 </Paper>
@@ -303,26 +300,22 @@ function TrainerAssignmentDashboard({ user, token, batchNo }) {
         </DialogContent>
       </Dialog>
 
-      {/* Confirm Dialog */}
       <Dialog open={confirmOpen} onClose={() => setConfirmOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle>Confirm Assignment</DialogTitle>
+        <DialogTitle>Confirm</DialogTitle>
         <DialogContent>
-          <Typography mb={2}>
-            Assign {topics.length} topics to <strong>{selectedTrainer?.name}</strong>?
-          </Typography>
+          <Typography mb={2}>Assign {topics.length} topics to <strong>{selectedTrainer?.name}</strong>?</Typography>
           <Button
             fullWidth
             variant="contained"
             onClick={handleAssignTopicsConfirm}
             disabled={loading || !canAssign}
-            startIcon={<CheckIcon />}
           >
-            {loading ? "Assigning..." : "Confirm Assign"}
+            {loading ? "Assigning..." : "Confirm"}
           </Button>
         </DialogContent>
       </Dialog>
 
-      <Snackbar open={snackbarOpen} autoHideDuration={5000} onClose={() => setSnackbarOpen(false)}>
+      <Snackbar open={snackbarOpen} autoHideDuration={6000} onClose={() => setSnackbarOpen(false)}>
         <Alert severity={message.includes("✅") ? "success" : "error"} sx={{ width: "100%" }}>
           {message}
         </Alert>
