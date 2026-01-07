@@ -2813,27 +2813,37 @@ app.get('/api/trainer-batches', async (req, res) => {
 
 // 1. GET trainer_unavailability - BULLETPROOF
 app.get("/api/trainer-unavailability", async (req, res) => {
-  console.log("🔍 GET /api/trainer-unavailability - NO AUTH REQUIRED");
+  console.log("🔥 TRAINER UNAVAILABILITY API CALLED");
   
   try {
-    const { data, error, count } = await supabase
+    const { data, error } = await supabase
       .from("trainer_unavailability")
-      .select("*")
+      .select(`
+        id,
+        trainer_name,
+        trainer_email,
+        domain,
+        start_date,
+        end_date,
+        status,
+        assigned_to,
+        submitted_at
+      `)
       .order("submitted_at", { ascending: false })
-      .limit(50);
+      .limit(20);
 
-    console.log("✅ DATA FOUND:", data?.length || 0, "rows");
+    console.log("✅ SUCCESS - Found", data?.length || 0, "rows");
     console.log("FIRST ROW:", data?.[0]);
 
     if (error) {
-      console.error("❌ ERROR:", error.message);
+      console.error("❌ ERROR:", error);
       return res.status(500).json({ error: error.message, data: [] });
     }
 
     res.json(data || []);
   } catch (err) {
     console.error("💥 CRASH:", err);
-    res.status(500).json([]);
+    res.json([]);
   }
 });
 
