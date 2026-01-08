@@ -16,16 +16,17 @@ import {
   TableBody,
   Alert,
   Fade,
+  Chip,
 } from "@mui/material";
 
 const API_BASE =
   process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 
 const ASSESSMENT_TYPES = [
-  { key: "weekly-assessment", label: "Weekly Assessment Score", topic: "Weekly Assessment" },
-  { key: "intermediate-assessment", label: "Intermediate Assessment Score", topic: "Intermediate Assessment" },
-  { key: "module-level-assessment", label: "Module Level Assessment", topic: "Module Level Assessment" },
-  { key: "weekly-quiz", label: "Weekly Quiz", topic: "Weekly Quiz" },
+  { key: "weekly-assessment", label: "Weekly Assessment Score", topic: "Weekly Assessment", daysWindow: 4 },
+  { key: "intermediate-assessment", label: "Intermediate Assessment Score", topic: "Intermediate Assessment", daysWindow: 5 },
+  { key: "module-level-assessment", label: "Module Level Assessment", topic: "Module Level Assessment", daysWindow: 6 },
+  { key: "weekly-quiz", label: "Weekly Quiz", topic: "Weekly Quiz", daysWindow: 7 },
 ];
 
 function MarkSheet() {
@@ -40,8 +41,50 @@ function MarkSheet() {
   const [selectedDate, setSelectedDate] = useState("");
   const [selectedTopic, setSelectedTopic] = useState("");
   const [message, setMessage] = useState("");
+  const [isWindowOpen, setIsWindowOpen] = useState(true);
+  const [windowCloseDate, setWindowCloseDate] = useState("");
 
   const numberLabel = "Week No";
+
+  // Calculate days window based on assessment type
+  const getDaysWindow = () => {
+    const type = ASSESSMENT_TYPES.find(t => t.key === assessmentType);
+    return type?.daysWindow || 7;
+  };
+
+  // Check if mark entry window is open
+  const checkMarkEntryWindow = (assessmentDate) => {
+    if (!assessmentDate) return true;
+    
+    try {
+      // Parse assessment date (format: DD/MM/YYYY)
+      const [day, month, year] = assessmentDate.split('/');
+      const assessment = new Date(`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`);
+      
+      // Calculate close date (end of day)
+      const daysWindow = getDaysWindow();
+      const closeDate = new Date(assessment);
+      closeDate.setDate(assessment.getDate() + daysWindow);
+      closeDate.setHours(23, 59, 59, 999);
+      
+      const now = new Date();
+      const isOpen = now <= closeDate;
+      
+      // Format close date for display
+      const closeDateStr = closeDate.toLocaleDateString('en-GB', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      });
+      
+      setWindowCloseDate(closeDateStr);
+      setIsWindowOpen(isOpen);
+      return isOpen;
+    } catch (error) {
+      console.error("Date parsing error:", error);
+      return true;
+    }
+  };
 
   // Load learners for batch
   useEffect(() => {
@@ -87,10 +130,19 @@ function MarkSheet() {
       setSelectedWeekNo("");
       setSelectedDate("");
       setSelectedTopic("");
+      setIsWindowOpen(true);
+      setWindowCloseDate("");
     } else {
       setPeriods([]);
     }
   }, [assessmentType, batchNo]);
+
+  // Check window when period is selected
+  useEffect(() => {
+    if (selectedDate) {
+      checkMarkEntryWindow(selectedDate);
+    }
+  }, [selectedDate, assessmentType]);
 
   const handlePeriodSelect = (e) => {
     setPeriodValue(e.target.value);
@@ -120,6 +172,12 @@ function MarkSheet() {
     if (!selectedWeekNo || !outOff) {
       setMessage("⚠️ Select week and out-off before saving.");
       setTimeout(() => setMessage(""), 3000);
+      return;
+    }
+
+    if (!isWindowOpen) {
+      setMessage("❌ Mark entry window is closed. Cannot save marks.");
+      setTimeout(() => setMessage(""), 5000);
       return;
     }
 
@@ -161,6 +219,8 @@ function MarkSheet() {
 
     setTimeout(() => setMessage(""), 3000);
   };
+
+  const currentType = ASSESSMENT_TYPES.find((at) => at.key === assessmentType);
 
   return (
     <Box sx={{ maxWidth: 1200, mx: "auto", my: 3 }}>
@@ -226,37 +286,53 @@ function MarkSheet() {
             />
           </FormControl>
           {selectedDate && (
-            <Box sx={{ display: "flex", alignItems: "center", px: 2 }}>
-              <Typography variant="body2" color="text.secondary">
-                <b>Date:</b> {selectedDate}
-              </Typography>
-            </Box>
+            <>
+              <Box sx={{ display: "flex", alignItems: "center", px: 2 }}>
+                <Typography variant="body2" color="text.secondary">
+                  <b>Date:</b> {selectedDate}
+                </Typography>
+              </Box>
+              <Box sx={{ display: "flex", alignItems: "center", px: 2 }}>
+                {isWindowOpen ? (
+                  <Chip 
+                    label={`Window Open until ${windowCloseDate}`} 
+                    color="success" 
+                    size="small"
+                  />
+                ) : (
+                  <Chip 
+                    label={`Window Closed (${windowCloseDate})`} 
+                    color="error" 
+                    size="small"
+                  />
+                )}
+              </Box>
+            </>
           )}
         </Box>
 
         <Typography variant="h6" color="primary" sx={{ mb: 2, mt: 4 }}>
-          {ASSESSMENT_TYPES.find((at) => at.key === assessmentType)?.label}
+          {currentType?.label}
         </Typography>
+
+        {!isWindowOpen && selectedDate && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            <Typography variant="body2">
+              Mark entry window is closed for {selectedDate}. 
+              Last date was <strong>{windowCloseDate}</strong>.
+            </Typography>
+          </Alert>
+        )}
 
         <Paper sx={{ mb: 3 }}>
           <Table sx={{ minWidth: 800 }}>
             <TableHead>
               <TableRow>
-                <TableCell>
-                  <b>Name</b>
-                </TableCell>
-                <TableCell>
-                  <b>Email</b>
-                </TableCell>
-                <TableCell>
-                  <b>Topic Name</b>
-                </TableCell>
-                <TableCell>
-                  <b>Marks Scored</b>
-                </TableCell>
-                <TableCell>
-                  <b>Percentage</b>
-                </TableCell>
+                <TableCell><b>Name</b></TableCell>
+                <TableCell><b>Email</b></TableCell>
+                <TableCell><b>Topic Name</b></TableCell>
+                <TableCell><b>Marks Scored</b></TableCell>
+                <TableCell><b>Percentage</b></TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -277,7 +353,7 @@ function MarkSheet() {
                         handleMarksInput(learner.id, e.target.value)
                       }
                       size="small"
-                      disabled={!selectedWeekNo || !outOff}
+                      disabled={!selectedWeekNo || !outOff || !isWindowOpen}
                     />
                   </TableCell>
                   <TableCell>
@@ -302,9 +378,9 @@ function MarkSheet() {
             fontSize: "1rem",
             boxShadow: 4,
           }}
-          disabled={!selectedWeekNo || !outOff}
+          disabled={!selectedWeekNo || !outOff || !isWindowOpen}
         >
-          Save All
+          {isWindowOpen ? "Save All" : "Window Closed"}
         </Button>
         <Fade in={!!message}>
           <Box>
@@ -315,7 +391,7 @@ function MarkSheet() {
                     ? "success"
                     : message.startsWith("⚠️")
                     ? "warning"
-                    : "info"
+                    : "error"
                 }
               >
                 {message}
