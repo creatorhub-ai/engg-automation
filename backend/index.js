@@ -75,15 +75,15 @@ app.use(
 
 // 🔥 GLOBAL OPTIONS HANDLER - BEFORE ALL ROUTES
 app.options("*", (req, res) => {
-  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Origin', 'https://engg-automation-r1ke.onrender.com');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cache-Control, Accept');
   res.status(200).end();
 });
 
 // Mount routers
-app.use("/api/marks", marksWindowsRouter);
-app.use("/api/marks", marksSaveRouter);
+app.use('/api/marks', marksWindowsRouter);
+app.use('/api/marks', marksSaveRouter);
 app.use("/api/attendance", attendanceRoutes);
 
 // =====================================================
@@ -123,7 +123,6 @@ const transporter = nodemailer.createTransport({
 
 const validateMarkEntryWindow = (assessmentDate, assessmentType) => {
   try {
-    // Map assessment types to days window - matches frontend exactly
     const daysWindowMap = {
       'weekly-assessment': 4,
       'intermediate-assessment': 5,
@@ -132,38 +131,42 @@ const validateMarkEntryWindow = (assessmentDate, assessmentType) => {
     };
 
     const daysWindow = daysWindowMap[assessmentType] || 7;
-
-    // Parse assessment date (DD/MM/YYYY format from frontend)
+    
+    // STRICT DD/MM/YYYY parsing
     const [day, month, year] = assessmentDate.split('/');
     const assessment = new Date(`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`);
     
     if (isNaN(assessment.getTime())) {
-      return {
-        valid: false,
-        error: 'Invalid assessment date format. Expected DD/MM/YYYY'
+      return { valid: false, error: 'Invalid date format (DD/MM/YYYY)' };
+    }
+
+    // BLOCK old dates (2025 in 2026)
+    const now = new Date('2026-01-08T22:27:00+05:30'); // Current IST time
+    const thirtyDaysAgo = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+    
+    if (assessment < thirtyDaysAgo) {
+      return { 
+        valid: false, 
+        error: `Assessment too old (${assessment.toLocaleDateString('en-GB')}). Max 30 days allowed.` 
       };
     }
-    
-    // Calculate close date (end of day: 11:59:59 PM)
+
     const closeDate = new Date(assessment);
     closeDate.setDate(assessment.getDate() + daysWindow);
     closeDate.setHours(23, 59, 59, 999);
+
+    const isOpen = now <= closeDate;
     
-    const now = new Date();
-    
-    if (now > closeDate) {
+    if (!isOpen) {
       return {
         valid: false,
-        error: `Mark entry window closed for ${assessmentType}. Assessment date: ${assessmentDate}. Last date: ${closeDate.toLocaleDateString('en-GB')}`
+        error: `Window closed. Assessment: ${assessmentDate}. Deadline: ${closeDate.toLocaleDateString('en-GB')}`
       };
     }
-    
+
     return { valid: true };
   } catch (error) {
-    return {
-      valid: false,
-      error: 'Invalid assessment date format. Expected DD/MM/YYYY'
-    };
+    return { valid: false, error: 'Date validation failed' };
   }
 };
 
@@ -710,47 +713,27 @@ app.get("/api/marks/window-status", async (req, res) => {
 
 // 2) POST /api/marks/:assessmentType
 app.post('/api/marks/:assessmentType', async (req, res) => {
-  const assessmentType = req.params.assessmentType;
-  const {
-    learner_id,
-    batch_no,
-    week_no,
-    assessment_date,
-    out_off,
-    points,
-    percentage
-  } = req.body;
-
-  if (!learner_id || !batch_no || !week_no || !assessment_date || !out_off) {
-    return res.status(400).json({
-      error: 'Required fields missing: learner_id, batch_no, week_no, assessment_date, out_off'
-    });
-  }
-
   try {
-    // NEW: Mark entry window validation (blocks DB writes)
-    const windowValidation = validateMarkEntryWindow(assessment_date, assessmentType);
-    if (!windowValidation.valid) {
-      console.log('Window validation failed:', windowValidation.error);
-      return res.status(403).json({
-        error: windowValidation.error
-      });
+    const { assessmentType } = req.params;
+    const { learner_id, batch_no, week_no, assessment_date, out_off, points, percentage } = req.body;
+
+    // CORS headers for direct response
+    res.header('Access-Control-Allow-Origin', 'https://engg-automation-r1ke.onrender.com');
+    res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type');
+
+    if (!learner_id || !batch_no || !week_no || !assessment_date || !out_off) {
+      return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    // Keep existing window status check for compatibility
-    const status = await getWindowStatus({
-      batchNo: batch_no,
-      assessmentType: assessmentType,
-      weekNo: week_no
-    });
-    
-    if (!status?.exists || !status.isopen) {
-      return res.status(403).json({
-        error: 'Marks entry portal is closed for this assessment'
-      });
+    // CRITICAL: Window validation FIRST
+    const windowCheck = validateMarkEntryWindow(assessment_date, assessmentType);
+    if (!windowCheck.valid) {
+      console.log(`🚫 BLOCKED: ${windowCheck.error}`);
+      return res.status(403).json({ error: windowCheck.error });
     }
 
-    // Table mapping (your existing logic)
+    // Table mapping
     const tableMap = {
       'weekly-assessment': 'weeklyassessmentmarks',
       'intermediate-assessment': 'intermediateassessmentmarks',
@@ -760,42 +743,34 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
 
     const tableName = tableMap[assessmentType];
     if (!tableName) {
-      return res.status(400).json({
-        error: 'Invalid assessmentType'
-      });
+      return res.status(400).json({ error: 'Invalid assessment type' });
     }
 
-    // Prepare upsert data
+    // Save to database
     const upsertData = {
-      learner_id: parseInt(learner_id, 10),
-      batch_no: batch_no,
-      week_no: parseInt(week_no, 10),
-      assessment_date: assessment_date,
-      out_off: parseInt(out_off, 10),
-      points: points ? parseInt(points, 10) : null,
-      percentage: percentage ? parseInt(percentage, 10) : null
+      learner_id: Number(learner_id),
+      batch_no,
+      week_no: Number(week_no),
+      assessment_date,
+      out_off: Number(out_off),
+      points: points ? Number(points) : null,
+      percentage: percentage ? Number(percentage) : null
     };
 
-    // Upsert to Supabase
     const { error } = await supabase
       .from(tableName)
-      .upsert(upsertData, {
-        onConflict: 'learner_id,batch_no,week_no'
-      });
+      .upsert(upsertData, { onConflict: 'learner_id,batch_no,week_no' });
 
     if (error) {
-      console.error('save marks error:', error);
-      return res.status(500).json({
-        error: 'Failed to save marks'
-      });
+      console.error('Database error:', error);
+      return res.status(500).json({ error: 'Failed to save marks' });
     }
 
-    return res.json({ success: true });
+    console.log(`✅ SAVED: ${learner_id} | ${batch_no} | ${assessment_date}`);
+    res.json({ success: true });
   } catch (err) {
-    console.error('save marks error:', err);
-    return res.status(500).json({
-      error: 'Internal server error'
-    });
+    console.error('Marks endpoint error:', err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 

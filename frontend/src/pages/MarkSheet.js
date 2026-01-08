@@ -19,8 +19,7 @@ import {
   Chip,
 } from "@mui/material";
 
-const API_BASE =
-  process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
+const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 
 const ASSESSMENT_TYPES = [
   { key: "weekly-assessment", label: "Weekly Assessment Score", topic: "Weekly Assessment", daysWindow: 4 },
@@ -46,61 +45,67 @@ function MarkSheet() {
 
   const numberLabel = "Week No";
 
-  // Calculate days window based on assessment type
-  const getDaysWindow = () => {
-    const type = ASSESSMENT_TYPES.find(t => t.key === assessmentType);
-    return type?.daysWindow || 7;
-  };
+  // FIXED: STRICT date validation - blocks 2025 dates in 2026
+  const checkMarkEntryWindow = (assessmentDateStr) => {
+    if (!assessmentDateStr) return { isOpen: true, closeDate: "" };
 
-  // Check if mark entry window is open
-  const checkMarkEntryWindow = (assessmentDate) => {
-    if (!assessmentDate) return true;
-    
     try {
-      // Parse assessment date (format: DD/MM/YYYY)
-      const [day, month, year] = assessmentDate.split('/');
-      const assessment = new Date(`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`);
+      // Parse DD/MM/YYYY strictly
+      const [day, month, year] = assessmentDateStr.split('/');
+      if (!day || !month || !year || year.length !== 4) {
+        return { isOpen: false, closeDate: "Invalid date format", error: "Invalid date format" };
+      }
+
+      const assessmentDate = new Date(`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`);
       
-      // Calculate close date (end of day)
-      const daysWindow = getDaysWindow();
-      const closeDate = new Date(assessment);
-      closeDate.setDate(assessment.getDate() + daysWindow);
+      // Validate date is valid and not in future more than 30 days
+      const now = new Date();
+      const thirtyDaysFromNow = new Date(now.getTime() + (30 * 24 * 60 * 60 * 1000));
+      
+      if (assessmentDate > thirtyDaysFromNow || assessmentDate < new Date('2025-01-01')) {
+        return { 
+          isOpen: false, 
+          closeDate: "Invalid date range", 
+          error: "Assessment date must be within last 30 days" 
+        };
+      }
+
+      const typeConfig = ASSESSMENT_TYPES.find(t => t.key === assessmentType);
+      const daysWindow = typeConfig?.daysWindow || 7;
+      
+      // Calculate exact close date (end of day)
+      const closeDate = new Date(assessmentDate);
+      closeDate.setDate(assessmentDate.getDate() + daysWindow);
       closeDate.setHours(23, 59, 59, 999);
       
-      const now = new Date();
       const isOpen = now <= closeDate;
       
-      // Format close date for display
       const closeDateStr = closeDate.toLocaleDateString('en-GB', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric'
+        day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
       });
-      
-      setWindowCloseDate(closeDateStr);
-      setIsWindowOpen(isOpen);
-      return isOpen;
+
+      return { isOpen, closeDate: closeDateStr };
     } catch (error) {
-      console.error("Date parsing error:", error);
-      return true;
+      console.error("Date validation error:", error);
+      return { isOpen: false, closeDate: "Error", error: "Date parsing error" };
     }
   };
 
-  // Load learners for batch
+  // Load learners
   useEffect(() => {
     if (batchNo) {
       fetch(`${API_BASE}/apigetlearners?batchno=${encodeURIComponent(batchNo)}`)
-        .then((res) => {
+        .then(res => {
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           return res.json();
         })
-        .then((data) => {
+        .then(data => {
           const learnersClean = (data || [])
-            .filter((l) => l.id)
-            .map((l) => ({ ...l, id: l.id }));
+            .filter(l => l.id)
+            .map(l => ({ ...l, id: l.id }));
           setLearners(learnersClean);
         })
-        .catch((err) => {
+        .catch(err => {
           console.error("Failed to load learners:", err);
           setLearners([]);
         });
@@ -109,38 +114,33 @@ function MarkSheet() {
     }
   }, [batchNo]);
 
-  // Load periods (week/date/topic) for batch + assessment type
+  // Load periods
   useEffect(() => {
     if (batchNo) {
-      fetch(
-        `${API_BASE}/apiperiods/${encodeURIComponent(
-          batchNo
-        )}/${encodeURIComponent(assessmentType)}`
-      )
-        .then((res) => {
+      fetch(`${API_BASE}/apiperiods/${encodeURIComponent(batchNo)}/${encodeURIComponent(assessmentType)}`)
+        .then(res => {
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           return res.json();
         })
-        .then((data) => setPeriods(Array.isArray(data) ? data : []))
-        .catch((err) => {
+        .then(data => setPeriods(Array.isArray(data) ? data : []))
+        .catch(err => {
           console.error("Failed to load periods:", err);
           setPeriods([]);
         });
-      setPeriodValue("");
-      setSelectedWeekNo("");
-      setSelectedDate("");
-      setSelectedTopic("");
-      setIsWindowOpen(true);
-      setWindowCloseDate("");
+      // Reset selections
+      setPeriodValue(""); setSelectedWeekNo(""); setSelectedDate(""); 
+      setSelectedTopic(""); setIsWindowOpen(true); setWindowCloseDate("");
     } else {
       setPeriods([]);
     }
   }, [assessmentType, batchNo]);
 
-  // Check window when period is selected
+  // Check window on period selection
   useEffect(() => {
     if (selectedDate) {
-      checkMarkEntryWindow(selectedDate);
+      const result = checkMarkEntryWindow(selectedDate);
+      setIsWindowOpen(result.isOpen);
+      setWindowCloseDate(result.closeDate);
     }
   }, [selectedDate, assessmentType]);
 
@@ -153,12 +153,14 @@ function MarkSheet() {
   };
 
   const handleMarksInput = (learnerId, value) => {
+    if (!isWindowOpen) return; // Block input if window closed
+    
     let val = value.replace(/[^0-9.]/g, "");
     let percentage = "";
     if (outOff && val !== "") {
       percentage = Math.round((parseFloat(val) / parseFloat(outOff)) * 100);
     }
-    setMarks((prev) => ({
+    setMarks(prev => ({
       ...prev,
       [learnerId]: {
         ...prev[learnerId],
@@ -176,7 +178,7 @@ function MarkSheet() {
     }
 
     if (!isWindowOpen) {
-      setMessage("❌ Mark entry window is closed. Cannot save marks.");
+      setMessage("❌ Mark entry window CLOSED. Cannot save marks.");
       setTimeout(() => setMessage(""), 5000);
       return;
     }
@@ -187,40 +189,45 @@ function MarkSheet() {
     try {
       for (let learner of learners) {
         if (!marks[learner.id] || !marks[learner.id].points) continue;
-        const baseData = {
+        
+        const payload = {
           learner_id: learner.id,
           batch_no: batchNo,
           week_no: selectedWeekNo,
           assessment_date: selectedDate,
           out_off: outOff,
+          points: marks[learner.id].points,
+          percentage: marks[learner.id].percentage || null,
         };
-        const payload = { ...baseData, ...marks[learner.id] };
 
         const res = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
+
         if (!res.ok) {
           const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.error || "Failed to save marks");
+          throw new Error(errData.error || `HTTP ${res.status}`);
         }
         anySaved = true;
       }
+
       if (anySaved) {
         setMessage("✅ Marks saved successfully!");
+        setMarks({}); // Clear marks after save
       } else {
         setMessage("⚠️ Please enter points for at least one learner.");
       }
     } catch (err) {
       console.error("Error saving marks:", err);
-      setMessage("❌ Error saving marks: " + err.message);
+      setMessage(`❌ Error: ${err.message}`);
     }
 
-    setTimeout(() => setMessage(""), 3000);
+    setTimeout(() => setMessage(""), 4000);
   };
 
-  const currentType = ASSESSMENT_TYPES.find((at) => at.key === assessmentType);
+  const currentType = ASSESSMENT_TYPES.find(at => at.key === assessmentType);
 
   return (
     <Box sx={{ maxWidth: 1200, mx: "auto", my: 3 }}>
@@ -229,115 +236,86 @@ function MarkSheet() {
           Marks Entry Dashboard
         </Typography>
 
-        <Box sx={{ display: "flex", gap: 3, mb: 2, flexWrap: "wrap" }}>
+        <Box sx={{ display: "flex", gap: 3, mb: 2, flexWrap: "wrap", alignItems: "end" }}>
           <FormControl sx={{ minWidth: 180 }}>
-            <TextField
-              label="Batch No"
-              value={batchNo}
-              onChange={(e) => setBatchNo(e.target.value)}
-              size="small"
-            />
+            <TextField label="Batch No" value={batchNo} onChange={(e) => setBatchNo(e.target.value)} size="small" />
           </FormControl>
+          
           <FormControl sx={{ minWidth: 260 }}>
             <InputLabel>Assessment Type</InputLabel>
-            <Select
-              label="Assessment Type"
-              value={assessmentType}
-              onChange={(e) => setAssessmentType(e.target.value)}
-              size="small"
-            >
-              {ASSESSMENT_TYPES.map((at) => (
-                <MenuItem key={at.key} value={at.key}>
-                  {at.label}
+            <Select label="Assessment Type" value={assessmentType} onChange={(e) => setAssessmentType(e.target.value)} size="small">
+              {ASSESSMENT_TYPES.map(at => (
+                <MenuItem key={at.key} value={at.key}>{at.label}</MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          
+          <FormControl sx={{ minWidth: 200 }}>
+            <InputLabel>{numberLabel}</InputLabel>
+            <Select label={numberLabel} value={periodValue} onChange={handlePeriodSelect} size="small">
+              <MenuItem value="">Select {numberLabel}</MenuItem>
+              {periods.map(p => (
+                <MenuItem key={`${p.week_no}::${p.date}::${p.topic_name}`} value={`${p.week_no}::${p.date}::${p.topic_name}`}>
+                  {p.week_no} {p.date ? `(${p.date})` : ""}
                 </MenuItem>
               ))}
             </Select>
           </FormControl>
-          <FormControl sx={{ minWidth: 200 }}>
-            <InputLabel>{numberLabel}</InputLabel>
-            <Select
-              label={numberLabel}
-              value={periodValue}
-              onChange={handlePeriodSelect}
-              size="small"
-            >
-              <MenuItem value="">Select {numberLabel}</MenuItem>
-              {Array.isArray(periods) &&
-                periods.map((p) => (
-                  <MenuItem
-                    key={`${p.week_no}::${p.date}::${p.topic_name}`}
-                    value={`${p.week_no}::${p.date}::${p.topic_name}`}
-                  >
-                    {p.week_no} {p.date ? `(${p.date})` : ""}
-                  </MenuItem>
-                ))}
-            </Select>
-          </FormControl>
+          
           <FormControl sx={{ minWidth: 160 }}>
             <TextField
               label="Out Off (Marks)"
               type="number"
               inputProps={{ min: 1 }}
               value={outOff}
-              onChange={(e) =>
-                setOutOff(e.target.value.replace(/[^0-9]/g, ""))
-              }
+              onChange={(e) => setOutOff(e.target.value.replace(/[^0-9]/g, ""))}
               size="small"
             />
           </FormControl>
+
           {selectedDate && (
             <>
-              <Box sx={{ display: "flex", alignItems: "center", px: 2 }}>
+              <Box sx={{ px: 2 }}>
                 <Typography variant="body2" color="text.secondary">
                   <b>Date:</b> {selectedDate}
                 </Typography>
               </Box>
-              <Box sx={{ display: "flex", alignItems: "center", px: 2 }}>
+              <Box sx={{ px: 2 }}>
                 {isWindowOpen ? (
-                  <Chip 
-                    label={`Window Open until ${windowCloseDate}`} 
-                    color="success" 
-                    size="small"
-                  />
+                  <Chip label={`✅ Open until ${windowCloseDate}`} color="success" size="small" />
                 ) : (
-                  <Chip 
-                    label={`Window Closed (${windowCloseDate})`} 
-                    color="error" 
-                    size="small"
-                  />
+                  <Chip label={`❌ CLOSED (${windowCloseDate})`} color="error" size="small" />
                 )}
               </Box>
             </>
           )}
         </Box>
 
+        {selectedDate && !isWindowOpen && (
+          <Alert severity="error" sx={{ mb: 3 }}>
+            <strong>🚫 Mark entry window CLOSED</strong> for {selectedDate}. 
+            Last date was <strong>{windowCloseDate}</strong>.
+          </Alert>
+        )}
+
         <Typography variant="h6" color="primary" sx={{ mb: 2, mt: 4 }}>
           {currentType?.label}
         </Typography>
 
-        {!isWindowOpen && selectedDate && (
-          <Alert severity="error" sx={{ mb: 2 }}>
-            <Typography variant="body2">
-              Mark entry window is closed for {selectedDate}. 
-              Last date was <strong>{windowCloseDate}</strong>.
-            </Typography>
-          </Alert>
-        )}
-
-        <Paper sx={{ mb: 3 }}>
+        <Paper sx={{ mb: 3, overflowX: 'auto' }}>
           <Table sx={{ minWidth: 800 }}>
             <TableHead>
               <TableRow>
                 <TableCell><b>Name</b></TableCell>
                 <TableCell><b>Email</b></TableCell>
-                <TableCell><b>Topic Name</b></TableCell>
-                <TableCell><b>Marks Scored</b></TableCell>
-                <TableCell><b>Percentage</b></TableCell>
+                <TableCell><b>Topic</b></TableCell>
+                <TableCell><b>Marks</b></TableCell>
+                <TableCell><b>%</b></TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {learners.map((learner) => (
-                <TableRow key={String(learner.id)}>
+              {learners.map(learner => (
+                <TableRow key={learner.id}>
                   <TableCell>{learner.name}</TableCell>
                   <TableCell>{learner.email}</TableCell>
                   <TableCell>{selectedTopic}</TableCell>
@@ -345,59 +323,40 @@ function MarkSheet() {
                     <TextField
                       type="number"
                       value={marks[learner.id]?.points || ""}
-                      inputProps={{
-                        min: 0,
-                        max: outOff || "",
-                      }}
-                      onChange={(e) =>
-                        handleMarksInput(learner.id, e.target.value)
-                      }
+                      inputProps={{ min: 0, max: outOff || undefined }}
+                      onChange={(e) => handleMarksInput(learner.id, e.target.value)}
                       size="small"
-                      disabled={!selectedWeekNo || !outOff || !isWindowOpen}
+                      disabled={!isWindowOpen || !selectedWeekNo || !outOff}
+                      sx={{ width: 100 }}
                     />
                   </TableCell>
                   <TableCell>
-                    {marks[learner.id]?.percentage && outOff
-                      ? `${marks[learner.id].percentage}%`
-                      : ""}
+                    {marks[learner.id]?.percentage && outOff ? `${marks[learner.id].percentage}%` : ""}
                   </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         </Paper>
+
         <Button
           variant="contained"
           color="primary"
           fullWidth
           onClick={handleSave}
-          sx={{
-            py: 1.5,
-            fontWeight: "bold",
-            mb: 2,
-            fontSize: "1rem",
-            boxShadow: 4,
-          }}
-          disabled={!selectedWeekNo || !outOff || !isWindowOpen}
+          disabled={!isWindowOpen || !selectedWeekNo || !outOff}
+          sx={{ py: 1.5, fontSize: "1.1rem", fontWeight: 600 }}
         >
-          {isWindowOpen ? "Save All" : "Window Closed"}
+          {isWindowOpen ? `💾 Save All Marks` : `🚫 Window Closed`}
         </Button>
+
         <Fade in={!!message}>
-          <Box>
-            {message && (
-              <Alert
-                severity={
-                  message.startsWith("✅")
-                    ? "success"
-                    : message.startsWith("⚠️")
-                    ? "warning"
-                    : "error"
-                }
-              >
-                {message}
-              </Alert>
-            )}
-          </Box>
+          <Alert severity={
+            message.startsWith("✅") ? "success" :
+            message.startsWith("⚠️") ? "warning" : "error"
+          } sx={{ mt: 2 }}>
+            {message}
+          </Alert>
         </Fade>
       </Paper>
     </Box>
