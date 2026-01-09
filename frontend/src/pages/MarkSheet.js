@@ -42,52 +42,101 @@ function MarkSheet() {
   const [message, setMessage] = useState("");
   const [isWindowOpen, setIsWindowOpen] = useState(true);
   const [windowCloseDate, setWindowCloseDate] = useState("");
+  const [windowStatus, setWindowStatus] = useState("checking");
 
   const numberLabel = "Week No";
 
-  // FIXED: STRICT date validation - blocks 2025 dates in 2026
+  // ✅ FIXED: Robust date parsing for ALL formats
+  const parseAssessmentDate = (dateStr) => {
+    if (!dateStr) return null;
+
+    // Handle DD-MM-YYYY, DD/MM/YYYY, DD-MM-YY, DD/MM/YY
+    const dashPattern = /(\d{1,2})-(\d{1,2})-(\d{4}|\d{2})/;
+    const slashPattern = /(\d{1,2})[\/](\d{1,2})[\/](\d{4}|\d{2})/;
+
+    let day, month, year;
+
+    // Try dash format first (API common format)
+    let match = dateStr.match(dashPattern);
+    if (match) {
+      day = parseInt(match[1], 10);
+      month = parseInt(match[2], 10);
+      year = parseInt(match[3], 10);
+    } else {
+      // Try slash format
+      match = dateStr.match(slashPattern);
+      if (match) {
+        day = parseInt(match[1], 10);
+        month = parseInt(match[2], 10);
+        year = parseInt(match[3], 10);
+      }
+    }
+
+    if (!day || !month || !year || day > 31 || month > 12) return null;
+
+    // Handle 2-digit years (00-29 = 2000-2029, 30-99 = 1930-1999)
+    if (year < 100) {
+      year = year >= 30 ? 1900 + year : 2000 + year;
+    }
+
+    const date = new Date(year, month - 1, day);
+    
+    // Validate parsed date
+    if (date.getDate() !== day || date.getMonth() !== month - 1 || date.getFullYear() !== year) {
+      return null;
+    }
+
+    return date;
+  };
+
+  // ✅ FIXED: Window validation logic
   const checkMarkEntryWindow = (assessmentDateStr) => {
-    if (!assessmentDateStr) return { isOpen: true, closeDate: "" };
+    const assessmentDate = parseAssessmentDate(assessmentDateStr);
+    
+    if (!assessmentDate) {
+      setWindowStatus("invalid");
+      setIsWindowOpen(false);
+      setWindowCloseDate("Invalid date format");
+      return { isOpen: false, closeDate: "Invalid date format" };
+    }
 
     try {
-      // Parse DD/MM/YYYY strictly
-      const [day, month, year] = assessmentDateStr.split('/');
-      if (!day || !month || !year || year.length !== 4) {
-        return { isOpen: false, closeDate: "Invalid date format", error: "Invalid date format" };
-      }
-
-      const assessmentDate = new Date(`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`);
-      
-      // Validate date is valid and not in future more than 30 days
-      const now = new Date();
-      const thirtyDaysFromNow = new Date(now.getTime() + (30 * 24 * 60 * 60 * 1000));
-      
-      if (assessmentDate > thirtyDaysFromNow || assessmentDate < new Date('2025-01-01')) {
-        return { 
-          isOpen: false, 
-          closeDate: "Invalid date range", 
-          error: "Assessment date must be within last 30 days" 
-        };
-      }
-
+      const now = new Date(); // Current: 09/01/2026 09:42 AM IST
       const typeConfig = ASSESSMENT_TYPES.find(t => t.key === assessmentType);
       const daysWindow = typeConfig?.daysWindow || 7;
-      
-      // Calculate exact close date (end of day)
+
+      // Check reasonable date range (past 90 days to future 60 days)
+      const minDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+      const maxDate = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
+
+      if (assessmentDate < minDate || assessmentDate > maxDate) {
+        setWindowStatus("out_of_range");
+        setIsWindowOpen(false);
+        setWindowCloseDate("Date out of valid range");
+        return { isOpen: false, closeDate: "Date out of valid range" };
+      }
+
+      // Calculate closing date (end of day)
       const closeDate = new Date(assessmentDate);
       closeDate.setDate(assessmentDate.getDate() + daysWindow);
       closeDate.setHours(23, 59, 59, 999);
-      
+
       const isOpen = now <= closeDate;
       
       const closeDateStr = closeDate.toLocaleDateString('en-GB', {
-        day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+        day: '2-digit', month: '2-digit', year: 'numeric', 
+        hour: '2-digit', minute: '2-digit', hour12: false
       });
 
+      setWindowStatus("valid");
+      setIsWindowOpen(isOpen);
+      setWindowCloseDate(closeDateStr);
+      
       return { isOpen, closeDate: closeDateStr };
     } catch (error) {
-      console.error("Date validation error:", error);
-      return { isOpen: false, closeDate: "Error", error: "Date parsing error" };
+      console.error("Window check error:", error);
+      setWindowStatus("error");
+      return { isOpen: false, closeDate: "Error checking window" };
     }
   };
 
@@ -127,20 +176,27 @@ function MarkSheet() {
           console.error("Failed to load periods:", err);
           setPeriods([]);
         });
-      // Reset selections
-      setPeriodValue(""); setSelectedWeekNo(""); setSelectedDate(""); 
-      setSelectedTopic(""); setIsWindowOpen(true); setWindowCloseDate("");
+      // Reset
+      setPeriodValue(""); 
+      setSelectedWeekNo(""); 
+      setSelectedDate(""); 
+      setSelectedTopic(""); 
+      setIsWindowOpen(true); 
+      setWindowCloseDate("");
+      setWindowStatus("checking");
     } else {
       setPeriods([]);
     }
   }, [assessmentType, batchNo]);
 
-  // Check window on period selection
+  // ✅ FIXED: Check window immediately when date selected
   useEffect(() => {
     if (selectedDate) {
-      const result = checkMarkEntryWindow(selectedDate);
-      setIsWindowOpen(result.isOpen);
-      setWindowCloseDate(result.closeDate);
+      checkMarkEntryWindow(selectedDate);
+    } else {
+      setIsWindowOpen(true);
+      setWindowCloseDate("");
+      setWindowStatus("checking");
     }
   }, [selectedDate, assessmentType]);
 
@@ -148,12 +204,12 @@ function MarkSheet() {
     setPeriodValue(e.target.value);
     const [w, d, t] = e.target.value.split("::");
     setSelectedWeekNo(w);
-    setSelectedDate(d);
-    setSelectedTopic(t);
+    setSelectedDate(d || "");
+    setSelectedTopic(t || "");
   };
 
   const handleMarksInput = (learnerId, value) => {
-    if (!isWindowOpen) return; // Block input if window closed
+    if (!isWindowOpen || windowStatus !== "valid") return;
     
     let val = value.replace(/[^0-9.]/g, "");
     let percentage = "";
@@ -177,9 +233,15 @@ function MarkSheet() {
       return;
     }
 
-    if (!isWindowOpen) {
+    if (!isWindowOpen || windowStatus !== "valid") {
       setMessage("❌ Mark entry window CLOSED. Cannot save marks.");
       setTimeout(() => setMessage(""), 5000);
+      return;
+    }
+
+    if (windowStatus === "checking") {
+      setMessage("⏳ Please wait for window validation...");
+      setTimeout(() => setMessage(""), 3000);
       return;
     }
 
@@ -188,7 +250,7 @@ function MarkSheet() {
 
     try {
       for (let learner of learners) {
-        if (!marks[learner.id] || !marks[learner.id].points) continue;
+        if (!marks[learner.id]?.points) continue;
         
         const payload = {
           learner_id: learner.id,
@@ -215,12 +277,12 @@ function MarkSheet() {
 
       if (anySaved) {
         setMessage("✅ Marks saved successfully!");
-        setMarks({}); // Clear marks after save
+        setMarks({}); // Clear after save
       } else {
         setMessage("⚠️ Please enter points for at least one learner.");
       }
     } catch (err) {
-      console.error("Error saving marks:", err);
+      console.error("Save error:", err);
       setMessage(`❌ Error: ${err.message}`);
     }
 
@@ -281,7 +343,13 @@ function MarkSheet() {
                 </Typography>
               </Box>
               <Box sx={{ px: 2 }}>
-                {isWindowOpen ? (
+                {windowStatus === "checking" ? (
+                  <Chip label="⏳ Checking window..." color="info" size="small" />
+                ) : windowStatus === "invalid" ? (
+                  <Chip label="❌ Invalid date format" color="error" size="small" />
+                ) : windowStatus === "out_of_range" ? (
+                  <Chip label="📅 Out of range" color="warning" size="small" />
+                ) : isWindowOpen ? (
                   <Chip label={`✅ Open until ${windowCloseDate}`} color="success" size="small" />
                 ) : (
                   <Chip label={`❌ CLOSED (${windowCloseDate})`} color="error" size="small" />
@@ -291,10 +359,16 @@ function MarkSheet() {
           )}
         </Box>
 
-        {selectedDate && !isWindowOpen && (
+        {selectedDate && !isWindowOpen && windowStatus === "valid" && (
           <Alert severity="error" sx={{ mb: 3 }}>
             <strong>🚫 Mark entry window CLOSED</strong> for {selectedDate}. 
             Last date was <strong>{windowCloseDate}</strong>.
+          </Alert>
+        )}
+
+        {windowStatus === "invalid" && selectedDate && (
+          <Alert severity="error" sx={{ mb: 3 }}>
+            <strong>❌ Invalid date format:</strong> {selectedDate}. Please check the date.
           </Alert>
         )}
 
@@ -326,7 +400,7 @@ function MarkSheet() {
                       inputProps={{ min: 0, max: outOff || undefined }}
                       onChange={(e) => handleMarksInput(learner.id, e.target.value)}
                       size="small"
-                      disabled={!isWindowOpen || !selectedWeekNo || !outOff}
+                      disabled={!isWindowOpen || windowStatus !== "valid" || !selectedWeekNo || !outOff}
                       sx={{ width: 100 }}
                     />
                   </TableCell>
@@ -344,20 +418,23 @@ function MarkSheet() {
           color="primary"
           fullWidth
           onClick={handleSave}
-          disabled={!isWindowOpen || !selectedWeekNo || !outOff}
+          disabled={!isWindowOpen || windowStatus !== "valid" || !selectedWeekNo || !outOff}
           sx={{ py: 1.5, fontSize: "1.1rem", fontWeight: 600 }}
         >
-          {isWindowOpen ? `💾 Save All Marks` : `🚫 Window Closed`}
+          {windowStatus === "checking" ? "⏳ Checking..." : 
+           isWindowOpen ? "💾 Save All Marks" : "🚫 Window Closed"}
         </Button>
 
-        <Fade in={!!message}>
-          <Alert severity={
-            message.startsWith("✅") ? "success" :
-            message.startsWith("⚠️") ? "warning" : "error"
-          } sx={{ mt: 2 }}>
-            {message}
-          </Alert>
-        </Fade>
+        {message && (
+          <Fade in={true} timeout={500}>
+            <Alert severity={
+              message.startsWith("✅") ? "success" :
+              message.startsWith("⚠️") ? "warning" : "error"
+            } sx={{ mt: 2 }} onClose={() => setMessage("")}>
+              {message}
+            </Alert>
+          </Fade>
+        )}
       </Paper>
     </Box>
   );
