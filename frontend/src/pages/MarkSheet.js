@@ -42,58 +42,68 @@ function MarkSheet() {
   const [message, setMessage] = useState("");
   const [isWindowOpen, setIsWindowOpen] = useState(true);
   const [windowCloseDate, setWindowCloseDate] = useState("");
-  const [windowStatus, setWindowStatus] = useState("checking");
+  const [windowStatus, setWindowStatus] = useState("valid");
 
   const numberLabel = "Week No";
 
-  // ✅ FIXED: Robust date parsing for ALL formats
+  // ✅ FIXED: Bulletproof date parsing
   const parseAssessmentDate = (dateStr) => {
+    console.log("🔍 Parsing date:", dateStr);
+    
     if (!dateStr) return null;
 
-    // Handle DD-MM-YYYY, DD/MM/YYYY, DD-MM-YY, DD/MM/YY
-    const dashPattern = /(\d{1,2})-(\d{1,2})-(\d{4}|\d{2})/;
-    const slashPattern = /(\d{1,2})[\/](\d{1,2})[\/](\d{4}|\d{2})/;
-
-    let day, month, year;
-
-    // Try dash format first (API common format)
-    let match = dateStr.match(dashPattern);
-    if (match) {
-      day = parseInt(match[1], 10);
-      month = parseInt(match[2], 10);
-      year = parseInt(match[3], 10);
-    } else {
-      // Try slash format
-      match = dateStr.match(slashPattern);
-      if (match) {
-        day = parseInt(match[1], 10);
-        month = parseInt(match[2], 10);
-        year = parseInt(match[3], 10);
-      }
-    }
-
-    if (!day || !month || !year || day > 31 || month > 12) return null;
-
-    // Handle 2-digit years (00-29 = 2000-2029, 30-99 = 1930-1999)
-    if (year < 100) {
-      year = year >= 30 ? 1900 + year : 2000 + year;
-    }
-
-    const date = new Date(year, month - 1, day);
+    // Normalize: Replace any separators with standard format
+    const normalized = dateStr.replace(/[-\/]/g, '-');
     
-    // Validate parsed date
-    if (date.getDate() !== day || date.getMonth() !== month - 1 || date.getFullYear() !== year) {
+    // Match DD-MM-YYYY or DD-MM-YY
+    const pattern = /(\d{1,2})-(\d{1,2})-(\d{2,4})/;
+    const match = normalized.match(pattern);
+    
+    if (!match) {
+      console.log("❌ No pattern match");
       return null;
     }
 
+    let day = parseInt(match[1], 10);
+    let month = parseInt(match[2], 10);
+    let year = parseInt(match[3], 10);
+
+    console.log("Parsed:", { day, month, year });
+
+    // Validate day/month
+    if (day < 1 || day > 31 || month < 1 || month > 12) {
+      console.log("❌ Invalid day/month");
+      return null;
+    }
+
+    // Handle 2-digit years
+    if (year < 100) {
+      year = year < 30 ? 2000 + year : 1900 + year;
+    }
+
+    // Create and validate date
+    const date = new Date(year, month - 1, day);
+    
+    // Double-check parsing
+    if (date.getDate() !== day || 
+        date.getMonth() !== month - 1 || 
+        date.getFullYear() !== year) {
+      console.log("❌ Date validation failed");
+      return null;
+    }
+
+    console.log("✅ Valid date:", date.toISOString());
     return date;
   };
 
-  // ✅ FIXED: Window validation logic
+  // ✅ FIXED: Simplified window validation - NO range restrictions
   const checkMarkEntryWindow = (assessmentDateStr) => {
+    console.log("🧮 Checking window for:", assessmentDateStr);
+    
     const assessmentDate = parseAssessmentDate(assessmentDateStr);
     
     if (!assessmentDate) {
+      console.log("❌ Invalid date");
       setWindowStatus("invalid");
       setIsWindowOpen(false);
       setWindowCloseDate("Invalid date format");
@@ -101,25 +111,19 @@ function MarkSheet() {
     }
 
     try {
-      const now = new Date(); // Current: 09/01/2026 09:42 AM IST
+      const now = new Date(); // 09/01/2026 10:43 AM IST
       const typeConfig = ASSESSMENT_TYPES.find(t => t.key === assessmentType);
       const daysWindow = typeConfig?.daysWindow || 7;
 
-      // Check reasonable date range (past 90 days to future 60 days)
-      const minDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
-      const maxDate = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
+      console.log("Assessment date:", assessmentDate.toLocaleDateString('en-GB'));
+      console.log("Days window:", daysWindow);
 
-      if (assessmentDate < minDate || assessmentDate > maxDate) {
-        setWindowStatus("out_of_range");
-        setIsWindowOpen(false);
-        setWindowCloseDate("Date out of valid range");
-        return { isOpen: false, closeDate: "Date out of valid range" };
-      }
-
-      // Calculate closing date (end of day)
+      // Calculate closing date
       const closeDate = new Date(assessmentDate);
       closeDate.setDate(assessmentDate.getDate() + daysWindow);
       closeDate.setHours(23, 59, 59, 999);
+
+      console.log("Close date:", closeDate.toLocaleDateString('en-GB'));
 
       const isOpen = now <= closeDate;
       
@@ -128,19 +132,21 @@ function MarkSheet() {
         hour: '2-digit', minute: '2-digit', hour12: false
       });
 
+      console.log("Window status:", { isOpen, closeDateStr });
+
       setWindowStatus("valid");
       setIsWindowOpen(isOpen);
       setWindowCloseDate(closeDateStr);
       
       return { isOpen, closeDate: closeDateStr };
     } catch (error) {
-      console.error("Window check error:", error);
+      console.error("❌ Window check error:", error);
       setWindowStatus("error");
       return { isOpen: false, closeDate: "Error checking window" };
     }
   };
 
-  // Load learners
+  // Load learners (unchanged)
   useEffect(() => {
     if (batchNo) {
       fetch(`${API_BASE}/apigetlearners?batchno=${encodeURIComponent(batchNo)}`)
@@ -176,27 +182,27 @@ function MarkSheet() {
           console.error("Failed to load periods:", err);
           setPeriods([]);
         });
-      // Reset
+      // Reset selections
       setPeriodValue(""); 
       setSelectedWeekNo(""); 
       setSelectedDate(""); 
       setSelectedTopic(""); 
       setIsWindowOpen(true); 
       setWindowCloseDate("");
-      setWindowStatus("checking");
+      setWindowStatus("valid");
     } else {
       setPeriods([]);
     }
   }, [assessmentType, batchNo]);
 
-  // ✅ FIXED: Check window immediately when date selected
+  // Check window on date change
   useEffect(() => {
     if (selectedDate) {
       checkMarkEntryWindow(selectedDate);
     } else {
       setIsWindowOpen(true);
       setWindowCloseDate("");
-      setWindowStatus("checking");
+      setWindowStatus("valid");
     }
   }, [selectedDate, assessmentType]);
 
@@ -239,12 +245,6 @@ function MarkSheet() {
       return;
     }
 
-    if (windowStatus === "checking") {
-      setMessage("⏳ Please wait for window validation...");
-      setTimeout(() => setMessage(""), 3000);
-      return;
-    }
-
     const endpoint = `${API_BASE}/api/marks/${assessmentType}`;
     let anySaved = false;
 
@@ -277,7 +277,7 @@ function MarkSheet() {
 
       if (anySaved) {
         setMessage("✅ Marks saved successfully!");
-        setMarks({}); // Clear after save
+        setMarks({});
       } else {
         setMessage("⚠️ Please enter points for at least one learner.");
       }
@@ -343,12 +343,8 @@ function MarkSheet() {
                 </Typography>
               </Box>
               <Box sx={{ px: 2 }}>
-                {windowStatus === "checking" ? (
-                  <Chip label="⏳ Checking window..." color="info" size="small" />
-                ) : windowStatus === "invalid" ? (
+                {windowStatus === "invalid" ? (
                   <Chip label="❌ Invalid date format" color="error" size="small" />
-                ) : windowStatus === "out_of_range" ? (
-                  <Chip label="📅 Out of range" color="warning" size="small" />
                 ) : isWindowOpen ? (
                   <Chip label={`✅ Open until ${windowCloseDate}`} color="success" size="small" />
                 ) : (
@@ -368,7 +364,7 @@ function MarkSheet() {
 
         {windowStatus === "invalid" && selectedDate && (
           <Alert severity="error" sx={{ mb: 3 }}>
-            <strong>❌ Invalid date format:</strong> {selectedDate}. Please check the date.
+            <strong>❌ Invalid date format:</strong> {selectedDate}
           </Alert>
         )}
 
@@ -421,8 +417,7 @@ function MarkSheet() {
           disabled={!isWindowOpen || windowStatus !== "valid" || !selectedWeekNo || !outOff}
           sx={{ py: 1.5, fontSize: "1.1rem", fontWeight: 600 }}
         >
-          {windowStatus === "checking" ? "⏳ Checking..." : 
-           isWindowOpen ? "💾 Save All Marks" : "🚫 Window Closed"}
+          {isWindowOpen ? "💾 Save All Marks" : "🚫 Window Closed"}
         </Button>
 
         {message && (
