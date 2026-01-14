@@ -1,4 +1,4 @@
-// src/pages/TrainerAssignmentDashboard.js - NO NOTISTACK REQUIRED
+// src/pages/TrainerAssignmentDashboard.js - UPDATED with course_planner_data logic
 import React, { useEffect, useState, useCallback } from "react";
 import {
   Box, Typography, Table, TableHead, TableBody, TableCell, TableRow,
@@ -95,26 +95,44 @@ function TrainerAssignmentDashboard() {
     }
   }, []);
 
-  // 🔥 BASIC TRAINERS BY DOMAIN (FALLBACK)
-  const fetchAvailableTrainers = useCallback(async (domain) => {
+  // 🔥 NEW: Fetch available trainers based on course_planner_data logic
+  const fetchAvailableTrainers = useCallback(async (leave) => {
     try {
-      const url = domain 
-        ? `${API_BASE}/api/available-trainers?domain=${domain}`
-        : `${API_BASE}/api/available-trainers`;
+      setAvailabilityLoading(true);
       
-      const response = await fetch(url, {
-        headers: { 'Accept': 'application/json' }
+      const response = await fetch(`${API_BASE}/api/available-trainers-by-schedule`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          trainer_email: leave.trainer_email,  // Exclude this trainer
+          domain: leave.domain,
+          start_date: leave.start_date,
+          end_date: leave.end_date,
+          start_time: leave.start_time || "1:30 PM",  // Default batch time
+          end_time: leave.end_time || "7:30 PM"
+        })
       });
-      
+
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       
       const data = await response.json();
-      setAvailableTrainers(data || []);
-      showToast(`${data.length || 0} trainers loaded for domain: ${domain}`, "info");
+      
+      if (data.trainers && data.trainers.length > 0) {
+        setAvailableTrainers(data.trainers);
+        showToast(`${data.trainers.length} available trainers found for ${leave.domain} domain`, "success");
+      } else {
+        setAvailableTrainers([]);
+        showToast("Consult the Manager for further process - No available trainers", "warning");
+      }
     } catch (error) {
-      console.error("Trainers error:", error);
+      console.error("Available trainers error:", error);
       setAvailableTrainers([]);
-      showToast("No trainers available", "warning");
+      showToast("No available trainers found", "warning");
+    } finally {
+      setAvailabilityLoading(false);
     }
   }, []);
 
@@ -160,7 +178,7 @@ function TrainerAssignmentDashboard() {
     }
   }, [selectedLeave, selectedTrainer, selectedTopics, fetchUnavailability]);
 
-  // 🔥 HANDLE ROW CLICK - FULL WORKFLOW
+  // 🔥 UPDATED HANDLE ROW CLICK - NEW WORKFLOW
   const handleRowClick = async (leave) => {
     if (leave.status === "assigned") {
       showToast("This trainer is already assigned", "info");
@@ -172,8 +190,8 @@ function TrainerAssignmentDashboard() {
     // Load topics first
     await fetchTopics(leave.id);
     
-    // Load available trainers for domain
-    await fetchAvailableTrainers(leave.domain);
+    // NEW: Load available trainers based on schedule availability
+    await fetchAvailableTrainers(leave);
     
     setAssignDialogOpen(true);
   };
@@ -342,7 +360,7 @@ function TrainerAssignmentDashboard() {
         </TableContainer>
       </Paper>
 
-      {/* ASSIGN TOPICS DIALOG */}
+      {/* ASSIGN TOPICS DIALOG - UPDATED */}
       <Dialog 
         open={assignDialogOpen} 
         onClose={() => setAssignDialogOpen(false)}
@@ -361,25 +379,31 @@ function TrainerAssignmentDashboard() {
               <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mb: 2 }}>
                 <Chip label={`Domain: ${selectedLeave.domain}`} color="primary" />
                 <Chip label={`${selectedLeave.start_date} to ${selectedLeave.end_date}`} />
+                <Chip label={`Time: 1:30PM - 7:30PM`} color="secondary" />
                 <Chip label={`ID: ${selectedLeave.id}`} variant="outlined" />
               </Box>
+              <Alert severity="info" sx={{ mt: 1 }}>
+                Looking for available trainers in same domain & time slot (1:30PM-7:30PM)
+              </Alert>
             </Box>
           )}
 
-          {/* SELECT TRAINER */}
+          {/* SELECT TRAINER - UPDATED MESSAGE */}
           <FormControl fullWidth sx={{ mb: 3 }}>
-            <InputLabel>Assign to Trainer</InputLabel>
+            <InputLabel>Available Trainers</InputLabel>
             <Select
               value={selectedTrainer}
               onChange={(e) => setSelectedTrainer(e.target.value)}
-              label="Assign to Trainer"
+              label="Available Trainers"
             >
               {availableTrainers.length === 0 ? (
-                <MenuItem disabled>No trainers available</MenuItem>
+                <MenuItem disabled>
+                  {availabilityLoading ? "Checking availability..." : "Consult the Manager for further process"}
+                </MenuItem>
               ) : (
                 availableTrainers.map((trainer) => (
                   <MenuItem key={trainer.email} value={trainer.email}>
-                    {trainer.name} ({trainer.email})
+                    {trainer.name} ({trainer.email}) - {trainer.batch_no}
                   </MenuItem>
                 ))
               )}
@@ -470,8 +494,9 @@ function TrainerAssignmentDashboard() {
           </Typography>
           <Box sx={{ display: 'flex', gap: 2, fontSize: '0.875rem' }}>
             <Chip label={`Records: ${leaves.length}`} />
-            <Chip label={`Trainers: ${availableTrainers.length}`} />
+            <Chip label={`Available: ${availableTrainers.length}`} />
             <Chip label={`Topics: ${topics.length}`} />
+            <Chip label={`Selected Leave: ${selectedLeave?.trainer_email || 'None'}`} />
           </Box>
         </Paper>
       </Collapse>
