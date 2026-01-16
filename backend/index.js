@@ -2331,6 +2331,7 @@ app.post("/api/announcement/send", async (req, res) => {
 });
 
 
+
 // === save the attendance ===
 app.post("/api/save_attendance", async (req, res) => {
   try {
@@ -6961,39 +6962,48 @@ app.get("/api/debug/routes-test", (req, res) => {
   res.json({ ok: true, message: "Backend is deploying the correct file" });
 });
 
-// === ATTENDANCE REPORT DATA ===
-app.get("/api/attendance/by_batch", async (req, res) => {
-  const { batch_no, batchno } = req.query;
-  const batch = batch_no || batchno;
-
-  if (!batch) {
-    return res.status(400).json({ error: "batch_no query parameter is required" });
-  }
-
+// NEW ENDPOINT - Attendance Report (THIS IS THE KEY)
+app.get('/api/attendance-report', async (req, res) => {
   try {
-    const result = await pool.query(
-      `
-        SELECT
-          id,
-          learner_email,
-          learner_name,
-          batch_no,
-          date,
-          session,
-          status,
-          marked_by,
-          marked_at
-        FROM learner_attendance
-        WHERE batch_no = $1
-        ORDER BY date ASC, session ASC, learner_email ASC
-      `,
-      [batch]
-    );
+    const { batch_no } = req.query;
 
-    return res.json(result.rows);
-  } catch (err) {
-    console.error("Error fetching attendance by batch:", err);
-    return res.status(500).json({ error: "Failed to fetch attendance data" });
+    if (!batch_no) {
+      return res.status(400).json({ error: 'batch_no required' });
+    }
+
+    console.log(`📊 Fetching attendance for batch: ${batch_no}`);
+
+    const { data, error } = await supabase
+      .from('learner_attendance')
+      .select('id, learner_email, batch_no, date, session, status, marked_by, marked_at')
+      .eq('batch_no', batch_no)
+      .order('date', { ascending: false })
+      .order('session');
+
+    if (error) throw error;
+
+    console.log(`✅ Found ${data?.length || 0} records for ${batch_no}`);
+    res.json(data || []);
+  } catch (error) {
+    console.error('Attendance report error:', error);
+    res.status(500).json({ error: 'Failed to fetch attendance data' });
+  }
+});
+
+// Fix the existing broken endpoint (optional)
+app.get('/api/attendance/by_batch', async (req, res) => {
+  try {
+    const { batch_no } = req.query;
+    const { data, error } = await supabase
+      .from('learner_attendance')
+      .select('*')
+      .eq('batch_no', batch_no);
+    
+    if (error) throw error;
+    res.json(data || []);
+  } catch (error) {
+    console.error('Attendance by batch error:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
