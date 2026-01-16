@@ -56,7 +56,6 @@ export default function DateChangeReport({ user, token }) {
     loadBatches();
   }, [token]);
 
-  // ✅ UPDATED: Include ALL topics with actual_date (On Time + Changed)
   useEffect(() => {
     if (selectedBatch) {
       loadReport();
@@ -76,29 +75,48 @@ export default function DateChangeReport({ user, token }) {
       try {
         const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-        // ✅ FIXED: Get ALL topics with actual_date set (includes On Time)
         const reportRes = await axios.get(
-          `${API_BASE}/api/date-change-report/${selectedBatch}?include_ontime=true`,
+          `${API_BASE}/api/date-change-report/${selectedBatch}?status=completed`,
           { headers }
         );
 
-        // ✅ FIXED: Summary endpoint also updated to count On Time properly
-        const summaryRes = await axios.get(
-          `${API_BASE}/api/batch-date-summary/${selectedBatch}?include_ontime=true`,
-          { headers }
-        );
+        const processedData = (reportRes.data || []).map(row => {
+          const plannedDate = row.planned_date ? new Date(row.planned_date) : null;
+          const actualDate = row.actual_date ? new Date(row.actual_date) : null;
+          
+          let dateDifference = null;
+          if (plannedDate && actualDate && !isNaN(plannedDate) && !isNaN(actualDate)) {
+            dateDifference = Math.floor((actualDate - plannedDate) / (1000 * 60 * 60 * 24));
+          }
 
-        // ✅ Process data to ensure On Time records are included
-        const processedReportData = (reportRes.data || []).map(row => ({
-          ...row,
-          date_difference: row.planned_date && row.actual_date 
-            ? Math.floor((new Date(row.actual_date) - new Date(row.planned_date)) / (1000 * 60 * 60 * 24))
-            : null,
-          topic_status: row.topic_status || "Completed"
-        }));
+          return {
+            ...row,
+            date_difference: dateDifference,
+            is_on_time: row.topic_status === "Completed" && dateDifference === 0
+          };
+        });
 
-        setReportData(processedReportData);
-        setBatchSummary(summaryRes.data || null);
+        const completedTopics = processedData.filter(row => row.topic_status === "Completed");
+        const onTimeCount = completedTopics.filter(row => row.is_on_time).length;
+        const delayedCount = completedTopics.filter(row => row.date_difference > 0).length;
+        const earlyCount = completedTopics.filter(row => row.date_difference < 0).length;
+        const avgDifference = completedTopics.length > 0 
+          ? completedTopics.reduce((sum, row) => sum + (row.date_difference || 0), 0) / completedTopics.length
+          : 0;
+
+        const summary = {
+          total_completed: completedTopics.length,
+          ontime_count: onTimeCount,
+          delayed_count: delayedCount,
+          early_count: earlyCount,
+          avg_difference: avgDifference.toFixed(1),
+          max_delay: Math.max(...completedTopics.map(row => row.date_difference || 0), 0),
+          max_early: Math.min(...completedTopics.map(row => row.date_difference || 0), 0)
+        };
+
+        setReportData(processedData);
+        setBatchSummary(summary);
+
       } catch (err) {
         console.error("Error loading report:", err);
         setError("Error loading report data");
@@ -131,120 +149,63 @@ export default function DateChangeReport({ user, token }) {
     if (batchSummary) {
       doc.setFontSize(12);
       doc.setTextColor(40);
-      doc.text("Summary Statistics", 14, 44);
+      doc.text("Summary Statistics (Completed Topics Only)", 14, 44);
       doc.setFontSize(10);
       doc.setTextColor(100);
-      doc.text(
-        `Delayed Topics: ${batchSummary.delayed_count || 0}`,
-        14,
-        52
-      );
-      doc.text(
-        `Early Completion: ${batchSummary.early_count || 0}`,
-        70,
-        52
-      );
-      doc.text(
-        `On Time: ${batchSummary.ontime_count || 0}`,
-        126,
-        52
-      );
-      doc.text(
-        `Avg Difference: ${
-          batchSummary.avg_difference
-            ? parseFloat(batchSummary.avg_difference).toFixed(1)
-            : "0"
-        } days`,
-        182,
-        52
-      );
+      doc.text(`Total Completed: ${batchSummary.total_completed}`, 14, 52);
+      doc.text(`Delayed: ${batchSummary.delayed_count}`, 70, 52);
+      doc.text(`Early: ${batchSummary.early_count}`, 126, 52);
+      doc.text(`On Time: ${batchSummary.ontime_count}`, 182, 52);
+      doc.text(`Avg Diff: ${batchSummary.avg_difference} days`, 14, 60);
     }
 
-    // ✅ Include ALL records (On Time + Changed) in PDF
-    const tableData = reportData.map((row) => [
-      row.module_name || "N/A",
-      row.topic_name || "N/A",
-      row.trainer_name || "N/A",
-      row.planned_date ? new Date(row.planned_date).toLocaleDateString("en-IN") : "N/A",
-      row.actual_date ? new Date(row.actual_date).toLocaleDateString("en-IN") : "N/A",
-      row.date_difference !== null && row.date_difference !== undefined
-        ? row.date_difference > 0
-          ? `+${row.date_difference}d`
-          : row.date_difference < 0
-          ? `${row.date_difference}d`
+    const tableData = reportData
+      .filter(row => row.topic_status === "Completed")
+      .map((row) => [
+        row.module_name || "N/A",
+        row.topic_name || "N/A",
+        row.trainer_name || "N/A",
+        row.planned_date ? new Date(row.planned_date).toLocaleDateString("en-IN") : "N/A",
+        row.actual_date ? new Date(row.actual_date).toLocaleDateString("en-IN") : "N/A",
+        row.date_difference !== null 
+          ? row.date_difference > 0 ? `+${row.date_difference}d`
+          : row.date_difference < 0 ? `${row.date_difference}d`
           : "On time"
-        : "Pending",
-      row.topic_status || "N/A",
-      row.changed_by || "System",
-      row.changed_at ? new Date(row.changed_at).toLocaleString("en-IN", {
-        dateStyle: "short",
-        timeStyle: "short",
-      }) : "Initial",
-      row.remarks || "-",
-    ]);
+          : "Pending",
+        row.topic_status || "N/A",
+        row.changed_by || "System",
+        row.changed_at ? new Date(row.changed_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" }) : "Initial",
+        row.remarks || "-",
+      ]);
 
     autoTable(doc, {
-      startY: 64,
-      head: [
-        [
-          "Module",
-          "Topic Name",
-          "Trainer",
-          "Planned Date",
-          "Actual Date",
-          "Diff",
-          "Status",
-          "Changed By",
-          "Changed At",
-          "Remarks",
-        ],
-      ],
+      startY: 70,
+      head: [["Module", "Topic", "Trainer", "Planned", "Actual", "Diff", "Status", "Changed By", "Changed At", "Remarks"]],
       body: tableData,
       styles: { fontSize: 8, cellPadding: 2 },
       headStyles: { fillColor: [102, 126, 234], textColor: 255 },
       alternateRowStyles: { fillColor: [245, 245, 245] },
-      margin: { top: 64 },
       columnStyles: {
-        0: { cellWidth: 25 },
-        1: { cellWidth: 35 },
-        2: { cellWidth: 25 },
-        3: { cellWidth: 22 },
-        4: { cellWidth: 22 },
-        5: { cellWidth: 15 },
-        6: { cellWidth: 20 },
-        7: { cellWidth: 25 },
-        8: { cellWidth: 28 },
-        9: { cellWidth: 30 },
+        0: { cellWidth: 25 }, 1: { cellWidth: 35 }, 2: { cellWidth: 25 },
+        3: { cellWidth: 22 }, 4: { cellWidth: 22 }, 5: { cellWidth: 18 },
+        6: { cellWidth: 18 }, 7: { cellWidth: 25 }, 8: { cellWidth: 28 }, 9: { cellWidth: 25 }
       },
     });
 
-    const filename = `DateChangeReport_${selectedBatch}_${new Date()
-      .toISOString()
-      .slice(0, 19)
-      .replace(/:/g, "-")}.pdf`;
+    const filename = `DateChangeReport_${selectedBatch}_${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.pdf`;
     doc.save(filename);
   };
-
-  const roleTitle = user?.role
-    ? user.role.charAt(0).toUpperCase() + user.role.slice(1)
-    : "Admin";
-  const welcomeName = user?.name ? user.name : "User";
 
   return (
     <Box sx={{ maxWidth: 1600, mx: "auto", my: 3, px: 2 }}>
       <Paper elevation={4} sx={{ p: 3, borderRadius: 3, mb: 3 }}>
-        <Box
-          display="flex"
-          justifyContent="space-between"
-          alignItems="center"
-          mb={2}
-        >
+        <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
           <Box>
             <Typography variant="h4" color="primary" gutterBottom>
               📊 Date Change Report
             </Typography>
             <Typography variant="subtitle1" color="text.secondary">
-              Track ALL schedule adherence (On Time + Changes) across batches ✅
+              On Time = Completed + No Date Change ✅
             </Typography>
           </Box>
 
@@ -254,12 +215,8 @@ export default function DateChangeReport({ user, token }) {
               startIcon={<DownloadIcon />}
               onClick={downloadPDF}
               sx={{
-                background:
-                  "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-                "&:hover": {
-                  background:
-                    "linear-gradient(135deg, #764ba2 0%, #667eea 100%)",
-                },
+                background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                "&:hover": { background: "linear-gradient(135deg, #764ba2 0%, #667eea 100%)" },
               }}
             >
               Download PDF
@@ -269,14 +226,8 @@ export default function DateChangeReport({ user, token }) {
 
         <FormControl fullWidth sx={{ mb: 4, maxWidth: 400 }}>
           <InputLabel>Select Batch</InputLabel>
-          <Select
-            value={selectedBatch}
-            label="Select Batch"
-            onChange={(e) => setSelectedBatch(e.target.value)}
-          >
-            <MenuItem value="">
-              <em>Select Batch</em>
-            </MenuItem>
+          <Select value={selectedBatch} label="Select Batch" onChange={(e) => setSelectedBatch(e.target.value)}>
+            <MenuItem value=""><em>Select Batch</em></MenuItem>
             {batches.map((b) => (
               <MenuItem key={b.batch_no} value={b.batch_no}>
                 {b.batch_no} {b.start_date ? `(${b.start_date})` : ""}
@@ -285,48 +236,23 @@ export default function DateChangeReport({ user, token }) {
           </Select>
         </FormControl>
 
-        {error && (
-          <Alert severity="error" sx={{ mb: 3 }}>
-            {error}
-          </Alert>
-        )}
-
-        {loading && (
-          <Box display="flex" justifyContent="center" my={4}>
-            <CircularProgress />
-          </Box>
-        )}
+        {error && <Alert severity="error" sx={{ mb: 3 }}>{error}</Alert>}
+        {loading && <Box display="flex" justifyContent="center" my={4}><CircularProgress /></Box>}
 
         {!loading && selectedBatch && batchSummary && (
           <>
-            <Typography
-              variant="h6"
-              color="primary"
-              gutterBottom
-              sx={{ mt: 2 }}
-            >
-              📈 Summary Statistics (Includes ALL On Time Records)
+            <Typography variant="h6" color="primary" gutterBottom sx={{ mt: 2 }}>
+              📈 Summary (Completed Topics Only)
             </Typography>
             <Grid container spacing={3} mb={4}>
               <Grid item xs={12} sm={6} md={3}>
                 <Card sx={{ bgcolor: "#ffebee", height: "100%" }}>
                   <CardContent>
-                    <Typography
-                      color="text.secondary"
-                      gutterBottom
-                      variant="body2"
-                    >
-                      Delayed Topics
-                    </Typography>
-                    <Typography variant="h3" color="error.main">
-                      {batchSummary.delayed_count || 0}
-                    </Typography>
+                    <Typography color="text.secondary" gutterBottom variant="body2">Delayed Topics</Typography>
+                    <Typography variant="h3" color="error.main">{batchSummary.delayed_count || 0}</Typography>
                     {batchSummary.max_delay > 0 && (
-                      <Typography
-                        variant="caption"
-                        color="text.secondary"
-                      >
-                        Max delay: {batchSummary.max_delay} days
+                      <Typography variant="caption" color="text.secondary">
+                        Max: {batchSummary.max_delay} days
                       </Typography>
                     )}
                   </CardContent>
@@ -336,22 +262,11 @@ export default function DateChangeReport({ user, token }) {
               <Grid item xs={12} sm={6} md={3}>
                 <Card sx={{ bgcolor: "#e8f5e9", height: "100%" }}>
                   <CardContent>
-                    <Typography
-                      color="text.secondary"
-                      gutterBottom
-                      variant="body2"
-                    >
-                      Early Completion
-                    </Typography>
-                    <Typography variant="h3" color="success.main">
-                      {batchSummary.early_count || 0}
-                    </Typography>
+                    <Typography color="text.secondary" gutterBottom variant="body2">Early Completion</Typography>
+                    <Typography variant="h3" color="success.main">{batchSummary.early_count || 0}</Typography>
                     {batchSummary.max_early < 0 && (
-                      <Typography
-                        variant="caption"
-                        color="text.secondary"
-                      >
-                        Max early: {Math.abs(batchSummary.max_early)} days
+                      <Typography variant="caption" color="text.secondary">
+                        Max: {Math.abs(batchSummary.max_early)} days
                       </Typography>
                     )}
                   </CardContent>
@@ -361,21 +276,10 @@ export default function DateChangeReport({ user, token }) {
               <Grid item xs={12} sm={6} md={3}>
                 <Card sx={{ bgcolor: "#e3f2fd", height: "100%" }}>
                   <CardContent>
-                    <Typography
-                      color="text.secondary"
-                      gutterBottom
-                      variant="body2"
-                    >
-                      ✅ On Time
-                    </Typography>
-                    <Typography variant="h3" color="primary.main">
-                      {batchSummary.ontime_count || 0}
-                    </Typography>
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                    >
-                      Completed as planned (Initial + Unchanged)
+                    <Typography color="text.secondary" gutterBottom variant="body2">✅ On Time</Typography>
+                    <Typography variant="h3" color="primary.main">{batchSummary.ontime_count || 0}</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Completed as planned
                     </Typography>
                   </CardContent>
                 </Card>
@@ -384,48 +288,28 @@ export default function DateChangeReport({ user, token }) {
               <Grid item xs={12} sm={6} md={3}>
                 <Card sx={{ bgcolor: "#f3e5f5", height: "100%" }}>
                   <CardContent>
-                    <Typography
-                      color="text.secondary"
-                      gutterBottom
-                      variant="body2"
-                    >
-                      Average Difference
-                    </Typography>
-                    <Typography variant="h3" color="text.primary">
-                      {batchSummary.avg_difference
-                        ? `${parseFloat(
-                            batchSummary.avg_difference
-                          ).toFixed(1)}`
-                        : "0"}
-                    </Typography>
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                    >
-                      days (+ delayed / - early)
+                    <Typography color="text.secondary" gutterBottom variant="body2">Total Completed</Typography>
+                    <Typography variant="h3" color="text.primary">{batchSummary.total_completed || 0}</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {batchSummary.avg_difference}d avg difference
                     </Typography>
                   </CardContent>
                 </Card>
               </Grid>
             </Grid>
 
-            <Typography
-              variant="h6"
-              color="primary"
-              gutterBottom
-              sx={{ mt: 4 }}
-            >
-              📋 Detailed Report (ALL Records)
+            <Typography variant="h6" color="primary" gutterBottom sx={{ mt: 4 }}>
+              📋 Detailed Report
             </Typography>
             <TableContainer component={Paper} elevation={2}>
               <Table>
                 <TableHead>
                   <TableRow sx={{ bgcolor: "#f5f5f5" }}>
-                    <TableCell><strong>Module Name</strong></TableCell>
-                    <TableCell><strong>Topic Name</strong></TableCell>
+                    <TableCell><strong>Module</strong></TableCell>
+                    <TableCell><strong>Topic</strong></TableCell>
                     <TableCell align="center"><strong>Trainer</strong></TableCell>
-                    <TableCell align="center"><strong>Planned Date</strong></TableCell>
-                    <TableCell align="center"><strong>Actual Date</strong></TableCell>
+                    <TableCell align="center"><strong>Planned</strong></TableCell>
+                    <TableCell align="center"><strong>Actual</strong></TableCell>
                     <TableCell align="center"><strong>Difference</strong></TableCell>
                     <TableCell align="center"><strong>Status</strong></TableCell>
                     <TableCell align="center"><strong>Changed By</strong></TableCell>
@@ -434,122 +318,65 @@ export default function DateChangeReport({ user, token }) {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {reportData.length === 0 && (
+                  {reportData.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={10} align="center" sx={{ py: 4 }}>
-                        <Typography
-                          variant="body1"
-                          color="text.secondary"
-                        >
-                          No date records for this batch yet.
-                        </Typography>
-                        <Typography
-                          variant="caption"
-                          color="text.secondary"
-                        >
-                          On Time records appear when actual_date matches planned_date
+                        <Typography variant="body1" color="text.secondary">
+                          No completed topics found
                         </Typography>
                       </TableCell>
                     </TableRow>
-                  )}
-
-                  {reportData.map((row, idx) => (
-                    <TableRow
-                      key={idx}
-                      sx={{
-                        "&:nth-of-type(2n)": { bgcolor: "#fafafa" },
-                      }}
-                    >
-                      <TableCell>
-                        <Typography variant="body2" fontWeight={500}>
-                          {row.module_name || "N/A"}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="body2" fontWeight={500}>
-                          {row.topic_name}
-                        </Typography>
-                      </TableCell>
-                      <TableCell align="center">
-                        <Typography variant="body2">
-                          {row.trainer_name || "N/A"}
-                        </Typography>
-                      </TableCell>
-                      <TableCell align="center">
-                        {row.planned_date ? new Date(row.planned_date).toLocaleDateString("en-IN") : "N/A"}
-                      </TableCell>
-                      <TableCell align="center">
-                        {row.actual_date ? new Date(row.actual_date).toLocaleDateString("en-IN") : "Pending"}
-                      </TableCell>
-                      <TableCell align="center">
-                        <Chip
-                          label={
-                            row.date_difference !== null && row.date_difference !== undefined
-                              ? row.date_difference > 0
-                                ? `+${row.date_difference} days`
-                                : row.date_difference < 0
-                                ? `${row.date_difference} days`
-                                : "✅ On time"
-                              : "Pending"
-                          }
-                          size="small"
-                          color={
-                            row.date_difference > 2
-                              ? "error"
-                              : row.date_difference > 0
-                              ? "warning"
-                              : row.date_difference < 0
-                              ? "success"
-                              : row.date_difference === 0
-                              ? "success"
-                              : "default"
-                          }
-                          sx={{ fontWeight: "bold", minWidth: 90 }}
-                        />
-                      </TableCell>
-                      <TableCell align="center">
-                        <Chip
-                          label={row.topic_status || "N/A"}
-                          size="small"
-                          variant="outlined"
-                          color={
-                            row.topic_status === "Completed"
-                              ? "success"
-                              : row.topic_status === "In Progress"
-                              ? "primary"
-                              : "default"
-                          }
-                        />
-                      </TableCell>
-                      <TableCell align="center">
-                        <Typography variant="body2">
-                          {row.changed_by || "System (Initial)"}
-                        </Typography>
-                      </TableCell>
-                      <TableCell align="center">
-                        <Typography variant="body2" color="text.secondary">
-                          {row.changed_at ? new Date(row.changed_at).toLocaleString("en-IN", {
-                            dateStyle: "short",
-                            timeStyle: "short",
-                          }) : "Initial Entry"}
-                        </Typography>
-                      </TableCell>
-                      <TableCell align="center">
-                        <Typography
-                          variant="body2"
-                          sx={{
-                            maxWidth: 200,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
-                          title={row.remarks || "-"}
-                        >
+                  ) : (
+                    reportData.map((row, idx) => (
+                      <TableRow key={idx} sx={{ "&:nth-of-type(2n)": { bgcolor: "#fafafa" } }}>
+                        <TableCell>{row.module_name || "N/A"}</TableCell>
+                        <TableCell>{row.topic_name}</TableCell>
+                        <TableCell align="center">{row.trainer_name || "N/A"}</TableCell>
+                        <TableCell align="center">
+                          {row.planned_date ? new Date(row.planned_date).toLocaleDateString("en-IN") : "N/A"}
+                        </TableCell>
+                        <TableCell align="center">
+                          {row.actual_date ? new Date(row.actual_date).toLocaleDateString("en-IN") : "Pending"}
+                        </TableCell>
+                        <TableCell align="center">
+                          <Chip
+                            label={
+                              row.date_difference !== null 
+                                ? row.date_difference > 0 
+                                  ? `+${row.date_difference}d`
+                                  : row.date_difference < 0 
+                                    ? `${row.date_difference}d`
+                                    : "✅ On time"
+                                : "Pending"
+                            }
+                            size="small"
+                            color={
+                              row.date_difference === 0 ? "success" :
+                              row.date_difference > 2 ? "error" :
+                              row.date_difference > 0 ? "warning" :
+                              row.date_difference < 0 ? "success" : "default"
+                            }
+                            sx={{ fontWeight: "bold", minWidth: 90 }}
+                          />
+                        </TableCell>
+                        <TableCell align="center">
+                          <Chip 
+                            label={row.topic_status || "N/A"} 
+                            size="small" 
+                            color={row.topic_status === "Completed" ? "success" : "default"}
+                            variant="outlined" 
+                          />
+                        </TableCell>
+                        <TableCell align="center">{row.changed_by || "System"}</TableCell>
+                        <TableCell align="center">
+                          {row.changed_at ? new Date(row.changed_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" }) : "Initial"}
+                        </TableCell>
+                        <TableCell align="center" title={row.remarks || "-"}>
                           {row.remarks || "-"}
-                        </Typography>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
                 </TableBody>
               </Table>
             </TableContainer>
@@ -558,20 +385,13 @@ export default function DateChangeReport({ user, token }) {
 
         {!loading && selectedBatch && !batchSummary && reportData.length === 0 && (
           <Box textAlign="center" py={4}>
-            <Typography variant="h6" color="text.secondary">
-              No data available for this batch
-            </Typography>
-            <Typography variant="body2" color="text.secondary" mt={1}>
-              All On Time records will appear here automatically
-            </Typography>
+            <Typography variant="h6" color="text.secondary">No completed topics yet</Typography>
           </Box>
         )}
 
         {!selectedBatch && !loading && (
           <Box textAlign="center" py={6}>
-            <Typography variant="h6" color="text.secondary">
-              Please select a batch to view the report
-            </Typography>
+            <Typography variant="h6" color="text.secondary">Please select a batch</Typography>
           </Box>
         )}
       </Paper>
