@@ -15,6 +15,7 @@ import {
   TableBody,
   TableRow,
   TableCell,
+  TableContainer,
   CircularProgress,
   Alert,
   Grid,
@@ -24,7 +25,6 @@ import {
 } from "@mui/material";
 import jsPDF from "jspdf";
 import "jspdf-autotable";
-import { PieChart, pieChartDefaultProps, PieArcSeries, PieArcLabel } from "recharts";
 
 const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 
@@ -41,7 +41,6 @@ export default function AttendanceReport({ user, token }) {
   useEffect(() => {
     async function loadBatches() {
       try {
-        // Try multiple endpoints to get batch list
         const endpoints = [
           `${API_BASE}/api/batches`,
           `${API_BASE}/api/batch-list`,
@@ -62,7 +61,6 @@ export default function AttendanceReport({ user, token }) {
           }
         }
 
-        // Normalize batch data
         let normalized = [];
         if (Array.isArray(batchData)) {
           normalized = batchData
@@ -108,7 +106,6 @@ export default function AttendanceReport({ user, token }) {
       try {
         console.log(`Loading attendance for batch: ${batchNo}`);
         
-        // Try multiple possible attendance endpoints
         const endpoints = [
           { url: `${API_BASE}/api/attendance/by_batch`, params: { batch_no: batchNo } },
           { url: `${API_BASE}/api/attendance/batch/${batchNo}`, params: {} },
@@ -146,7 +143,7 @@ export default function AttendanceReport({ user, token }) {
         console.error("All attendance endpoints failed:", e);
         setMsg(
           `Unable to load attendance data for "${batchNo}". ` +
-          `Backend error (500). Please check server logs or contact admin.`
+          `Backend error. Please check server logs or contact admin.`
         );
         setRawAttendance([]);
       } finally {
@@ -161,7 +158,7 @@ export default function AttendanceReport({ user, token }) {
   const aggregatedRows = useMemo(() => {
     if (!rawAttendance.length) return [];
 
-    const map = new Map(); // key: learner_email
+    const map = new Map();
 
     rawAttendance.forEach((row) => {
       const email = (row.learner_email || row.email || row.learner_email_id || "").trim();
@@ -195,7 +192,7 @@ export default function AttendanceReport({ user, token }) {
       return { ...r, attendance_percentage: pct };
     });
 
-    return result.sort((a, b) => (a.attendance_percentage || 0) - (b.attendance_percentage || 0));
+    return result.sort((a, b) => (b.attendance_percentage || 0) - (a.attendance_percentage || 0));
   }, [rawAttendance]);
 
   // Batch-level statistics
@@ -224,16 +221,45 @@ export default function AttendanceReport({ user, token }) {
     };
   }, [aggregatedRows, rawAttendance]);
 
-  // Pie chart data for batch attendance
-  const pieChartData = useMemo(() => {
-    if (!batchStats.totalSessions) return [];
-    
-    const presentPct = (batchStats.presentSessions / batchStats.totalSessions) * 100;
-    return [
-      { name: "Present", value: presentPct, fill: "#4CAF50" },
-      { name: "Absent/Leave", value: 100 - presentPct, fill: "#F44336" },
-    ];
-  }, [batchStats]);
+  // Radial Progress Component (Pure CSS/SVG)
+  const RadialProgress = ({ percentage, size = 120 }) => (
+    <div 
+      style={{
+        width: size,
+        height: size,
+        position: 'relative',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center'
+      }}
+    >
+      <svg width={size} height={size} viewBox="0 0 36 36">
+        <path 
+          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" 
+          fill="none" 
+          stroke="#e5e5e5" 
+          strokeWidth="3"
+        />
+        <path 
+          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" 
+          fill="none" 
+          stroke="#4CAF50" 
+          strokeWidth="3"
+          strokeDasharray={`${percentage * 0.3525 * 100}, 100`}
+          strokeLinecap="round"
+          transform="rotate(-90 18 18)"
+        />
+      </svg>
+      <div style={{
+        position: 'absolute',
+        fontSize: '18px',
+        fontWeight: 'bold',
+        color: percentage >= 80 ? '#4CAF50' : percentage >= 60 ? '#FF9800' : '#F44336'
+      }}>
+        {Math.round(percentage)}%
+      </div>
+    </div>
+  );
 
   // Download PDF
   const handleDownloadPdf = () => {
@@ -277,7 +303,7 @@ export default function AttendanceReport({ user, token }) {
     <Box sx={{ maxWidth: 1700, p: 2 }}>
       <Paper elevation={3} sx={{ p: 4, borderRadius: 2 }}>
         <Typography variant="h5" color="primary" gutterBottom align="center">
-          📊 Attendance Report
+          📊 Attendance Report Dashboard
         </Typography>
 
         {/* Controls */}
@@ -304,18 +330,18 @@ export default function AttendanceReport({ user, token }) {
 
           <Button
             variant="contained"
-            startIcon="📥"
             disabled={!aggregatedRows.length}
             onClick={handleDownloadPdf}
+            startIcon="📥"
           >
             Download PDF
           </Button>
         </Box>
 
         {loading && (
-          <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
+          <Box sx={{ display: "flex", justifyContent: "center", py: 6, flexDirection: "column", alignItems: "center" }}>
             <CircularProgress size={40} />
-            <Typography sx={{ ml: 2 }}>Loading attendance data...</Typography>
+            <Typography sx={{ mt: 2 }}>Loading attendance data...</Typography>
           </Box>
         )}
 
@@ -330,22 +356,30 @@ export default function AttendanceReport({ user, token }) {
           <>
             <Grid container spacing={3} sx={{ mb: 4 }}>
               <Grid item xs={12} md={8}>
-                <Card elevation={3}>
+                <Card elevation={3} sx={{ height: "100%" }}>
                   <CardContent>
-                    <Typography variant="h6" gutterBottom>
-                      📈 Batch Attendance Overview - {batchNo}
+                    <Typography variant="h6" gutterBottom sx={{ mb: 3 }}>
+                      📈 Batch {batchNo} Attendance Overview
                     </Typography>
-                    <Box sx={{ height: 300, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <PieChart width={300} height={250} {...pieChartProps}>
-                        <PieArcSeries
-                          dataKey="value"
-                          data={pieChartData}
-                          innerRadius={60}
-                          outerRadius={90}
-                        >
-                          <PieArcLabel />
-                        </PieArcSeries>
-                      </PieChart>
+                    <Box sx={{ 
+                      display: "flex", 
+                      flexDirection: { xs: "column", md: "row" }, 
+                      gap: 4, 
+                      alignItems: "center",
+                      justifyContent: "center"
+                    }}>
+                      <Box sx={{ textAlign: "center" }}>
+                        <RadialProgress 
+                          percentage={batchStats.batchPercentage} 
+                          size={160}
+                        />
+                        <Typography variant="h4" sx={{ mt: 2, fontWeight: "bold" }}>
+                          {batchStats.batchPercentage.toFixed(1)}%
+                        </Typography>
+                        <Typography variant="body1" color="text.secondary">
+                          Overall Attendance
+                        </Typography>
+                      </Box>
                     </Box>
                   </CardContent>
                 </Card>
@@ -355,22 +389,22 @@ export default function AttendanceReport({ user, token }) {
                 <Card elevation={3}>
                   <CardContent>
                     <Typography variant="h6" gutterBottom>📊 Quick Stats</Typography>
-                    <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-                      <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-                        <span>Overall %</span>
-                        <Chip label={`${batchStats.batchPercentage}%`} color="primary" />
+                    <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <Typography>Overall %</Typography>
+                        <Chip label={`${batchStats.batchPercentage.toFixed(1)}%`} color="primary" />
                       </Box>
                       <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-                        <span>Total Learners</span>
-                        <span>{batchStats.totalLearners}</span>
+                        <Typography>Total Learners</Typography>
+                        <Typography variant="h6">{batchStats.totalLearners}</Typography>
                       </Box>
                       <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-                        <span>Total Sessions</span>
-                        <span>{batchStats.totalSessions}</span>
+                        <Typography>Total Sessions</Typography>
+                        <Typography variant="h6">{batchStats.totalSessions}</Typography>
                       </Box>
                       <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-                        <span>Present Sessions</span>
-                        <span>{batchStats.presentSessions}</span>
+                        <Typography>Present Sessions</Typography>
+                        <Typography variant="h6" color="success.main">{batchStats.presentSessions}</Typography>
                       </Box>
                     </Box>
                   </CardContent>
@@ -379,56 +413,61 @@ export default function AttendanceReport({ user, token }) {
             </Grid>
 
             {/* Detailed Table */}
-            <Paper elevation={2} sx={{ overflow: "auto" }}>
-              <Table size="small" sx={{ minWidth: 900 }}>
-                <TableHead sx={{ bgcolor: "primary.main" }}>
-                  <TableRow>
-                    <TableCell sx={{ color: "white", fontWeight: "bold" }}>Sr</TableCell>
-                    <TableCell sx={{ color: "white", fontWeight: "bold" }}>Learner</TableCell>
-                    <TableCell sx={{ color: "white", fontWeight: "bold" }}>Email</TableCell>
-                    <TableCell sx={{ color: "white", fontWeight: "bold", textAlign: "right" }}>Total</TableCell>
-                    <TableCell sx={{ color: "white", fontWeight: "bold", textAlign: "right" }}>Present</TableCell>
-                    <TableCell sx={{ color: "white", fontWeight: "bold", textAlign: "right" }}>Leave</TableCell>
-                    <TableCell sx={{ color: "white", fontWeight: "bold", textAlign: "right" }}>Absent</TableCell>
-                    <TableCell sx={{ color: "white", fontWeight: "bold", textAlign: "right" }}>%</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {aggregatedRows.map((row, idx) => (
-                    <TableRow 
-                      key={row.email || idx}
-                      sx={{ 
-                        bgcolor: row.attendance_percentage >= 80 ? "#E8F5E8" : 
-                               row.attendance_percentage >= 60 ? "#FFF3E0" : "#FFEBEE" 
-                      }}
-                    >
-                      <TableCell>{idx + 1}</TableCell>
-                      <TableCell sx={{ fontWeight: 500 }}>{row.name}</TableCell>
-                      <TableCell sx={{ maxWidth: 250, wordBreak: "break-all" }}>
-                        {row.email}
-                      </TableCell>
-                      <TableCell align="right" sx={{ fontWeight: "bold" }}>
-                        {row.total_days}
-                      </TableCell>
-                      <TableCell align="right" sx={{ color: "#4CAF50", fontWeight: "bold" }}>
-                        {row.present_days}
-                      </TableCell>
-                      <TableCell align="right">{row.leave_days}</TableCell>
-                      <TableCell align="right" sx={{ color: "#F44336" }}>
-                        {row.absent_days}
-                      </TableCell>
-                      <TableCell align="right">
-                        <Chip 
-                          label={`${row.attendance_percentage.toFixed(1)}%`}
-                          color={row.attendance_percentage >= 80 ? "success" : 
-                                 row.attendance_percentage >= 60 ? "warning" : "error"}
-                          size="small"
-                        />
-                      </TableCell>
+            <Paper elevation={2} sx={{ overflow: "hidden" }}>
+              <Box sx={{ bgcolor: "primary.main", color: "white", p: 2 }}>
+                <Typography variant="h6">📋 Detailed Attendance Report</Typography>
+              </Box>
+              <TableContainer sx={{ maxHeight: 600 }}>
+                <Table stickyHeader size="small">
+                  <TableHead>
+                    <TableRow sx={{ bgcolor: "primary.main" }}>
+                      <TableCell sx={{ color: "white", fontWeight: "bold" }}>Sr</TableCell>
+                      <TableCell sx={{ color: "white", fontWeight: "bold" }}>Learner</TableCell>
+                      <TableCell sx={{ color: "white", fontWeight: "bold" }}>Email</TableCell>
+                      <TableCell sx={{ color: "white", fontWeight: "bold", textAlign: "right" }}>Total</TableCell>
+                      <TableCell sx={{ color: "white", fontWeight: "bold", textAlign: "right" }}>Present</TableCell>
+                      <TableCell sx={{ color: "white", fontWeight: "bold", textAlign: "right" }}>Leave</TableCell>
+                      <TableCell sx={{ color: "white", fontWeight: "bold", textAlign: "right" }}>Absent</TableCell>
+                      <TableCell sx={{ color: "white", fontWeight: "bold", textAlign: "right" }}>%</TableCell>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHead>
+                  <TableBody>
+                    {aggregatedRows.map((row, idx) => (
+                      <TableRow 
+                        key={row.email || idx}
+                        sx={{ 
+                          bgcolor: row.attendance_percentage >= 80 ? "#E8F5E8" : 
+                                 row.attendance_percentage >= 60 ? "#FFF3E0" : "#FFEBEE" 
+                        }}
+                      >
+                        <TableCell>{idx + 1}</TableCell>
+                        <TableCell sx={{ fontWeight: 500 }}>{row.name}</TableCell>
+                        <TableCell sx={{ maxWidth: 250, wordBreak: "break-all" }}>
+                          {row.email}
+                        </TableCell>
+                        <TableCell align="right" sx={{ fontWeight: "bold" }}>
+                          {row.total_days}
+                        </TableCell>
+                        <TableCell align="right" sx={{ color: "#4CAF50", fontWeight: "bold" }}>
+                          {row.present_days}
+                        </TableCell>
+                        <TableCell align="right">{row.leave_days}</TableCell>
+                        <TableCell align="right" sx={{ color: "#F44336" }}>
+                          {row.absent_days}
+                        </TableCell>
+                        <TableCell align="right">
+                          <Chip 
+                            label={`${row.attendance_percentage.toFixed(1)}%`}
+                            color={row.attendance_percentage >= 80 ? "success" : 
+                                   row.attendance_percentage >= 60 ? "warning" : "error"}
+                            size="small"
+                          />
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
             </Paper>
           </>
         )}
