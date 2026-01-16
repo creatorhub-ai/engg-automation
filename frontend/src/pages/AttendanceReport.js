@@ -37,61 +37,57 @@ export default function AttendanceReport({ user, token }) {
 
   const authHeaders = () => (token ? { Authorization: `Bearer ${token}` } : {});
 
-  // Load distinct batch numbers from multiple possible endpoints
+  // Load distinct batch numbers DIRECTLY from learner_attendance table
   useEffect(() => {
     async function loadBatches() {
       try {
-        const endpoints = [
-          `${API_BASE}/api/batches`,
-          `${API_BASE}/api/batch-list`,
-          `${API_BASE}/api/batches/list`,
-        ];
+        setLoading(true);
+        console.log("Loading batches from learner_attendance table...");
+        
+        // Direct query to get DISTINCT batch_no from learner_attendance
+        const res = await axios.get(`${API_BASE}/api/attendance/batches`, {
+          headers: authHeaders(),
+          timeout: 10000,
+        });
 
-        let batchData = [];
-        for (const endpoint of endpoints) {
-          try {
-            const res = await axios.get(endpoint, { headers: authHeaders(), timeout: 5000 });
-            if (res.data && Array.isArray(res.data)) {
-              batchData = res.data;
-              break;
-            }
-          } catch (e) {
-            console.warn(`Failed ${endpoint}:`, e.message);
-            continue;
-          }
-        }
+        let batchData = res.data || [];
+        if (!Array.isArray(batchData)) batchData = [];
 
-        let normalized = [];
-        if (Array.isArray(batchData)) {
-          normalized = batchData
-            .map((item) => {
-              if (!item) return null;
-              if (typeof item === "string") return item.trim();
-              if (typeof item === "object") {
-                const v = item.batch_no || item.batchNo || item.batch || item.name || "";
-                return String(v).trim();
-              }
-              return null;
-            })
-            .filter((v) => v && v.length > 0);
-        }
+        const normalized = Array.from(new Set(
+          batchData.map(b => String(b.batch_no || b).trim()).filter(b => b)
+        )).sort();
 
-        normalized = Array.from(new Set(normalized)).sort();
         setBatches(normalized);
-
         if (normalized.length && !batchNo) {
           setBatchNo(normalized[0]);
         }
+        setLoading(false);
       } catch (e) {
-        console.error("Failed to load batches", e);
-        setMsg("No batches available. Please check backend configuration.");
-        setBatches([]);
+        console.error("Failed to load batches:", e);
+        // Fallback: try to get batches from any working endpoint
+        try {
+          const fallbackRes = await axios.get(`${API_BASE}/api/batches`, {
+            headers: authHeaders(),
+            timeout: 5000,
+          });
+          const fallbackBatches = Array.from(new Set(
+            (fallbackRes.data || []).map(b => String(b.batch_no || b.batchNo || b).trim()).filter(b => b)
+          )).sort();
+          setBatches(fallbackBatches);
+          if (fallbackBatches.length && !batchNo) {
+            setBatchNo(fallbackBatches[0]);
+          }
+        } catch (e2) {
+          console.error("All batch endpoints failed:", e2);
+          setMsg("No batches found. Please ensure learner_attendance table has data.");
+        }
+        setLoading(false);
       }
     }
     loadBatches();
   }, [token]);
 
-  // Load attendance data with fallback and better error handling
+  // Load attendance data DIRECTLY matching your table structure
   useEffect(() => {
     if (!batchNo) {
       setRawAttendance([]);
@@ -106,45 +102,48 @@ export default function AttendanceReport({ user, token }) {
       try {
         console.log(`Loading attendance for batch: ${batchNo}`);
         
-        const endpoints = [
-          { url: `${API_BASE}/api/attendance/by_batch`, params: { batch_no: batchNo } },
-          { url: `${API_BASE}/api/attendance/batch/${batchNo}`, params: {} },
-          { url: `${API_BASE}/api/attendance?batch_no=${batchNo}`, params: {} },
-          { url: `${API_BASE}/api/learners/${batchNo}/attendance`, params: {} },
-        ];
+        // DIRECT QUERY for learner_attendance table with your exact columns
+        const res = await axios.get(`${API_BASE}/api/learner_attendance`, {
+          params: {
+            batch_no: batchNo,
+            select: "id,learner_email,batch_no,date,session,status,marked_by,marked_at"
+          },
+          headers: authHeaders(),
+          timeout: 15000,
+        });
 
-        let attendanceData = [];
-        for (const endpoint of endpoints) {
-          try {
-            console.log(`Trying endpoint: ${endpoint.url}`);
-            const res = await axios.get(endpoint.url, {
-              params: endpoint.params,
-              headers: authHeaders(),
-              timeout: 10000,
-            });
-            
-            if (res.data && (Array.isArray(res.data) || Array.isArray(res.data.data))) {
-              attendanceData = Array.isArray(res.data) ? res.data : res.data.data || [];
-              console.log(`✅ Success with ${endpoint.url}:`, attendanceData.length, "records");
-              break;
-            }
-          } catch (endpointError) {
-            console.warn(`❌ Failed ${endpoint.url}:`, endpointError.response?.status, endpointError.message);
-            continue;
-          }
-        }
-
+        let attendanceData = Array.isArray(res.data) ? res.data : [];
+        
+        console.log(`✅ Loaded ${attendanceData.length} attendance records for ${batchNo}`);
+        
         if (attendanceData.length === 0) {
-          setMsg(`No attendance records found for batch "${batchNo}". This might be normal if no sessions have been marked.`);
+          setMsg(`No attendance records found for batch "${batchNo}".`);
         }
-
+        
         setRawAttendance(attendanceData);
       } catch (e) {
-        console.error("All attendance endpoints failed:", e);
-        setMsg(
-          `Unable to load attendance data for "${batchNo}". ` +
-          `Backend error. Please check server logs or contact admin.`
-        );
+        console.error("Failed to load attendance:", e);
+        
+        // Try alternative endpoints with exact table structure
+        const altEndpoints = [
+          `${API_BASE}/api/attendance/by_batch?batch_no=${batchNo}`,
+          `${API_BASE}/api/attendance?batch_no=${batchNo}`,
+        ];
+        
+        for (const endpoint of altEndpoints) {
+          try {
+            const altRes = await axios.get(endpoint, { headers: authHeaders(), timeout: 5000 });
+            if (Array.isArray(altRes.data)) {
+              setRawAttendance(altRes.data);
+              console.log(`✅ Fallback success: ${altRes.data.length} records`);
+              return;
+            }
+          } catch (altErr) {
+            console.warn(`Fallback failed: ${endpoint}`);
+          }
+        }
+        
+        setMsg(`No attendance data found for "${batchNo}". Please check learner_attendance table.`);
         setRawAttendance([]);
       } finally {
         setLoading(false);
@@ -154,62 +153,77 @@ export default function AttendanceReport({ user, token }) {
     loadAttendance();
   }, [batchNo, token]);
 
-  // Aggregate attendance data per learner
+  // Aggregate attendance per learner - MATCHES YOUR TABLE STRUCTURE
   const aggregatedRows = useMemo(() => {
     if (!rawAttendance.length) return [];
 
-    const map = new Map();
+    const map = new Map(); // key: learner_email
 
     rawAttendance.forEach((row) => {
-      const email = (row.learner_email || row.email || row.learner_email_id || "").trim();
+      const email = String(row.learner_email || "").trim();
       if (!email) return;
 
-      const name = (row.learner_name || row.name || row.learner_name || row.full_name || "").trim();
       const key = email.toLowerCase();
 
       if (!map.has(key)) {
         map.set(key, {
-          name: name || `Learner (${email})`,
+          name: email.split('@')[0].replace(/\./g, ' ').replace(/_/g, ' '), // Generate name from email
           email,
           total_days: 0,
           present_days: 0,
           leave_days: 0,
           absent_days: 0,
+          sessions: new Set(), // Track unique sessions per day
         });
       }
 
       const agg = map.get(key);
-      agg.total_days += 1;
+      
+      // Create unique session identifier: date + session
+      const sessionKey = `${row.date || ''}-${row.session || ''}`;
+      if (!agg.sessions.has(sessionKey)) {
+        agg.sessions.add(sessionKey);
+        agg.total_days += 1;
 
-      const status = (row.status || "").toString().toLowerCase().trim();
-      if (["present", "p", "yes"].includes(status)) agg.present_days += 1;
-      else if (["leave", "onleave", "on_leave", "l", "lv"].includes(status)) agg.leave_days += 1;
-      else if (["absent", "a", "no"].includes(status)) agg.absent_days += 1;
+        // Map your exact status values: P, A, NA, L
+        const status = String(row.status || "").toUpperCase().trim();
+        if (status === "P") agg.present_days += 1;
+        else if (status === "L") agg.leave_days += 1;
+        else if (status === "A" || status === "NA") agg.absent_days += 1;
+      }
     });
 
     const result = Array.from(map.values()).map((r) => {
       const pct = r.total_days > 0 ? Math.round((r.present_days / r.total_days) * 100 * 100) / 100 : 0;
-      return { ...r, attendance_percentage: pct };
+      return { 
+        ...r, 
+        attendance_percentage: pct,
+        total_days: r.total_days,
+        present_days: r.present_days,
+        leave_days: r.leave_days,
+        absent_days: r.absent_days
+      };
     });
 
-    return result.sort((a, b) => (b.attendance_percentage || 0) - (a.attendance_percentage || 0));
+    // Sort by percentage descending, then by name
+    return result.sort((a, b) => {
+      if ((b.attendance_percentage || 0) !== (a.attendance_percentage || 0)) {
+        return (b.attendance_percentage || 0) - (a.attendance_percentage || 0);
+      }
+      return a.email.localeCompare(b.email);
+    });
   }, [rawAttendance]);
 
-  // Batch-level statistics
+  // Batch statistics
   const batchStats = useMemo(() => {
     if (!aggregatedRows.length) {
-      return {
-        batchPercentage: 0,
-        totalLearners: 0,
-        totalSessions: 0,
-        presentSessions: 0,
-      };
+      return { batchPercentage: 0, totalLearners: 0, totalSessions: 0, presentSessions: 0 };
     }
 
     const totalLearners = aggregatedRows.length;
     const totalSessions = rawAttendance.length;
-    const totalPresentSessions = rawAttendance.filter(r => 
-      ["present", "p", "yes"].includes((r.status || "").toLowerCase())
+    const presentSessions = rawAttendance.filter(r => 
+      String(r.status || "").toUpperCase() === "P"
     ).length;
     const avgPct = aggregatedRows.reduce((sum, r) => sum + (r.attendance_percentage || 0), 0) / totalLearners;
 
@@ -217,11 +231,11 @@ export default function AttendanceReport({ user, token }) {
       batchPercentage: Math.round(avgPct * 100) / 100,
       totalLearners,
       totalSessions,
-      presentSessions: totalPresentSessions,
+      presentSessions,
     };
   }, [aggregatedRows, rawAttendance]);
 
-  // Radial Progress Component (Pure CSS/SVG)
+  // Radial Progress Component
   const RadialProgress = ({ percentage, size = 120 }) => (
     <div 
       style={{
@@ -245,7 +259,7 @@ export default function AttendanceReport({ user, token }) {
           fill="none" 
           stroke="#4CAF50" 
           strokeWidth="3"
-          strokeDasharray={`${percentage * 0.3525 * 100}, 100`}
+          strokeDasharray={`${Math.min(percentage, 100) * 0.3525 * 100}, 100`}
           strokeLinecap="round"
           transform="rotate(-90 18 18)"
         />
@@ -254,7 +268,8 @@ export default function AttendanceReport({ user, token }) {
         position: 'absolute',
         fontSize: '18px',
         fontWeight: 'bold',
-        color: percentage >= 80 ? '#4CAF50' : percentage >= 60 ? '#FF9800' : '#F44336'
+        color: percentage >= 80 ? '#4CAF50' : percentage >= 60 ? '#FF9800' : '#F44336',
+        textAlign: 'center'
       }}>
         {Math.round(percentage)}%
       </div>
@@ -266,34 +281,29 @@ export default function AttendanceReport({ user, token }) {
     if (!aggregatedRows.length) return;
 
     const doc = new jsPDF("landscape");
-    const title = `Attendance Report - Batch ${batchNo}`;
-    
     doc.setFontSize(18);
-    doc.text(title, 14, 20);
-    
+    doc.text(`Attendance Report - Batch ${batchNo}`, 14, 20);
     doc.setFontSize(12);
-    doc.text(`Overall Attendance: ${batchStats.batchPercentage.toFixed(1)}%`, 14, 35);
-    doc.text(`Total Learners: ${batchStats.totalLearners} | Total Sessions: ${batchStats.totalSessions}`, 14, 45);
+    doc.text(`Overall: ${batchStats.batchPercentage.toFixed(1)}% | Learners: ${batchStats.totalLearners} | Sessions: ${batchStats.totalSessions}`, 14, 35);
 
-    const head = [["Sr", "Name", "Email", "Total", "Present", "Leave", "Absent", "%"]];
+    const head = [["#", "Learner", "Email", "Total", "Present", "Leave", "Absent", "%"]];
     const body = aggregatedRows.map((row, idx) => [
       idx + 1,
-      row.name.substring(0, 25),
-      row.email.substring(0, 30),
-      row.total_days,
-      row.present_days,
-      row.leave_days,
-      row.absent_days,
+      row.name.substring(0, 20),
+      row.email.substring(0, 25),
+      row.total_days || 0,
+      row.present_days || 0,
+      row.leave_days || 0,
+      row.absent_days || 0,
       row.attendance_percentage.toFixed(1),
     ]);
 
     doc.autoTable({
-      head,
-      body,
-      startY: 55,
-      styles: { fontSize: 7, cellPadding: 2 },
-      headStyles: { fillColor: [25, 118, 210], fontSize: 8 },
-      columnStyles: { 1: { cellWidth: 25 }, 2: { cellWidth: 35 } },
+      head, body,
+      startY: 45,
+      styles: { fontSize: 7 },
+      headStyles: { fillColor: [25, 118, 210] },
+      columnStyles: { 1: { cellWidth: 20 }, 2: { cellWidth: 30 } }
     });
 
     doc.save(`attendance_${batchNo}_${new Date().toISOString().slice(0,10)}.pdf`);
@@ -306,28 +316,17 @@ export default function AttendanceReport({ user, token }) {
           📊 Attendance Report Dashboard
         </Typography>
 
-        {/* Controls */}
         <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap", mb: 4, alignItems: "center" }}>
           <FormControl sx={{ minWidth: 220 }}>
             <InputLabel>Select Batch</InputLabel>
-            <Select
-              label="Select Batch"
-              value={batchNo}
-              onChange={(e) => setBatchNo(e.target.value)}
-            >
+            <Select value={batchNo} onChange={(e) => setBatchNo(e.target.value)} label="Select Batch">
               {batches.map((b) => (
-                <MenuItem key={b} value={b}>
-                  {b}
-                </MenuItem>
+                <MenuItem key={b} value={b}>{b}</MenuItem>
               ))}
-              {batches.length === 0 && (
-                <MenuItem disabled>No batches available</MenuItem>
-              )}
+              {batches.length === 0 && <MenuItem disabled>No batches</MenuItem>}
             </Select>
           </FormControl>
-
           <Box sx={{ flexGrow: 1 }} />
-
           <Button
             variant="contained"
             disabled={!aggregatedRows.length}
@@ -346,39 +345,27 @@ export default function AttendanceReport({ user, token }) {
         )}
 
         {!loading && msg && !rawAttendance.length && (
-          <Alert severity="warning" sx={{ mb: 3 }}>
+          <Alert severity="info" sx={{ mb: 3 }}>
             {msg}
           </Alert>
         )}
 
-        {/* Summary Cards + Chart */}
         {aggregatedRows.length > 0 && (
           <>
             <Grid container spacing={3} sx={{ mb: 4 }}>
               <Grid item xs={12} md={8}>
-                <Card elevation={3} sx={{ height: "100%" }}>
+                <Card elevation={3}>
                   <CardContent>
                     <Typography variant="h6" gutterBottom sx={{ mb: 3 }}>
-                      📈 Batch {batchNo} Attendance Overview
+                      📈 Batch {batchNo} Overview ({batchStats.totalLearners} learners)
                     </Typography>
-                    <Box sx={{ 
-                      display: "flex", 
-                      flexDirection: { xs: "column", md: "row" }, 
-                      gap: 4, 
-                      alignItems: "center",
-                      justifyContent: "center"
-                    }}>
+                    <Box sx={{ display: "flex", gap: 4, alignItems: "center", justifyContent: "center", flexDirection: { xs: "column", md: "row" } }}>
                       <Box sx={{ textAlign: "center" }}>
-                        <RadialProgress 
-                          percentage={batchStats.batchPercentage} 
-                          size={160}
-                        />
+                        <RadialProgress percentage={batchStats.batchPercentage} size={160} />
                         <Typography variant="h4" sx={{ mt: 2, fontWeight: "bold" }}>
                           {batchStats.batchPercentage.toFixed(1)}%
                         </Typography>
-                        <Typography variant="body1" color="text.secondary">
-                          Overall Attendance
-                        </Typography>
+                        <Typography variant="body1" color="text.secondary">Overall Attendance</Typography>
                       </Box>
                     </Box>
                   </CardContent>
@@ -388,22 +375,22 @@ export default function AttendanceReport({ user, token }) {
               <Grid item xs={12} md={4}>
                 <Card elevation={3}>
                   <CardContent>
-                    <Typography variant="h6" gutterBottom>📊 Quick Stats</Typography>
+                    <Typography variant="h6" gutterBottom>📊 Stats</Typography>
                     <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <Typography>Overall %</Typography>
+                      <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+                        <span>Overall %</span>
                         <Chip label={`${batchStats.batchPercentage.toFixed(1)}%`} color="primary" />
                       </Box>
                       <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-                        <Typography>Total Learners</Typography>
+                        <span>Total Learners</span>
                         <Typography variant="h6">{batchStats.totalLearners}</Typography>
                       </Box>
                       <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-                        <Typography>Total Sessions</Typography>
+                        <span>Total Sessions</span>
                         <Typography variant="h6">{batchStats.totalSessions}</Typography>
                       </Box>
                       <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-                        <Typography>Present Sessions</Typography>
+                        <span>Present Sessions</span>
                         <Typography variant="h6" color="success.main">{batchStats.presentSessions}</Typography>
                       </Box>
                     </Box>
@@ -412,16 +399,15 @@ export default function AttendanceReport({ user, token }) {
               </Grid>
             </Grid>
 
-            {/* Detailed Table */}
             <Paper elevation={2} sx={{ overflow: "hidden" }}>
               <Box sx={{ bgcolor: "primary.main", color: "white", p: 2 }}>
-                <Typography variant="h6">📋 Detailed Attendance Report</Typography>
+                <Typography variant="h6">📋 Detailed Report ({aggregatedRows.length} learners)</Typography>
               </Box>
               <TableContainer sx={{ maxHeight: 600 }}>
                 <Table stickyHeader size="small">
                   <TableHead>
                     <TableRow sx={{ bgcolor: "primary.main" }}>
-                      <TableCell sx={{ color: "white", fontWeight: "bold" }}>Sr</TableCell>
+                      <TableCell sx={{ color: "white", fontWeight: "bold" }}>#</TableCell>
                       <TableCell sx={{ color: "white", fontWeight: "bold" }}>Learner</TableCell>
                       <TableCell sx={{ color: "white", fontWeight: "bold" }}>Email</TableCell>
                       <TableCell sx={{ color: "white", fontWeight: "bold", textAlign: "right" }}>Total</TableCell>
@@ -434,7 +420,7 @@ export default function AttendanceReport({ user, token }) {
                   <TableBody>
                     {aggregatedRows.map((row, idx) => (
                       <TableRow 
-                        key={row.email || idx}
+                        key={row.email}
                         sx={{ 
                           bgcolor: row.attendance_percentage >= 80 ? "#E8F5E8" : 
                                  row.attendance_percentage >= 60 ? "#FFF3E0" : "#FFEBEE" 
@@ -442,19 +428,11 @@ export default function AttendanceReport({ user, token }) {
                       >
                         <TableCell>{idx + 1}</TableCell>
                         <TableCell sx={{ fontWeight: 500 }}>{row.name}</TableCell>
-                        <TableCell sx={{ maxWidth: 250, wordBreak: "break-all" }}>
-                          {row.email}
-                        </TableCell>
-                        <TableCell align="right" sx={{ fontWeight: "bold" }}>
-                          {row.total_days}
-                        </TableCell>
-                        <TableCell align="right" sx={{ color: "#4CAF50", fontWeight: "bold" }}>
-                          {row.present_days}
-                        </TableCell>
+                        <TableCell sx={{ maxWidth: 250, wordBreak: "break-all" }}>{row.email}</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: "bold" }}>{row.total_days}</TableCell>
+                        <TableCell align="right" sx={{ color: "#4CAF50", fontWeight: "bold" }}>{row.present_days}</TableCell>
                         <TableCell align="right">{row.leave_days}</TableCell>
-                        <TableCell align="right" sx={{ color: "#F44336" }}>
-                          {row.absent_days}
-                        </TableCell>
+                        <TableCell align="right" sx={{ color: "#F44336" }}>{row.absent_days}</TableCell>
                         <TableCell align="right">
                           <Chip 
                             label={`${row.attendance_percentage.toFixed(1)}%`}
