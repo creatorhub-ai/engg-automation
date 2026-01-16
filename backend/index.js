@@ -3266,66 +3266,83 @@ app.get('/api/marks/:category', async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
-
-// ✅ CRITICAL FIX: IMMEDIATE RESPONSE + Background Email Queue
+// ✅ FIXED: Main announcement endpoint - NO SYNTAX ERRORS
 app.post('/api/announcement/send-direct', async (req, res) => {
-  // ✅ IMMEDIATE RESPONSE - NO WAITING
-  res.json({
-    success: true,
-    message: '✅ Email queue started! Processing in background...',
-    sentTo: 0, // Will be updated later
-    queued: req.body.learner_count || 0,
-    from: process.env.EMAIL_USER,
-    batch: req.body.batch_no
-  });
+  try {
+    const { subject, message, messageType, batch_no, learner_count } = req.body;
+    
+    console.log('📥 Request:', { subject: subject?.slice(0, 50), batch_no, learner_count });
 
-  // ✅ BACKGROUND PROCESSING (no timeout)
-  processEmailQueue(req.body).catch(console.error);
+    // ✅ IMMEDIATE RESPONSE
+    res.json({
+      success: true,
+      message: '✅ Email queue started!',
+      queued: learner_count || 0,
+      from: process.env.EMAIL_USER || 'NOT_SET',
+      batch: batch_no
+    });
+
+    // ✅ Start background email processing
+    sendBatchEmails({ subject, message, messageType, batch_no });
+
+  } catch (error) {
+    console.error('Endpoint error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
-async function processEmailQueue(payload) {
+// ✅ Email sending function (separate)
+async function sendBatchEmails(data) {
   try {
-    const { subject, message, messageType, batch_no } = payload;
+    const { subject, message, messageType, batch_no } = data;
     
-    // Get learners
-    const learnerResponse = await fetch(`${API_BASE}/apigetlearners?batchno=${batch_no}`);
-    const learners = await learnerResponse.json();
+    // Get learners for batch
+    const learnerRes = await fetch(`http://localhost:5000/apigetlearners?batchno=${batch_no}`);
+    const learners = await learnerRes.json();
     const validLearners = learners.filter(l => l.email && l.email.trim());
-    
-    console.log(`📤 Queued ${validLearners.length} emails for ${batch_no}`);
 
-    let sent = 0, failed = 0;
-    
-    // Send emails WITHOUT timeout blocking
+    console.log(`📤 Processing ${validLearners.length} emails for ${batch_no}`);
+
+    let sentCount = 0;
+    let failedCount = 0;
+
     for (const learner of validLearners) {
       try {
-        let htmlContent = messageType === 'html' ? 
-          `<h2>${subject}</h2><p>${message.replace(/\n/g, '<br>')}</p>` : undefined;
-
-        await transporter.sendMail({
+        const mailOptions = {
           from: `"Training Team" <${process.env.EMAIL_USER}>`,
           to: learner.email,
-          subject,
+          subject: `[${batch_no}] ${subject}`,
           text: message,
-          html: htmlContent
-        });
+          html: messageType === 'html' ? `
+            <div style="font-family: Arial; padding: 20px; max-width: 600px;">
+              <h2 style="color: #2c5aa0;">${subject}</h2>
+              <div style="background: #f5f5f5; padding: 15px; border-radius: 5px;">
+                ${message.replace(/\n/g, '<br>')}
+              </div>
+              <p style="color: #666; font-size: 12px; margin-top: 20px;">
+                Batch: ${batch_no} | ${new Date().toLocaleString('en-IN')}
+              </p>
+            </div>
+          ` : undefined
+        };
+
+        await transporter.sendMail(mailOptions);
+        sentCount++;
+        console.log(`✅ SENT: ${learner.email}`);
         
-        sent++;
-        console.log(`✅ Sent to ${learner.email}`);
+        // Rate limiting
+        await new Promise(resolve => setTimeout(resolve, 200));
         
-        // Small delay to avoid Gmail rate limits
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
-      } catch (e) {
-        failed++;
-        console.error(`❌ Failed ${learner.email}:`, e.message);
+      } catch (emailError) {
+        failedCount++;
+        console.error(`❌ FAILED ${learner.email}:`, emailError.message);
       }
     }
-    
-    console.log(`🎉 Completed: ${sent}/${validLearners.length} sent`);
-    
+
+    console.log(`🎉 RESULT: ${sentCount} sent, ${failedCount} failed`);
+
   } catch (error) {
-    console.error('Queue error:', error);
+    console.error('Batch email error:', error);
   }
 }
 
