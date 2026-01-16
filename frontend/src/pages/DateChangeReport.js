@@ -56,6 +56,7 @@ export default function DateChangeReport({ user, token }) {
     loadBatches();
   }, [token]);
 
+  // ✅ UPDATED: Include ALL topics with actual_date (On Time + Changed)
   useEffect(() => {
     if (selectedBatch) {
       loadReport();
@@ -75,17 +76,28 @@ export default function DateChangeReport({ user, token }) {
       try {
         const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
+        // ✅ FIXED: Get ALL topics with actual_date set (includes On Time)
         const reportRes = await axios.get(
-          `${API_BASE}/api/date-change-report/${selectedBatch}`,
+          `${API_BASE}/api/date-change-report/${selectedBatch}?include_ontime=true`,
           { headers }
         );
 
+        // ✅ FIXED: Summary endpoint also updated to count On Time properly
         const summaryRes = await axios.get(
-          `${API_BASE}/api/batch-date-summary/${selectedBatch}`,
+          `${API_BASE}/api/batch-date-summary/${selectedBatch}?include_ontime=true`,
           { headers }
         );
 
-        setReportData(reportRes.data || []);
+        // ✅ Process data to ensure On Time records are included
+        const processedReportData = (reportRes.data || []).map(row => ({
+          ...row,
+          date_difference: row.planned_date && row.actual_date 
+            ? Math.floor((new Date(row.actual_date) - new Date(row.planned_date)) / (1000 * 60 * 60 * 24))
+            : null,
+          topic_status: row.topic_status || "Completed"
+        }));
+
+        setReportData(processedReportData);
         setBatchSummary(summaryRes.data || null);
       } catch (err) {
         console.error("Error loading report:", err);
@@ -125,17 +137,17 @@ export default function DateChangeReport({ user, token }) {
       doc.text(
         `Delayed Topics: ${batchSummary.delayed_count || 0}`,
         14,
-        50
+        52
       );
       doc.text(
         `Early Completion: ${batchSummary.early_count || 0}`,
         70,
-        50
+        52
       );
       doc.text(
         `On Time: ${batchSummary.ontime_count || 0}`,
         126,
-        50
+        52
       );
       doc.text(
         `Avg Difference: ${
@@ -144,32 +156,35 @@ export default function DateChangeReport({ user, token }) {
             : "0"
         } days`,
         182,
-        50
+        52
       );
     }
 
+    // ✅ Include ALL records (On Time + Changed) in PDF
     const tableData = reportData.map((row) => [
       row.module_name || "N/A",
       row.topic_name || "N/A",
       row.trainer_name || "N/A",
-      new Date(row.planned_date).toLocaleDateString("en-IN"),
-      new Date(row.actual_date).toLocaleDateString("en-IN"),
-      row.date_difference > 0
-        ? `+${row.date_difference}d`
-        : row.date_difference < 0
-        ? `${row.date_difference}d`
-        : "On time",
+      row.planned_date ? new Date(row.planned_date).toLocaleDateString("en-IN") : "N/A",
+      row.actual_date ? new Date(row.actual_date).toLocaleDateString("en-IN") : "N/A",
+      row.date_difference !== null && row.date_difference !== undefined
+        ? row.date_difference > 0
+          ? `+${row.date_difference}d`
+          : row.date_difference < 0
+          ? `${row.date_difference}d`
+          : "On time"
+        : "Pending",
       row.topic_status || "N/A",
-      row.changed_by || "N/A",
-      new Date(row.changed_at).toLocaleString("en-IN", {
+      row.changed_by || "System",
+      row.changed_at ? new Date(row.changed_at).toLocaleString("en-IN", {
         dateStyle: "short",
         timeStyle: "short",
-      }),
+      }) : "Initial",
       row.remarks || "-",
     ]);
 
     autoTable(doc, {
-      startY: 56,
+      startY: 64,
       head: [
         [
           "Module",
@@ -188,7 +203,7 @@ export default function DateChangeReport({ user, token }) {
       styles: { fontSize: 8, cellPadding: 2 },
       headStyles: { fillColor: [102, 126, 234], textColor: 255 },
       alternateRowStyles: { fillColor: [245, 245, 245] },
-      margin: { top: 56 },
+      margin: { top: 64 },
       columnStyles: {
         0: { cellWidth: 25 },
         1: { cellWidth: 35 },
@@ -226,10 +241,10 @@ export default function DateChangeReport({ user, token }) {
         >
           <Box>
             <Typography variant="h4" color="primary" gutterBottom>
-              Date Change Report
+              📊 Date Change Report
             </Typography>
             <Typography variant="subtitle1" color="text.secondary">
-              Track and analyze training schedule changes across batches
+              Track ALL schedule adherence (On Time + Changes) across batches ✅
             </Typography>
           </Box>
 
@@ -253,12 +268,11 @@ export default function DateChangeReport({ user, token }) {
         </Box>
 
         <FormControl fullWidth sx={{ mb: 4, maxWidth: 400 }}>
-          <InputLabel></InputLabel>
+          <InputLabel>Select Batch</InputLabel>
           <Select
             value={selectedBatch}
             label="Select Batch"
             onChange={(e) => setSelectedBatch(e.target.value)}
-            displayEmpty
           >
             <MenuItem value="">
               <em>Select Batch</em>
@@ -291,7 +305,7 @@ export default function DateChangeReport({ user, token }) {
               gutterBottom
               sx={{ mt: 2 }}
             >
-              Summary Statistics
+              📈 Summary Statistics (Includes ALL On Time Records)
             </Typography>
             <Grid container spacing={3} mb={4}>
               <Grid item xs={12} sm={6} md={3}>
@@ -352,7 +366,7 @@ export default function DateChangeReport({ user, token }) {
                       gutterBottom
                       variant="body2"
                     >
-                      On Time
+                      ✅ On Time
                     </Typography>
                     <Typography variant="h3" color="primary.main">
                       {batchSummary.ontime_count || 0}
@@ -361,7 +375,7 @@ export default function DateChangeReport({ user, token }) {
                       variant="caption"
                       color="text.secondary"
                     >
-                      Completed as planned
+                      Completed as planned (Initial + Unchanged)
                     </Typography>
                   </CardContent>
                 </Card>
@@ -401,42 +415,22 @@ export default function DateChangeReport({ user, token }) {
               gutterBottom
               sx={{ mt: 4 }}
             >
-              Detailed Change Log
+              📋 Detailed Report (ALL Records)
             </Typography>
             <TableContainer component={Paper} elevation={2}>
               <Table>
                 <TableHead>
                   <TableRow sx={{ bgcolor: "#f5f5f5" }}>
-                    <TableCell>
-                      <strong>Module Name</strong>
-                    </TableCell>
-                    <TableCell>
-                      <strong>Topic Name</strong>
-                    </TableCell>
-                    <TableCell align="center">
-                      <strong>Trainer</strong>
-                    </TableCell>
-                    <TableCell align="center">
-                      <strong>Planned Date</strong>
-                    </TableCell>
-                    <TableCell align="center">
-                      <strong>Actual Date</strong>
-                    </TableCell>
-                    <TableCell align="center">
-                      <strong>Difference</strong>
-                    </TableCell>
-                    <TableCell align="center">
-                      <strong>Status</strong>
-                    </TableCell>
-                    <TableCell align="center">
-                      <strong>Changed By</strong>
-                    </TableCell>
-                    <TableCell align="center">
-                      <strong>Changed At</strong>
-                    </TableCell>
-                    <TableCell align="center">
-                      <strong>Remarks</strong>
-                    </TableCell>
+                    <TableCell><strong>Module Name</strong></TableCell>
+                    <TableCell><strong>Topic Name</strong></TableCell>
+                    <TableCell align="center"><strong>Trainer</strong></TableCell>
+                    <TableCell align="center"><strong>Planned Date</strong></TableCell>
+                    <TableCell align="center"><strong>Actual Date</strong></TableCell>
+                    <TableCell align="center"><strong>Difference</strong></TableCell>
+                    <TableCell align="center"><strong>Status</strong></TableCell>
+                    <TableCell align="center"><strong>Changed By</strong></TableCell>
+                    <TableCell align="center"><strong>Changed At</strong></TableCell>
+                    <TableCell align="center"><strong>Remarks</strong></TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -447,14 +441,13 @@ export default function DateChangeReport({ user, token }) {
                           variant="body1"
                           color="text.secondary"
                         >
-                          No date changes recorded for this batch yet.
+                          No date records for this batch yet.
                         </Typography>
                         <Typography
                           variant="caption"
                           color="text.secondary"
                         >
-                          Date changes will appear here once trainers update
-                          actual dates.
+                          On Time records appear when actual_date matches planned_date
                         </Typography>
                       </TableCell>
                     </TableRow>
@@ -483,23 +476,21 @@ export default function DateChangeReport({ user, token }) {
                         </Typography>
                       </TableCell>
                       <TableCell align="center">
-                        {new Date(
-                          row.planned_date
-                        ).toLocaleDateString("en-IN")}
+                        {row.planned_date ? new Date(row.planned_date).toLocaleDateString("en-IN") : "N/A"}
                       </TableCell>
                       <TableCell align="center">
-                        {new Date(
-                          row.actual_date
-                        ).toLocaleDateString("en-IN")}
+                        {row.actual_date ? new Date(row.actual_date).toLocaleDateString("en-IN") : "Pending"}
                       </TableCell>
                       <TableCell align="center">
                         <Chip
                           label={
-                            row.date_difference > 0
-                              ? `+${row.date_difference} days`
-                              : row.date_difference < 0
-                              ? `${row.date_difference} days`
-                              : "On time"
+                            row.date_difference !== null && row.date_difference !== undefined
+                              ? row.date_difference > 0
+                                ? `+${row.date_difference} days`
+                                : row.date_difference < 0
+                                ? `${row.date_difference} days`
+                                : "✅ On time"
+                              : "Pending"
                           }
                           size="small"
                           color={
@@ -508,6 +499,8 @@ export default function DateChangeReport({ user, token }) {
                               : row.date_difference > 0
                               ? "warning"
                               : row.date_difference < 0
+                              ? "success"
+                              : row.date_difference === 0
                               ? "success"
                               : "default"
                           }
@@ -530,15 +523,15 @@ export default function DateChangeReport({ user, token }) {
                       </TableCell>
                       <TableCell align="center">
                         <Typography variant="body2">
-                          {row.changed_by || "N/A"}
+                          {row.changed_by || "System (Initial)"}
                         </Typography>
                       </TableCell>
                       <TableCell align="center">
                         <Typography variant="body2" color="text.secondary">
-                          {new Date(row.changed_at).toLocaleString("en-IN", {
+                          {row.changed_at ? new Date(row.changed_at).toLocaleString("en-IN", {
                             dateStyle: "short",
                             timeStyle: "short",
-                          })}
+                          }) : "Initial Entry"}
                         </Typography>
                       </TableCell>
                       <TableCell align="center">
@@ -569,7 +562,7 @@ export default function DateChangeReport({ user, token }) {
               No data available for this batch
             </Typography>
             <Typography variant="body2" color="text.secondary" mt={1}>
-              Select a different batch or wait for trainers to update dates
+              All On Time records will appear here automatically
             </Typography>
           </Box>
         )}
