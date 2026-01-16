@@ -23,7 +23,7 @@ const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation.onren
 
 const ASSESSMENT_TYPES = [
   { key: "weekly-assessment", label: "Weekly Assessment Score", topic: "Weekly Assessment", daysWindow: 4 },
-  { key: "intermediate-assessment", label: "Intermediate Assessment Score", topic: "Intermediate Assessment", daysWindow: 5 },
+  { key: "intermediate-assessment", label: "Intermediate Assessment Score", topic: "Intermediate Assessment", daysWindow: 6 },
   { key: "module-level-assessment", label: "Module Level Assessment", topic: "Module Level Assessment", daysWindow: 6 },
   { key: "weekly-quiz", label: "Weekly Quiz", topic: "Weekly Quiz", daysWindow: 7 },
 ];
@@ -43,8 +43,17 @@ function MarkSheet() {
   const [isWindowOpen, setIsWindowOpen] = useState(true);
   const [windowCloseDate, setWindowCloseDate] = useState("");
   const [windowStatus, setWindowStatus] = useState("valid");
+  const [currentDate, setCurrentDate] = useState(new Date()); // NEW: Current date state
 
   const numberLabel = "Week No";
+
+  // Update current date every second
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentDate(new Date());
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   // ✅ FIXED: Bulletproof date parsing
   const parseAssessmentDate = (dateStr) => {
@@ -96,7 +105,7 @@ function MarkSheet() {
     return date;
   };
 
-  // ✅ FIXED: Simplified window validation - NO range restrictions
+  // ✅ UPDATED: Window validation with correct days per assessment type
   const checkMarkEntryWindow = (assessmentDateStr) => {
     console.log("🧮 Checking window for:", assessmentDateStr);
     
@@ -111,19 +120,20 @@ function MarkSheet() {
     }
 
     try {
-      const now = new Date(); // 09/01/2026 10:43 AM IST
+      const now = currentDate; // Use live current date
       const typeConfig = ASSESSMENT_TYPES.find(t => t.key === assessmentType);
       const daysWindow = typeConfig?.daysWindow || 7;
 
       console.log("Assessment date:", assessmentDate.toLocaleDateString('en-GB'));
       console.log("Days window:", daysWindow);
+      console.log("Current time:", now.toLocaleString('en-GB'));
 
-      // Calculate closing date
+      // Calculate closing date: assessment date + daysWindow at 11:59 PM
       const closeDate = new Date(assessmentDate);
       closeDate.setDate(assessmentDate.getDate() + daysWindow);
       closeDate.setHours(23, 59, 59, 999);
 
-      console.log("Close date:", closeDate.toLocaleDateString('en-GB'));
+      console.log("Close date:", closeDate.toLocaleString('en-GB'));
 
       const isOpen = now <= closeDate;
       
@@ -204,7 +214,7 @@ function MarkSheet() {
       setWindowCloseDate("");
       setWindowStatus("valid");
     }
-  }, [selectedDate, assessmentType]);
+  }, [selectedDate, assessmentType, currentDate]); // Added currentDate dependency
 
   const handlePeriodSelect = (e) => {
     setPeriodValue(e.target.value);
@@ -291,12 +301,53 @@ function MarkSheet() {
 
   const currentType = ASSESSMENT_TYPES.find(at => at.key === assessmentType);
 
+  // Format current date for display (DD-MM-YYYY HH:MM:SS IST)
+  const formatCurrentDate = () => {
+    const options = {
+      day: '2-digit',
+      month: '2-digit', 
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+      timeZone: 'Asia/Kolkata',
+      timeZoneName: 'short'
+    };
+    return currentDate.toLocaleDateString('en-GB', options);
+  };
+
   return (
     <Box sx={{ maxWidth: 1200, mx: "auto", my: 3 }}>
       <Paper elevation={6} sx={{ p: 4, borderRadius: 3 }}>
-        <Typography variant="h4" color="primary" gutterBottom>
-          Marks Entry Dashboard
-        </Typography>
+        {/* NEW: Date display on top right */}
+        <Box sx={{ 
+          display: "flex", 
+          justifyContent: "space-between", 
+          alignItems: "center", 
+          mb: 3,
+          flexWrap: "wrap",
+          gap: 2
+        }}>
+          <Typography variant="h4" color="primary">
+            Marks Entry Dashboard
+          </Typography>
+          <Box sx={{ 
+            textAlign: "right", 
+            p: 1.5, 
+            bgcolor: "grey.50", 
+            borderRadius: 2,
+            border: "1px solid",
+            borderColor: "grey.200"
+          }}>
+            <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
+              Current Date & Time
+            </Typography>
+            <Typography variant="h6" color="primary" fontWeight="bold">
+              {formatCurrentDate()}
+            </Typography>
+          </Box>
+        </Box>
 
         <Box sx={{ display: "flex", gap: 3, mb: 2, flexWrap: "wrap", alignItems: "end" }}>
           <FormControl sx={{ minWidth: 180 }}>
