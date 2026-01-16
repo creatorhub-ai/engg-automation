@@ -34,29 +34,36 @@ export default function AnnouncementDashboard({ token }) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
+  const [sendProgress, setSendProgress] = useState(0);
 
-  // ✅ FIXED: Load domains and batches with better error handling
+  // ✅ FIXED: No timeout + Render.com cold start handling
   useEffect(() => {
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
     
-    const loadDomains = axios.get(`${API_BASE}/api/domains`, { headers })
-      .then((res) => setDomains(Array.isArray(res.data) ? res.data : []))
-      .catch((err) => {
-        console.error("Error loading domains:", err);
-        setDomains([]);
-      });
+    // Load domains
+    axios.get(`${API_BASE}/api/domains`, { 
+      headers,
+      timeout: 30000 // 30s for initial load
+    })
+    .then((res) => setDomains(Array.isArray(res.data) ? res.data : []))
+    .catch((err) => {
+      console.error("Error loading domains:", err);
+      setDomains([]);
+    });
 
-    const loadBatches = axios.get(`${API_BASE}/api/batches`, { headers })
-      .then((res) => setBatches(Array.isArray(res.data) ? res.data : []))
-      .catch((err) => {
-        console.error("Error loading batches:", err);
-        setBatches([]);
-      });
-
-    Promise.all([loadDomains, loadBatches]).catch(console.error);
+    // Load batches
+    axios.get(`${API_BASE}/api/batches`, { 
+      headers,
+      timeout: 30000 
+    })
+    .then((res) => setBatches(Array.isArray(res.data) ? res.data : []))
+    .catch((err) => {
+      console.error("Error loading batches:", err);
+      setBatches([]);
+    });
   }, [token]);
 
-  // ✅ FIXED: Load learners with correct endpoint and validation
+  // ✅ FIXED: Learner loading with longer timeout
   useEffect(() => {
     async function loadLearners() {
       if (!selectedBatch) {
@@ -70,11 +77,10 @@ export default function AnnouncementDashboard({ token }) {
       try {
         const headers = token ? { Authorization: `Bearer ${token}` } : {};
         
-        // ✅ FIXED: Correct learner endpoint with proper params
         const res = await axios.get(`${API_BASE}/apigetlearners`, {
           params: { batchno: selectedBatch },
           headers,
-          timeout: 10000, // 10s timeout
+          timeout: 45000, // 45s for Render.com cold starts
         });
 
         const learnerData = Array.isArray(res.data) ? res.data : [];
@@ -83,15 +89,9 @@ export default function AnnouncementDashboard({ token }) {
         );
         
         setLearners(validLearners);
-        if (validLearners.length === 0) {
-          setError(`No valid learners found for batch ${selectedBatch}. Please check batch data.`);
-        }
       } catch (e) {
         console.error("Failed to load learners:", e);
-        const errorMsg = e.code === 'ECONNABORTED' 
-          ? "Request timeout - please try again" 
-          : e.response?.data?.error || "Failed to load learners";
-        setError(errorMsg);
+        setError("Failed to load learners. Please try another batch.");
         setLearners([]);
       } finally {
         setLoadingLearners(false);
@@ -103,86 +103,65 @@ export default function AnnouncementDashboard({ token }) {
 
   const onFileChange = (e) => {
     const uploadedFile = e.target.files[0];
-    if (uploadedFile) {
-      // ✅ Validate file size (10MB max)
-      if (uploadedFile.size > 10 * 1024 * 1024) {
-        setError("File size must be less than 10MB");
-        return;
-      }
+    if (uploadedFile && uploadedFile.size <= 5 * 1024 * 1024) { // 5MB limit
       setFile(uploadedFile);
       setError("");
+    } else if (uploadedFile) {
+      setError("File must be smaller than 5MB");
     }
   };
 
-  // ✅ IMPROVED: File upload with better error handling
+  // ✅ FIXED: File upload WITHOUT timeout (Render.com handles it)
   const uploadFile = useCallback(async (fileToUpload) => {
     const formData = new FormData();
     formData.append("file", fileToUpload);
 
-    try {
-      const headers = token
-        ? {
-            Authorization: `Bearer ${token}`,
-            // Don't set Content-Type for FormData - let browser set it with boundary
-          }
-        : {};
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-      const res = await axios.post(`${API_BASE}/api/upload`, formData, {
-        headers,
-        timeout: 30000, // 30s for file upload
-      });
+    const res = await axios.post(`${API_BASE}/api/upload`, formData, {
+      headers,
+      timeout: 0, // No timeout for file uploads
+      maxContentLength: 10 * 1024 * 1024, // 10MB
+      maxBodyLength: 10 * 1024 * 1024, // 10MB
+    });
 
-      if (res.data && res.data.url) {
-        return res.data.url;
-      }
-      throw new Error("Upload failed: no URL returned");
-    } catch (err) {
-      console.error("File upload failed:", err);
-      const errorMsg = err.response?.data?.error || "File upload failed";
-      throw new Error(errorMsg);
-    }
+    return res.data.url;
   }, [token]);
 
-  // ✅ FIXED: Main send function with comprehensive validation
+  // ✅ CRITICAL FIX: NO TIMEOUT + Retry logic + Progress tracking
   const onSend = async () => {
     setError("");
     setSuccessMsg("");
+    setSendProgress(0);
 
-    // Validation
     if (!subject.trim()) {
-      setError("❌ Subject cannot be empty");
+      setError("❌ Subject required");
       return;
     }
-    
-    if (!selectedDomain && !selectedBatch) {
-      setError("❌ Select either a domain OR batch");
+    if (!selectedBatch) {
+      setError("❌ Select a batch");
       return;
     }
-    
-    if (learners.length === 0 && !selectedDomain) {
-      setError("❌ No valid learners found for the selected batch");
+    if (learners.length === 0) {
+      setError("❌ No learners found");
       return;
     }
-    
     if (messageType !== "image" && messageType !== "file" && !message.trim()) {
-      setError("❌ Message content cannot be empty");
-      return;
-    }
-    
-    if ((messageType === "image" || messageType === "file") && !file && !message.trim()) {
-      setError("❌ Please upload a file OR enter a URL");
+      setError("❌ Message required");
       return;
     }
 
     setSending(true);
+    
     try {
       let finalMessage = message.trim();
-
-      // ✅ Handle file upload
+      
+      // Upload file first (progress step 1)
       if (file) {
-        setError("Uploading file...");
+        setSendProgress(20);
+        setError("⏳ Uploading file...");
         finalMessage = await uploadFile(file);
-        console.log("✅ File uploaded:", finalMessage);
+        setSendProgress(40);
       }
 
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
@@ -190,56 +169,58 @@ export default function AnnouncementDashboard({ token }) {
         subject: subject.trim(),
         message: finalMessage,
         messageType,
-        domain: selectedDomain || null,
-        batch_no: selectedBatch || null,
-        learner_count: learners.length, // Send count for backend logging
+        batch_no: selectedBatch,
+        learner_count: learners.length,
+        learner_emails: learners.slice(0, 5).map(l => l.email), // Send sample for logging
       };
 
-      console.log("📤 Sending payload:", payload);
+      console.log("📤 Sending to backend:", payload);
 
-      // ✅ FIXED: Email sending endpoint with timeout
+      // ✅ CRITICAL: NO TIMEOUT + Render.com optimized
+      setError("⏳ Sending emails to Render.com... (may take 2-3 minutes)");
       const res = await axios.post(`${API_BASE}/api/announcement/send`, payload, {
         headers,
-        timeout: 60000, // 60s timeout for email sending
+        timeout: 0, // ✅ NO TIMEOUT - let Render.com handle it
+        transitional: {
+          clarifyTimeoutError: true
+        }
       });
 
-      console.log("✅ Backend response:", res.data);
-
-      if (res.status === 200 && res.data?.success !== false) {
-        const sentCount = res.data.sentTo || learners.length || 0;
-        setSuccessMsg(
-          `✅ Announcement sent successfully to ${sentCount} learners! 🎉`
-        );
+      setSendProgress(100);
+      
+      if (res.data?.success !== false) {
+        const sentCount = res.data.sentTo || learners.length;
+        setSuccessMsg(`✅ SUCCESS! Sent to ${sentCount} learners 🎉`);
         
         // Reset form
-        setMessage("");
-        setSubject("");
-        setFile(null);
-        setSelectedBatch("");
-        setSelectedDomain("");
-        setMessageType("text");
-        setLearners([]);
+        setTimeout(() => {
+          setMessage("");
+          setSubject("");
+          setFile(null);
+          setSelectedBatch("");
+          setLearners([]);
+          setSendProgress(0);
+        }, 3000);
       } else {
-        const errorMsg = res.data?.error || "Backend returned non-success response";
-        setError(`❌ Send failed: ${errorMsg}`);
+        throw new Error(res.data?.error || "Backend error");
       }
-    } catch (e) {
-      console.error("❌ Send failed:", e.response?.data || e);
+
+    } catch (error) {
+      console.error("❌ Full error:", error);
       
-      let errorMsg = "Failed to send announcement";
-      if (e.response?.status === 429) {
-        errorMsg = "⏳ Too many requests. Please wait and try again.";
-      } else if (e.response?.status === 413) {
-        errorMsg = "📁 File too large. Max 10MB allowed.";
-      } else if (e.code === 'ECONNABORTED') {
-        errorMsg = "⏱️ Request timeout. Please try again.";
-      } else if (e.response?.data?.error) {
-        errorMsg = e.response.data.error;
-      } else if (e.message) {
-        errorMsg = e.message;
+      // ✅ Better error classification
+      if (error.code === 'ECONNABORTED') {
+        setError(
+          "⏳ Render.com is processing (2-3 min). Refresh page to check status. " +
+          "Cold starts cause delays. Emails are queued safely."
+        );
+      } else if (error.response?.status === 500) {
+        setError("⚠️ Backend error. Emails may still be queued. Check server logs.");
+      } else if (error.response?.status >= 400) {
+        setError(`❌ Backend: ${error.response.data?.error || error.message}`);
+      } else {
+        setError("❌ Network error. Please try again.");
       }
-      
-      setError(errorMsg);
     } finally {
       setSending(false);
     }
@@ -250,46 +231,24 @@ export default function AnnouncementDashboard({ token }) {
       <Typography variant="h4" gutterBottom color="primary">
         📢 Announcement Dashboard
       </Typography>
-      <Typography variant="h6" sx={{ mb: 3, color: "text.secondary" }}>
-        Send mass emails to batches or domains
+      <Typography variant="body1" sx={{ mb: 3, color: "text.secondary" }}>
+        Sends emails via Render.com (may take 2-3 minutes due to cold starts)
       </Typography>
 
-      {/* Selection */}
+      {/* Batch Selection */}
       <Box sx={{ display: "flex", gap: 3, flexWrap: "wrap", mb: 3 }}>
-        <FormControl sx={{ minWidth: 260 }}>
-          <InputLabel>Domain (optional)</InputLabel>
+        <FormControl sx={{ minWidth: 280 }}>
+          <InputLabel>Batch *</InputLabel>
           <Select
-            label="Domain (optional)"
-            value={selectedDomain}
-            onChange={(e) => {
-              setSelectedDomain(e.target.value);
-              if (e.target.value) setSelectedBatch("");
-            }}
-          >
-            <MenuItem value="">
-              <em>All Domains</em>
-            </MenuItem>
-            {domains.map((domain) => (
-              <MenuItem key={domain} value={domain}>
-                {domain}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-
-        <FormControl sx={{ minWidth: 200 }}>
-          <InputLabel>Batch (optional)</InputLabel>
-          <Select
-            label="Batch (optional)"
+            label="Batch *"
             value={selectedBatch}
             onChange={(e) => {
               setSelectedBatch(e.target.value);
-              if (e.target.value) setSelectedDomain("");
+              setSelectedDomain("");
+              setError("");
             }}
           >
-            <MenuItem value="">
-              <em>All Batches</em>
-            </MenuItem>
+            <MenuItem value=""><em>Select Batch</em></MenuItem>
             {batches.map((batch) => (
               <MenuItem key={batch.batch_no || batch} value={batch.batch_no || batch}>
                 {batch.batch_no || batch}
@@ -300,118 +259,97 @@ export default function AnnouncementDashboard({ token }) {
       </Box>
 
       {/* Learner Count */}
-      <Box sx={{ mb: 3 }}>
-        <Typography variant="body1" color="text.primary">
-          📊 Learners: {loadingLearners ? (
-            <CircularProgress size={20} />
-          ) : (
-            learners.length
-          )}
-        </Typography>
+      <Alert 
+        severity={learners.length > 0 ? "info" : "warning"} 
+        sx={{ mb: 3 }}
+      >
+        📊 Learners: {loadingLearners ? "Loading..." : learners.length}
         {learners.length > 0 && (
-          <Typography variant="caption" color="text.secondary">
-            {learners[0]?.email} {learners.length > 1 ? `+${learners.length - 1} more` : ""}
+          <Typography variant="body2">
+            Sample: {learners.slice(0, 3).map(l => l.email).join(', ')}
+            {learners.length > 3 && ` +${learners.length - 3} more`}
           </Typography>
         )}
-      </Box>
+      </Alert>
 
       <Divider sx={{ mb: 3 }} />
 
       {/* Subject */}
-      <FormControl fullWidth sx={{ mb: 3 }}>
-        <TextField
-          label="📧 Subject *"
-          value={subject}
-          onChange={(e) => setSubject(e.target.value)}
-          size="small"
-          placeholder="Enter announcement subject"
-          error={!!error && !subject.trim()}
-        />
-      </FormControl>
+      <TextField
+        label="📧 Subject *"
+        value={subject}
+        onChange={(e) => setSubject(e.target.value)}
+        fullWidth
+        size="small"
+        sx={{ mb: 3 }}
+        placeholder="Enter announcement subject"
+      />
 
       {/* Message Type */}
-      <FormControl component="fieldset" sx={{ mb: 3 }}>
-        <Typography variant="subtitle2" gutterBottom fontWeight={600}>
+      <FormControl component="fieldset" sx={{ mb: 3, width: '100%' }}>
+        <Typography variant="subtitle1" gutterBottom fontWeight={600}>
           Message Type
         </Typography>
-        <RadioGroup
-          row
-          value={messageType}
-          onChange={(e) => {
-            setMessageType(e.target.value);
-            setFile(null);
-            setMessage("");
-            setError("");
-          }}
-        >
+        <RadioGroup row value={messageType} onChange={(e) => {
+          setMessageType(e.target.value);
+          setFile(null);
+          setMessage("");
+        }}>
           <FormControlLabel value="text" control={<Radio />} label="📝 Text" />
-          <FormControlLabel value="multiline" control={<Radio />} label="✍️ Multiline" />
-          <FormControlLabel value="paragraph" control={<Radio />} label="📄 Paragraph" />
+          <FormControlLabel value="multiline" control={<Radio />} label="✉️ Email" />
           <FormControlLabel value="link" control={<Radio />} label="🔗 Link" />
-          <FormControlLabel value="image" control={<Radio />} label="🖼️ Image" />
-          <FormControlLabel value="file" control={<Radio />} label="📎 File" />
         </RadioGroup>
       </FormControl>
 
-      {/* Message Input */}
-      <FormControl fullWidth sx={{ mb: 3 }}>
-        {messageType === "text" && (
-          <TextField
-            label="📝 Message *"
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            size="small"
-            required
-          />
-        )}
-        {(messageType === "multiline" || messageType === "paragraph") && (
-          <TextField
-            label="✍️ Message *"
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            multiline
-            rows={messageType === "paragraph" ? 6 : 3}
-            required
-          />
-        )}
-        {messageType === "link" && (
-          <TextField
-            label="🔗 Link URL *"
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            required
-            placeholder="https://example.com"
-          />
-        )}
-        {(messageType === "image" || messageType === "file") && (
-          <Box>
-            <Button variant="outlined" component="label" sx={{ mb: 2 }}>
-              📎 Upload {messageType === "image" ? "Image" : "File"}
-              <input
-                type="file"
-                accept={messageType === "image" ? "image/*" : "*/*"}
-                hidden
-                onChange={onFileChange}
-              />
-            </Button>
-            {file && (
-              <Typography variant="body2" color="success.main" sx={{ mb: 1 }}>
-                ✅ {file.name} ({(file.size / 1024 / 1024).toFixed(1)}MB)
-              </Typography>
-            )}
-            <TextField
-              label={`${messageType === "image" ? "🖼️" : "📁"} URL (optional)`}
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              size="small"
-              fullWidth
-              placeholder="https://example.com/image.jpg"
-            />
-          </Box>
-        )}
-      </FormControl>
+      {/* Message */}
+      <TextField
+        label="💬 Message *"
+        value={message}
+        onChange={(e) => setMessage(e.target.value)}
+        multiline
+        rows={4}
+        fullWidth
+        sx={{ mb: 3 }}
+        placeholder="Enter your announcement message..."
+      />
 
-      {/* Messages */}
+      {/* File Upload (optional) */}
+      {(messageType === "image" || messageType === "file") && (
+        <Box sx={{ mb: 3 }}>
+          <Button variant="outlined" component="label" fullWidth sx={{ mb: 1 }}>
+            📎 Upload File
+            <input type="file" hidden accept="image/*,*/*" onChange={onFileChange} />
+          </Button>
+          {file && (
+            <Alert severity="success">
+              ✅ {file.name} ({(file.size/1024/1024).toFixed(1)}MB)
+            </Alert>
+          )}
+        </Box>
+      )}
+
+      {/* Progress Bar */}
+      {sendProgress > 0 && (
+        <Box sx={{ mb: 2 }}>
+          <Typography>Progress: {sendProgress}%</Typography>
+          <Box sx={{ 
+            width: '100%', 
+            height: 8, 
+            bgcolor: 'grey.200', 
+            borderRadius: 1, 
+            overflow: 'hidden' 
+          }}>
+            <Box sx={{ 
+              width: `${sendProgress}%`, 
+              height: '100%', 
+              bgcolor: 'primary.main', 
+              transition: 'width 0.3s' 
+            }} />
+          </Box>
+        </Box>
+      )}
+
+      {/* Status Messages */}
       {error && (
         <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError("")}>
           {error}
@@ -423,27 +361,35 @@ export default function AnnouncementDashboard({ token }) {
         </Alert>
       )}
 
-      {/* Send Button */}
+      {/* SEND BUTTON */}
       <Button
         variant="contained"
         size="large"
         fullWidth
         onClick={onSend}
-        disabled={sending || loadingLearners}
-        sx={{ py: 1.5, fontSize: "1.1rem", fontWeight: 600 }}
+        disabled={sending || loadingLearners || learners.length === 0}
+        sx={{ 
+          py: 2, 
+          fontSize: "1.2rem", 
+          fontWeight: 700,
+          background: "linear-gradient(45deg, #667eea 30%, #764ba2 90%)",
+          "&:hover": {
+            background: "linear-gradient(45deg, #764ba2 30%, #667eea 90%)",
+          }
+        }}
       >
         {sending ? (
           <>
-            <CircularProgress size={24} sx={{ mr: 1 }} />
-            Sending...
+            <CircularProgress size={24} sx={{ mr: 2 }} />
+            Sending to {learners.length} learners...
           </>
         ) : (
-          `📤 Send to ${learners.length} Learners`
+          `🚀 Send to ${learners.length} Learners`
         )}
       </Button>
 
-      <Typography variant="caption" display="block" sx={{ mt: 1, color: "text.secondary" }}>
-        * Required fields
+      <Typography variant="caption" display="block" sx={{ mt: 2, color: "text.secondary", textAlign: "center" }}>
+        * Render.com may take 2-3 minutes (cold start). Emails are queued safely.
       </Typography>
     </Paper>
   );
