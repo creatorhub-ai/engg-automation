@@ -3267,98 +3267,72 @@ app.get('/api/marks/:category', async (req, res) => {
   }
 });
 
-// ✅ NEW: Send emails DIRECTLY from EMAIL_USER
+// ✅ CRITICAL FIX: IMMEDIATE RESPONSE + Background Email Queue
 app.post('/api/announcement/send-direct', async (req, res) => {
-  try {
-    const { subject, message, messageType, batch_no, learner_count, from_email } = req.body;
+  // ✅ IMMEDIATE RESPONSE - NO WAITING
+  res.json({
+    success: true,
+    message: '✅ Email queue started! Processing in background...',
+    sentTo: 0, // Will be updated later
+    queued: req.body.learner_count || 0,
+    from: process.env.EMAIL_USER,
+    batch: req.body.batch_no
+  });
 
-    if (!subject || !message || !batch_no) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Missing required fields: subject, message, batch_no' 
-      });
-    }
-
-    // Get learners for batch
-    const learnerResponse = await fetch(`http://localhost:5000/apigetlearners?batchno=${batch_no}`);
-    const learners = await learnerResponse.json();
-    const validLearners = learners.filter(l => l.email && l.email.trim());
-
-    if (validLearners.length === 0) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'No valid learners found for this batch' 
-      });
-    }
-
-    let sentCount = 0;
-    const results = [];
-
-    console.log(`📤 Sending ${validLearners.length} emails from ${process.env.EMAIL_USER}`);
-
-    // Send emails one by one
-    for (const learner of validLearners) {
-      try {
-        let emailContent = message;
-
-        // Format based on messageType
-        if (messageType === 'html') {
-          emailContent = `
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-              <h2 style="color: #333;">${subject}</h2>
-              <p>${message.replace(/\n/g, '<br>')}</p>
-              <hr style="border: none; border-top: 1px solid #eee;">
-              <p style="color: #666; font-size: 12px;">
-                Sent to batch ${batch_no} | ${new Date().toLocaleString()}
-              </p>
-            </div>
-          `;
-        }
-
-        const mailOptions = {
-          from: `"Training Team" <${process.env.EMAIL_USER}>`, // ✅ Uses YOUR EMAIL_USER
-          to: learner.email,
-          subject: subject,
-          text: messageType !== 'html' ? message : undefined,
-          html: messageType === 'html' ? emailContent : undefined,
-        };
-
-        await transporter.sendMail(mailOptions);
-        sentCount++;
-        results.push({ email: learner.email, status: 'sent' });
-
-      } catch (emailError) {
-        console.error(`Failed to send to ${learner.email}:`, emailError);
-        results.push({ email: learner.email, status: 'failed', error: emailError.message });
-      }
-    }
-
-    console.log(`✅ Sent ${sentCount}/${validLearners.length} emails successfully`);
-
-    res.json({
-      success: true,
-      sentTo: sentCount,
-      total: validLearners.length,
-      failed: validLearners.length - sentCount,
-      results: results.slice(0, 10), // First 10 results
-      from: process.env.EMAIL_USER
-    });
-
-  } catch (error) {
-    console.error('Announcement send error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Failed to send announcements: ' + error.message 
-    });
-  }
+  // ✅ BACKGROUND PROCESSING (no timeout)
+  processEmailQueue(req.body).catch(console.error);
 });
 
-// ✅ File upload endpoint
+async function processEmailQueue(payload) {
+  try {
+    const { subject, message, messageType, batch_no } = payload;
+    
+    // Get learners
+    const learnerResponse = await fetch(`${API_BASE}/apigetlearners?batchno=${batch_no}`);
+    const learners = await learnerResponse.json();
+    const validLearners = learners.filter(l => l.email && l.email.trim());
+    
+    console.log(`📤 Queued ${validLearners.length} emails for ${batch_no}`);
+
+    let sent = 0, failed = 0;
+    
+    // Send emails WITHOUT timeout blocking
+    for (const learner of validLearners) {
+      try {
+        let htmlContent = messageType === 'html' ? 
+          `<h2>${subject}</h2><p>${message.replace(/\n/g, '<br>')}</p>` : undefined;
+
+        await transporter.sendMail({
+          from: `"Training Team" <${process.env.EMAIL_USER}>`,
+          to: learner.email,
+          subject,
+          text: message,
+          html: htmlContent
+        });
+        
+        sent++;
+        console.log(`✅ Sent to ${learner.email}`);
+        
+        // Small delay to avoid Gmail rate limits
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+      } catch (e) {
+        failed++;
+        console.error(`❌ Failed ${learner.email}:`, e.message);
+      }
+    }
+    
+    console.log(`🎉 Completed: ${sent}/${validLearners.length} sent`);
+    
+  } catch (error) {
+    console.error('Queue error:', error);
+  }
+}
+
+// File upload (IMMEDIATE response)
 app.post('/api/upload', upload.single('file'), (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded' });
-    }
+    if (!req.file) return res.status(400).json({ error: 'No file' });
     
     const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
     res.json({ url: fileUrl });

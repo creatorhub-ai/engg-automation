@@ -125,7 +125,7 @@ export default function AnnouncementDashboard({ token }) {
         batch_no: selectedBatch,
         learner_count: learners.length,
         // ✅ Backend will use EMAIL_USER as FROM address
-        from_email: process.env.REACT_APP_EMAIL_USER || "noreply@yourdomain.com"
+        from_email: process.env.REACT_APP_EMAIL_USER || "coordinator@chipedge.com"
       };
 
       console.log("📤 Sending via EMAIL_USER credentials:", payload);
@@ -133,7 +133,7 @@ export default function AnnouncementDashboard({ token }) {
       // Backend endpoint configured to use EMAIL_USER/EMAIL_PASS from .env
       const res = await axios.post(`${API_BASE}/api/announcement/send-direct`, payload, {
         headers,
-        timeout: 120000, // 2 minutes for bulk email
+        timeout: 10000  // 10s only - immediate response
       });
 
       if (res.data.success) {
