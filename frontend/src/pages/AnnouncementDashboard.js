@@ -130,10 +130,14 @@ export default function AnnouncementDashboard({ token }) {
       console.log("📤 Sending via EMAIL_USER credentials:", payload);
 
       // Backend endpoint configured to use EMAIL_USER/EMAIL_PASS from .env
-      const res = await axios.post(`${API_BASE}/api/announcement/send-direct`, payload, {
-        headers,
-        timeout: 60000  // 10s only - immediate response
-      });
+      const res = await axios.post(
+        `${API_BASE}/api/announcement/send-direct`,
+        payload,
+        {
+          headers,
+          timeout: 120000
+        }
+      );
 
       if (res.data.success) {
         setSuccessMsg(`✅ Sent to ${res.data.sentTo || learners.length} learners from ${process.env.REACT_APP_EMAIL_USER}!`);
