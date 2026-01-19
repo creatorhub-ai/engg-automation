@@ -104,10 +104,9 @@ export default function AnnouncementDashboard({ token }) {
     setError("");
     setSuccessMsg("");
 
-    if (!subject.trim()) return setError("❌ Subject required");
-    if (!selectedBatch) return setError("❌ Select batch");
-    if (learners.length === 0) return setError("❌ No learners found");
-    if (!message.trim()) return setError("❌ Message required");
+    if (!subject.trim()) return setError('Subject required');
+    if (!selectedBatch) return setError('Select batch');
+    if (!message.trim()) return setError('Message required');
 
     setSending(true);
     try {
@@ -133,7 +132,7 @@ export default function AnnouncementDashboard({ token }) {
       // Backend endpoint configured to use EMAIL_USER/EMAIL_PASS from .env
       const res = await axios.post(`${API_BASE}/api/announcement/send-direct`, payload, {
         headers,
-        timeout: 10000  // 10s only - immediate response
+        timeout: 60000  // 10s only - immediate response
       });
 
       if (res.data.success) {
