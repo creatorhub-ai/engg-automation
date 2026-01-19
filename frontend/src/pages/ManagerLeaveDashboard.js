@@ -626,7 +626,7 @@ function ManagerLeaveDashboard({ user, token }) {
             </MenuItem>
             {trainers.map((t) => {
               const key =
-                t.email?.toLowerCase() || `id:${t.trainer_id || t.id}`;
+                t.email?.toLowerCase() || `id:${r.trainer_id || t.id}`;
               return (
                 <MenuItem key={key} value={key}>
                   {t.name || t.trainer_name} ({t.email})
