@@ -26,6 +26,11 @@ import {
   Tab,
   Button,
   CircularProgress,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  DialogContentText,
 } from "@mui/material";
 import CheckIcon from "@mui/icons-material/Check";
 import { green, orange, red, grey } from "@mui/material/colors";
@@ -321,8 +326,11 @@ function TrainerDashboard({ user, token }) {
   const [firstIncompleteWeek, setFirstIncompleteWeek] = useState(null);
   const [blockedTopics, setBlockedTopics] = useState({});
   const [isBatchOwner, setIsBatchOwner] = useState(false);
-  // NEW: Track pending actual date saves
-  const [pendingDateSaves, setPendingDateSaves] = useState({});
+
+  // NEW: Popup state management
+  const [dateChangeDialog, setDateChangeDialog] = useState({ open: false, topicId: null, newDate: null, plannedDate: null });
+  const [saveChangesDialog, setSaveChangesDialog] = useState({ open: false, topicId: null, newDate: null, remarks: null });
+  const [savingTopicId, setSavingTopicId] = useState(null);
 
   const lowerRole = (user?.role || "").toLowerCase();
   const isTrainer = lowerRole === "trainer";
@@ -345,15 +353,6 @@ function TrainerDashboard({ user, token }) {
     setRemarksSnackbarSeverity(severity);
     setRemarksSnackbarOpen(true);
   };
-
-  // NEW: Debounced save function for actual dates
-  const debounceSave = useCallback((func, wait) => {
-    let timeout;
-    return (...args) => {
-      clearTimeout(timeout);
-      timeout = setTimeout(() => func(...args), wait);
-    };
-  }, []);
 
   useEffect(() => {
     (async () => {
@@ -506,7 +505,6 @@ function TrainerDashboard({ user, token }) {
           setActualDatesMap(newActualDates);
           setPendingStatusChanges({});
           setBlockedTopics({});
-          setPendingDateSaves({});
           setMessage("");
         } else {
           setTopics([]);
@@ -544,69 +542,69 @@ function TrainerDashboard({ user, token }) {
     (a, b) => new Date(a) - new Date(b)
   );
 
-  function handlePendingStatusChange(topicId, value) {
-    setPendingStatusChanges((prev) => ({ ...prev, [topicId]: value }));
-  }
-
-  // UPDATED: Fixed actual date save with validation and proper persistence
+  // NEW: Handle date change - show confirmation dialog
   const handleActualDateChange = (topicId, newDate, plannedDate) => {
+    setDateChangeDialog({
+      open: true,
+      topicId,
+      newDate,
+      plannedDate
+    });
+  };
+
+  // NEW: Confirm date change from dialog
+  const confirmDateChange = () => {
+    const { topicId, newDate } = dateChangeDialog;
     setActualDatesMap((prev) => ({
       ...prev,
       [topicId]: newDate,
     }));
+
+    // Check if new date crosses planned date
+    const planned = new Date(dateChangeDialog.plannedDate);
+    const actual = new Date(newDate);
+    const crossesPlanned = actual > planned;
     
-    // Immediately mark as pending save
-    setPendingDateSaves((prev) => ({ ...prev, [topicId]: true }));
-    
-    // Save with debounce
-    const debouncedSave = debounceSave(async () => {
-      await saveActualDate(topicId, newDate, plannedDate);
-    }, 1000);
-    
-    debouncedSave();
+    setDateChangeDialog({ open: false, topicId: null, newDate: null, plannedDate: null });
+
+    if (crossesPlanned) {
+      // Show remarks mandatory warning and save dialog
+      setSaveChangesDialog({
+        open: true,
+        topicId,
+        newDate,
+        remarks: remarksMap[topicId] || ""
+      });
+    } else {
+      // For non-crossing dates, save immediately
+      saveActualDate(topicId, newDate);
+    }
   };
 
-  // NEW: Save actual date function with remarks validation
-  const saveActualDate = async (topicId, actualDate, plannedDate) => {
+  // NEW: Save both date and remarks via popup
+  const confirmSaveChanges = async () => {
+    const { topicId, newDate, remarks } = saveChangesDialog;
+    setSavingTopicId(topicId);
+    
+    await saveActualDate(topicId, newDate);
+    
+    // Save remarks if provided
+    if (remarks?.trim()) {
+      await handleRemarksSave(topicId, remarks);
+    }
+    
+    setSaveChangesDialog({ open: false, topicId: null, newDate: null, remarks: null });
+    setSavingTopicId(null);
+  };
+
+  // UPDATED: Save actual date function
+  const saveActualDate = async (topicId, actualDate) => {
     try {
-      if (!plannedDate || !actualDate) {
-        setPendingDateSaves((prev) => {
-          const copy = { ...prev };
-          delete copy[topicId];
-          return copy;
-        });
-        return;
-      }
+      const topic = topics.find(t => t.id === topicId);
+      if (!topic?.date || !actualDate) return;
 
-      const planned = new Date(plannedDate);
+      const planned = new Date(topic.date);
       const actual = new Date(actualDate);
-      
-      // NEW: Check if actual date crosses planned date
-      const crossesPlannedDate = actual > planned;
-      const remarks = (remarksMap[topicId] || "").trim();
-
-      // NEW: Validate remarks if date crosses planned date
-      if (crossesPlannedDate && !remarks) {
-        showRemarksSnackbar(
-          "⚠️ Actual date is after planned date. Remarks are mandatory. Please add remarks first.",
-          "warning"
-        );
-        // Revert the date change if no remarks
-        setActualDatesMap((prev) => {
-          const topic = topics.find(t => t.id === topicId);
-          const originalDate = topic?.actual_date || topic?.actualdate || topic?.date || "";
-          const copy = { ...prev };
-          copy[topicId] = originalDate;
-          return copy;
-        });
-        setPendingDateSaves((prev) => {
-          const copy = { ...prev };
-          delete copy[topicId];
-          return copy;
-        });
-        return;
-      }
-
       const daysDiff = Math.round((actual - planned) / (1000 * 60 * 60 * 24));
 
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
@@ -621,7 +619,7 @@ function TrainerDashboard({ user, token }) {
       );
 
       if (res.data && res.data.success) {
-        // Update topics state to persist the change
+        // Update topics state to persist across refresh
         setTopics((prev) =>
           prev.map((t) =>
             t.id === topicId 
@@ -630,47 +628,34 @@ function TrainerDashboard({ user, token }) {
           )
         );
 
-        // Clear pending save status
-        setPendingDateSaves((prev) => {
-          const copy = { ...prev };
-          delete copy[topicId];
-          return copy;
-        });
-
-        // Show appropriate feedback
+        // Show success feedback
         if (daysDiff > 2) {
-          showSnackbar(`⚠️ Exceeding topic by ${daysDiff} day(s)! Remarks: "${remarks}"`, "warning");
+          showSnackbar(`✅ Date saved! Exceeding by ${daysDiff} days`, "warning");
         } else if (daysDiff > 0) {
-          showSnackbar(`Topic completed ${daysDiff} day(s) later. Remarks: "${remarks}"`, "warning");
+          showSnackbar(`✅ Date saved! ${daysDiff} day(s) late`, "warning");
         } else if (daysDiff < 0) {
-          showSnackbar(`✅ Finished ${Math.abs(daysDiff)} day(s) early!`, "success");
+          showSnackbar(`✅ Date saved! ${Math.abs(daysDiff)} day(s) early`, "success");
         } else {
-          showSnackbar("✅ On planned date recorded.", "success");
-        }
-
-        // Block actions if date changed without remarks (for non-crossing dates)
-        if (daysDiff !== 0 && !remarks) {
-          setBlockedTopics((prev) => ({ ...prev, [topicId]: true }));
-          showRemarksSnackbar(
-            "Date changed without remarks. Add remarks to unlock other actions.",
-            "warning"
-          );
+          showSnackbar("✅ Date saved! On time", "success");
         }
       } else {
-        setMessage("❌ Failed to save actual date");
+        throw new Error("Save failed");
       }
     } catch (error) {
-      console.error("Error saving actual date:", error);
-      setMessage("❌ Error saving actual date");
+      console.error("Error saving date:", error);
+      showSnackbar("❌ Failed to save date", "error");
       // Revert on error
       const topic = topics.find(t => t.id === topicId);
-      const originalDate = topic?.actual_date || topic?.actualdate || topic?.date || "";
       setActualDatesMap((prev) => ({
         ...prev,
-        [topicId]: originalDate,
+        [topicId]: topic?.actual_date || topic?.actualdate || topic?.date || "",
       }));
     }
   };
+
+  function handlePendingStatusChange(topicId, value) {
+    setPendingStatusChanges((prev) => ({ ...prev, [topicId]: value }));
+  }
 
   async function handleStatusConfirm(topicId) {
     const newStatus = pendingStatusChanges[topicId];
@@ -697,7 +682,7 @@ function TrainerDashboard({ user, token }) {
     if (daysDiff !== 0 && !remarks) {
       setBlockedTopics((prev) => ({ ...prev, [topicId]: true }));
       showRemarksSnackbar(
-        "Without entering remarks, status / other actions are locked for this topic. Please add remarks and save again.",
+        "Without entering remarks, status changes are locked. Please add remarks first.",
         "warning"
       );
       return;
@@ -773,12 +758,13 @@ function TrainerDashboard({ user, token }) {
         { headers }
       );
 
-      if (res.data && res.data.success && trimmed) {
+      if (res.data && res.data.success) {
         setBlockedTopics((prev) => {
           const copy = { ...prev };
           delete copy[topicId];
           return copy;
         });
+        showSnackbar("✅ Remarks saved", "success");
       }
     } catch {
       // Silent fail for remarks
@@ -806,6 +792,78 @@ function TrainerDashboard({ user, token }) {
         <Tab label="Progress" />
         <Tab label={trainerTabLabel} />
       </Tabs>
+
+      {/* NEW: Date Change Confirmation Dialog */}
+      <Dialog open={dateChangeDialog.open} onClose={() => setDateChangeDialog({ ...dateChangeDialog, open: false })}>
+        <DialogTitle>Confirm Date Change</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Change actual date from <strong>{topics.find(t => t.id === dateChangeDialog.topicId)?.actual_date || "N/A"}</strong> 
+            to <strong>{dateChangeDialog.newDate}</strong>?
+          </DialogContentText>
+          {(() => {
+            const planned = new Date(dateChangeDialog.plannedDate);
+            const actual = new Date(dateChangeDialog.newDate);
+            const daysDiff = Math.round((actual - planned) / (1000 * 60 * 60 * 24));
+            if (daysDiff > 0) {
+              return (
+                <DialogContentText sx={{ color: orange[700], mt: 1 }}>
+                  ⚠️ This date is <strong>{daysDiff} day(s)</strong> after planned date. 
+                  Remarks will be required.
+                </DialogContentText>
+              );
+            }
+            return null;
+          })()}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDateChangeDialog({ ...dateChangeDialog, open: false })}>
+            Cancel
+          </Button>
+          <Button onClick={confirmDateChange} variant="contained">
+            Confirm
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* NEW: Save Changes Dialog (Date + Remarks) */}
+      <Dialog open={saveChangesDialog.open} onClose={() => setSaveChangesDialog({ ...saveChangesDialog, open: false })}>
+        <DialogTitle>Save Changes</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Date changed to <strong>{saveChangesDialog.newDate}</strong> (after planned date).
+          </DialogContentText>
+          <DialogContentText sx={{ color: orange[700], fontWeight: 500, mt: 1 }}>
+            📝 Remarks are <strong>MANDATORY</strong> when actual date is after planned date:
+          </DialogContentText>
+          <TextField
+            autoFocus
+            margin="dense"
+            label="Remarks *"
+            type="text"
+            fullWidth
+            variant="outlined"
+            value={saveChangesDialog.remarks || ""}
+            onChange={(e) => setSaveChangesDialog({
+              ...saveChangesDialog,
+              remarks: e.target.value
+            })}
+            sx={{ mt: 2 }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setSaveChangesDialog({ ...saveChangesDialog, open: false })}>
+            Cancel
+          </Button>
+          <Button 
+            onClick={confirmSaveChanges} 
+            variant="contained" 
+            disabled={!saveChangesDialog.remarks?.trim() || savingTopicId === saveChangesDialog.topicId}
+          >
+            {savingTopicId === saveChangesDialog.topicId ? <CircularProgress size={20} /> : "Save Both"}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {tab === 0 && (
         <Paper
@@ -955,11 +1013,9 @@ function TrainerDashboard({ user, token }) {
                         const daysDiff = t.date_difference ?? t.datedifference ?? 0;
                         const confirmedStatus = t.topic_status ?? t.topicstatus;
                         const currentStatus = getStatusForTopic(t.id, confirmedStatus);
-
                         const frozen = isActionFrozen(t);
                         const blocked = isBlocked(t.id);
                         const editable = weekEditable && !frozen && !blocked;
-                        const isSavingDate = pendingDateSaves[t.id];
 
                         return (
                           <TableRow
@@ -987,22 +1043,14 @@ function TrainerDashboard({ user, token }) {
                               {t.date}
                             </TableCell>
 
-                            {/* UPDATED: Fixed Actual Date field */}
+                            {/* UPDATED: Date field with popup confirmation */}
                             <TableCell align="center">
                               <TextField
                                 type="date"
                                 size="small"
                                 value={actualDatesMap[t.id] || ""}
                                 onChange={(e) => handleActualDateChange(t.id, e.target.value, t.date)}
-                                InputProps={{ 
-                                  style: { 
-                                    ...getDateCellStyle(daysDiff),
-                                    ...(isSavingDate && { opacity: 0.7 })
-                                  },
-                                  endAdornment: isSavingDate ? (
-                                    <CircularProgress size={16} color="primary" />
-                                  ) : null
-                                }}
+                                InputProps={{ style: getDateCellStyle(daysDiff) }}
                                 sx={{ maxWidth: 140 }}
                                 helperText={
                                   daysDiff !== 0
@@ -1074,11 +1122,11 @@ function TrainerDashboard({ user, token }) {
                               <Tooltip
                                 title={
                                   !weekEditable
-                                    ? "Complete all topics of the current editable week before moving to the next week"
+                                    ? "Complete current week before editing"
                                     : frozen
-                                    ? "This topic is completed and cannot be changed"
+                                    ? "Completed topics cannot be changed"
                                     : blocked
-                                    ? "Date changed without remarks. Please add remarks to unlock."
+                                    ? "Add remarks to unlock actions"
                                     : "Change Status"
                                 }
                               >
@@ -1170,15 +1218,12 @@ function TrainerDashboard({ user, token }) {
       {tab === 1 && (
         <Box>
           {isTrainer && <TrainerUnavailabilityForm user={user} token={token} />}
-
           {isManagerOrAdmin && isBatchOwner && (
             <TrainerAssignmentDashboard user={user} token={token} batchNo={selectedBatch} />
           )}
-
           {isManagerOrAdmin && !isBatchOwner && (
             <ManagerLeaveDashboard user={user} token={token} />
           )}
-
           {!isTrainer && !isManagerOrAdmin && (
             <Alert severity="warning" sx={{ mt: 3 }}>
               Trainer Management is only available to trainers, managers, or admins.
@@ -1198,8 +1243,7 @@ function TrainerDashboard({ user, token }) {
           severity={remarksSnackbarSeverity}
           sx={{ width: "100%", fontSize: "1rem", fontWeight: "medium" }}
         >
-          {remarksSnackbarMessage ||
-            "Without entering remarks, other actions will remain frozen for this topic."}
+          {remarksSnackbarMessage}
         </Alert>
       </Snackbar>
 
