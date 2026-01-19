@@ -321,6 +321,8 @@ function TrainerDashboard({ user, token }) {
   const [firstIncompleteWeek, setFirstIncompleteWeek] = useState(null);
   const [blockedTopics, setBlockedTopics] = useState({});
   const [isBatchOwner, setIsBatchOwner] = useState(false);
+  // NEW: Track pending actual date saves
+  const [pendingDateSaves, setPendingDateSaves] = useState({});
 
   const lowerRole = (user?.role || "").toLowerCase();
   const isTrainer = lowerRole === "trainer";
@@ -343,6 +345,15 @@ function TrainerDashboard({ user, token }) {
     setRemarksSnackbarSeverity(severity);
     setRemarksSnackbarOpen(true);
   };
+
+  // NEW: Debounced save function for actual dates
+  const debounceSave = useCallback((func, wait) => {
+    let timeout;
+    return (...args) => {
+      clearTimeout(timeout);
+      timeout = setTimeout(() => func(...args), wait);
+    };
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -495,6 +506,7 @@ function TrainerDashboard({ user, token }) {
           setActualDatesMap(newActualDates);
           setPendingStatusChanges({});
           setBlockedTopics({});
+          setPendingDateSaves({});
           setMessage("");
         } else {
           setTopics([]);
@@ -536,6 +548,130 @@ function TrainerDashboard({ user, token }) {
     setPendingStatusChanges((prev) => ({ ...prev, [topicId]: value }));
   }
 
+  // UPDATED: Fixed actual date save with validation and proper persistence
+  const handleActualDateChange = (topicId, newDate, plannedDate) => {
+    setActualDatesMap((prev) => ({
+      ...prev,
+      [topicId]: newDate,
+    }));
+    
+    // Immediately mark as pending save
+    setPendingDateSaves((prev) => ({ ...prev, [topicId]: true }));
+    
+    // Save with debounce
+    const debouncedSave = debounceSave(async () => {
+      await saveActualDate(topicId, newDate, plannedDate);
+    }, 1000);
+    
+    debouncedSave();
+  };
+
+  // NEW: Save actual date function with remarks validation
+  const saveActualDate = async (topicId, actualDate, plannedDate) => {
+    try {
+      if (!plannedDate || !actualDate) {
+        setPendingDateSaves((prev) => {
+          const copy = { ...prev };
+          delete copy[topicId];
+          return copy;
+        });
+        return;
+      }
+
+      const planned = new Date(plannedDate);
+      const actual = new Date(actualDate);
+      
+      // NEW: Check if actual date crosses planned date
+      const crossesPlannedDate = actual > planned;
+      const remarks = (remarksMap[topicId] || "").trim();
+
+      // NEW: Validate remarks if date crosses planned date
+      if (crossesPlannedDate && !remarks) {
+        showRemarksSnackbar(
+          "⚠️ Actual date is after planned date. Remarks are mandatory. Please add remarks first.",
+          "warning"
+        );
+        // Revert the date change if no remarks
+        setActualDatesMap((prev) => {
+          const topic = topics.find(t => t.id === topicId);
+          const originalDate = topic?.actual_date || topic?.actualdate || topic?.date || "";
+          const copy = { ...prev };
+          copy[topicId] = originalDate;
+          return copy;
+        });
+        setPendingDateSaves((prev) => {
+          const copy = { ...prev };
+          delete copy[topicId];
+          return copy;
+        });
+        return;
+      }
+
+      const daysDiff = Math.round((actual - planned) / (1000 * 60 * 60 * 24));
+
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await axios.post(
+        `${API_BASE}/api/update-actual-date`,
+        {
+          topic_id: topicId,
+          actual_date: actualDate,
+          changed_by: user?.email || user?.name || "Trainer",
+        },
+        { headers }
+      );
+
+      if (res.data && res.data.success) {
+        // Update topics state to persist the change
+        setTopics((prev) =>
+          prev.map((t) =>
+            t.id === topicId 
+              ? { ...t, actual_date: actualDate, date_difference: daysDiff } 
+              : t
+          )
+        );
+
+        // Clear pending save status
+        setPendingDateSaves((prev) => {
+          const copy = { ...prev };
+          delete copy[topicId];
+          return copy;
+        });
+
+        // Show appropriate feedback
+        if (daysDiff > 2) {
+          showSnackbar(`⚠️ Exceeding topic by ${daysDiff} day(s)! Remarks: "${remarks}"`, "warning");
+        } else if (daysDiff > 0) {
+          showSnackbar(`Topic completed ${daysDiff} day(s) later. Remarks: "${remarks}"`, "warning");
+        } else if (daysDiff < 0) {
+          showSnackbar(`✅ Finished ${Math.abs(daysDiff)} day(s) early!`, "success");
+        } else {
+          showSnackbar("✅ On planned date recorded.", "success");
+        }
+
+        // Block actions if date changed without remarks (for non-crossing dates)
+        if (daysDiff !== 0 && !remarks) {
+          setBlockedTopics((prev) => ({ ...prev, [topicId]: true }));
+          showRemarksSnackbar(
+            "Date changed without remarks. Add remarks to unlock other actions.",
+            "warning"
+          );
+        }
+      } else {
+        setMessage("❌ Failed to save actual date");
+      }
+    } catch (error) {
+      console.error("Error saving actual date:", error);
+      setMessage("❌ Error saving actual date");
+      // Revert on error
+      const topic = topics.find(t => t.id === topicId);
+      const originalDate = topic?.actual_date || topic?.actualdate || topic?.date || "";
+      setActualDatesMap((prev) => ({
+        ...prev,
+        [topicId]: originalDate,
+      }));
+    }
+  };
+
   async function handleStatusConfirm(topicId) {
     const newStatus = pendingStatusChanges[topicId];
     if (!newStatus) {
@@ -550,7 +686,7 @@ function TrainerDashboard({ user, token }) {
 
     const planned = plannedDate ? new Date(plannedDate) : null;
     const actual = actualDate ? new Date(actualDate) : null;
-
+    
     let daysDiff = 0;
     if (planned && actual) {
       daysDiff = Math.round((actual - planned) / (1000 * 60 * 60 * 24));
@@ -627,54 +763,6 @@ function TrainerDashboard({ user, token }) {
     }
   }
 
-  async function handleActualDateSave(topicId, actualDate, plannedDate) {
-    try {
-      if (!plannedDate || !actualDate) return;
-
-      const planned = new Date(plannedDate);
-      const actual = new Date(actualDate);
-      const daysDiff = Math.round((actual - planned) / (1000 * 60 * 60 * 24));
-
-      const remarks = (remarksMap[topicId] || "").trim();
-
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const res = await axios.post(
-        `${API_BASE}/api/update-actual-date`,
-        {
-          topic_id: topicId,
-          actual_date: actualDate,
-          changed_by: user?.email || user?.name || "Trainer",
-        },
-        { headers }
-      );
-
-      if (res.data && res.data.success) {
-        setTopics((prev) =>
-          prev.map((t) =>
-            t.id === topicId ? { ...t, actual_date: actualDate, date_difference: daysDiff } : t
-          )
-        );
-
-        if (daysDiff !== 0 && !remarks) {
-          setBlockedTopics((prev) => ({ ...prev, [topicId]: true }));
-          showRemarksSnackbar(
-            "Date has been changed. Without entering remarks, all other actions for this topic are frozen. Add remarks and save them to continue.",
-            "warning"
-          );
-        }
-
-        if (daysDiff > 2) showSnackbar(`⚠️ You are exceeding the topic by ${daysDiff} day(s)!`, "error");
-        else if (daysDiff > 0) showSnackbar(`Topic completed ${daysDiff} day(s) later than planned.`, "warning");
-        else if (daysDiff < 0) showSnackbar(`You finished ${Math.abs(daysDiff)} day(s) earlier!`, "success");
-        else showSnackbar("✅ Topic completed on the planned date (On time recorded).", "success");
-      } else {
-        setMessage("❌ Failed to update actual date");
-      }
-    } catch {
-      setMessage("❌ Error updating actual date");
-    }
-  }
-
   async function handleRemarksSave(topicId, value) {
     const trimmed = (value || "").trim();
     try {
@@ -693,6 +781,7 @@ function TrainerDashboard({ user, token }) {
         });
       }
     } catch {
+      // Silent fail for remarks
     }
   }
 
@@ -870,6 +959,7 @@ function TrainerDashboard({ user, token }) {
                         const frozen = isActionFrozen(t);
                         const blocked = isBlocked(t.id);
                         const editable = weekEditable && !frozen && !blocked;
+                        const isSavingDate = pendingDateSaves[t.id];
 
                         return (
                           <TableRow
@@ -897,21 +987,22 @@ function TrainerDashboard({ user, token }) {
                               {t.date}
                             </TableCell>
 
+                            {/* UPDATED: Fixed Actual Date field */}
                             <TableCell align="center">
                               <TextField
                                 type="date"
                                 size="small"
                                 value={actualDatesMap[t.id] || ""}
-                                onChange={(e) =>
-                                  setActualDatesMap((prev) => ({
-                                    ...prev,
-                                    [t.id]: e.target.value,
-                                  }))
-                                }
-                                onBlur={() =>
-                                  handleActualDateSave(t.id, actualDatesMap[t.id], t.date)
-                                }
-                                InputProps={{ style: getDateCellStyle(daysDiff) }}
+                                onChange={(e) => handleActualDateChange(t.id, e.target.value, t.date)}
+                                InputProps={{ 
+                                  style: { 
+                                    ...getDateCellStyle(daysDiff),
+                                    ...(isSavingDate && { opacity: 0.7 })
+                                  },
+                                  endAdornment: isSavingDate ? (
+                                    <CircularProgress size={16} color="primary" />
+                                  ) : null
+                                }}
                                 sx={{ maxWidth: 140 }}
                                 helperText={
                                   daysDiff !== 0
