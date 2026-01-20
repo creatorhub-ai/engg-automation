@@ -113,12 +113,15 @@ const upload = multer({ dest: "uploads/" });
 // Nodemailer transporter - update with your email provider settings
 const transporter = nodemailer.createTransport({
   host: "smtp.gmail.com",
-  port: 587,
-  secure: false,
+  port: 587,            // IMPORTANT
+  secure: false,        // MUST be false on 587
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
   },
+  connectionTimeout: 10000,
+  greetingTimeout: 10000,
+  socketTimeout: 10000,
 });
 
 await transporter.verify();
@@ -3282,29 +3285,31 @@ app.post("/api/announcement/send-direct", async (req, res) => {
       });
     }
 
-    // 🔹 DIRECT DB QUERY (REPLACE TABLE NAME IF NEEDED)
+    // ⚠️ REPLACE WITH YOUR ACTUAL LEARNER QUERY
     const [learners] = await db.query(
       "SELECT email FROM learners WHERE batch_no = ?",
       [batch_no]
     );
 
-    const validLearners = learners.filter(l => l.email);
+    const emails = learners
+      .map(l => l.email)
+      .filter(Boolean);
 
-    if (!validLearners.length) {
+    if (!emails.length) {
       return res.status(400).json({
         success: false,
-        error: "No learners found for this batch",
+        error: "No learners found",
       });
     }
 
     let sent = 0;
     let failed = 0;
 
-    for (const l of validLearners) {
+    for (const email of emails) {
       try {
         await transporter.sendMail({
           from: `"Training Team" <${process.env.EMAIL_USER}>`,
-          to: l.email,
+          to: email,
           subject: `[${batch_no}] ${subject}`,
           text: message,
           html:
@@ -3314,10 +3319,10 @@ app.post("/api/announcement/send-direct", async (req, res) => {
         });
 
         sent++;
-        await new Promise(r => setTimeout(r, 200)); // Gmail safe
+        await new Promise(r => setTimeout(r, 250)); // Gmail safe
       } catch (err) {
         failed++;
-        console.error("❌ Email failed:", l.email, err.message);
+        console.error("❌ Email failed:", email, err.message);
       }
     }
 
