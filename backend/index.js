@@ -3268,86 +3268,69 @@ app.get('/api/marks/:category', async (req, res) => {
 });
 
 // ✅ FIXED: Main announcement endpoint - NO SYNTAX ERRORS
-app.post('/api/announcement/send-direct', async (req, res) => {
+app.post("/api/announcement/send-direct", async (req, res) => {
   try {
     const { subject, message, messageType, batch_no } = req.body;
 
     if (!subject || !message || !batch_no) {
       return res.status(400).json({
         success: false,
-        error: 'Missing required fields'
+        error: "Missing required fields",
       });
     }
 
-    console.log('📥 Announcement request:', { subject, batch_no });
-
-    // 🔹 Fetch learners
-    const learnerRes = await fetch(
-      `${process.env.API_BASE_URL || 'http://localhost:5000'}/apigetlearners?batchno=${batch_no}`
-    );
-    const learners = await learnerRes.json();
-
-    const validLearners = learners.filter(
-      l => l.email && l.email.trim()
+    // ⚠️ REPLACE WITH YOUR ACTUAL LEARNER QUERY
+    const [learners] = await db.query(
+      "SELECT email FROM learners WHERE batch_no = ?",
+      [batch_no]
     );
 
-    if (validLearners.length === 0) {
+    const emails = learners
+      .map(l => l.email)
+      .filter(Boolean);
+
+    if (!emails.length) {
       return res.status(400).json({
         success: false,
-        error: 'No learners with valid email'
+        error: "No learners found",
       });
     }
 
-    let sentCount = 0;
-    let failed = [];
+    let sent = 0;
+    let failed = 0;
 
-    for (const learner of validLearners) {
+    for (const email of emails) {
       try {
-        const mailOptions = {
+        await transporter.sendMail({
           from: `"Training Team" <${process.env.EMAIL_USER}>`,
-          to: learner.email,
+          to: email,
           subject: `[${batch_no}] ${subject}`,
           text: message,
-          html: messageType === 'html'
-            ? `
-              <div style="font-family:Arial;padding:20px">
-                <h2>${subject}</h2>
-                <div>${message.replace(/\n/g, '<br>')}</div>
-                <p style="font-size:12px;color:#666">
-                  Batch: ${batch_no}<br/>
-                  ${new Date().toLocaleString('en-IN')}
-                </p>
-              </div>
-            `
-            : undefined
-        };
+          html:
+            messageType === "html"
+              ? message.replace(/\n/g, "<br>")
+              : undefined,
+        });
 
-        await transporter.sendMail(mailOptions);
-        sentCount++;
-
-        // Gmail rate limit safety
-        await new Promise(r => setTimeout(r, 250));
-
+        sent++;
+        await new Promise(r => setTimeout(r, 250)); // Gmail safe
       } catch (err) {
-        failed.push({ email: learner.email, error: err.message });
-        console.error(`❌ Failed ${learner.email}`, err.message);
+        failed++;
+        console.error("❌ Email failed:", email, err.message);
       }
     }
 
-    console.log(`📊 RESULT: ${sentCount} sent, ${failed.length} failed`);
-
     return res.json({
-      success: sentCount > 0,
-      sentCount,
-      failedCount: failed.length,
-      failed
+      success: true,
+      sent,
+      failed,
     });
 
   } catch (err) {
-    console.error('❌ Announcement fatal error:', err);
-    res.status(500).json({
+    console.error("🔥 Announcement error:", err);
+    return res.status(500).json({
       success: false,
-      error: 'Server error while sending emails'
+      error: err.message,
     });
   }
 });
