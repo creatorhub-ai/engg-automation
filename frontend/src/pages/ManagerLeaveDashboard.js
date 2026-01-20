@@ -613,16 +613,6 @@ function ManagerLeaveDashboard({ user, token }) {
             <ArrowForwardIosIcon fontSize="small" />
           </IconButton>
         </Box>
-
-        <FormControl size="small" sx={{ minWidth: 200 }}>
-          <InputLabel>Trainer</InputLabel>
-          <Select
-            label="Trainer"
-            value={selectedTrainerId}
-            onChange={(e) => setSelectedTrainerId(e.target.value)}
-          >
-          </Select>
-        </FormControl>
       </Box>
 
       {/* Holiday file upload area */}
