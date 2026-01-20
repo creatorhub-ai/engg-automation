@@ -111,8 +111,6 @@ export default function AnnouncementDashboard({ token }) {
     setSending(true);
 
     try {
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-
       const res = await axios.post(
         `${API_BASE}/api/announcement/send-direct`,
         {
@@ -120,8 +118,7 @@ export default function AnnouncementDashboard({ token }) {
           message,
           messageType,
           batch_no: selectedBatch,
-        },
-        { headers }
+        }
       );
 
       if (res.data.success) {
@@ -135,7 +132,8 @@ export default function AnnouncementDashboard({ token }) {
         setError(res.data.error || "Send failed");
       }
     } catch (err) {
-      setError(err.response?.data?.error || "Email send failed");
+      console.error(err);
+      setError(err.response?.data?.error || "Server error");
     } finally {
       setSending(false);
     }

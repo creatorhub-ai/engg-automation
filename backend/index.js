@@ -3276,56 +3276,63 @@ app.post("/api/announcement/send-direct", async (req, res) => {
     const { subject, message, messageType, batch_no } = req.body;
 
     if (!subject || !message || !batch_no) {
-      return res.status(400).json({ success: false, error: "Missing fields" });
+      return res.status(400).json({
+        success: false,
+        error: "Missing required fields",
+      });
     }
 
-    // 🔹 Get learners
-    const learnerRes = await fetch(
-      `${process.env.API_BASE_URL}/apigetlearners?batchno=${batch_no}`
+    // 🔹 DIRECT DB QUERY (REPLACE TABLE NAME IF NEEDED)
+    const [learners] = await db.query(
+      "SELECT email FROM learners WHERE batch_no = ?",
+      [batch_no]
     );
-    const learners = await learnerRes.json();
 
-    const validLearners = learners.filter(l => l.email?.trim());
+    const validLearners = learners.filter(l => l.email);
+
     if (!validLearners.length) {
-      return res.status(400).json({ success: false, error: "No learners found" });
+      return res.status(400).json({
+        success: false,
+        error: "No learners found for this batch",
+      });
     }
 
     let sent = 0;
     let failed = 0;
 
-    // 🔹 Send emails SEQUENTIALLY (Gmail-safe)
-    for (const learner of validLearners) {
+    for (const l of validLearners) {
       try {
         await transporter.sendMail({
           from: `"Training Team" <${process.env.EMAIL_USER}>`,
-          to: learner.email,
+          to: l.email,
           subject: `[${batch_no}] ${subject}`,
           text: message,
           html:
             messageType === "html"
-              ? `<div style="font-family:Arial">${message.replace(/\n/g, "<br>")}</div>`
+              ? message.replace(/\n/g, "<br>")
               : undefined,
         });
 
         sent++;
-        await new Promise(r => setTimeout(r, 150));
+        await new Promise(r => setTimeout(r, 200)); // Gmail safe
       } catch (err) {
         failed++;
-        console.error("❌ Mail failed:", learner.email, err.message);
+        console.error("❌ Email failed:", l.email, err.message);
       }
     }
 
-    // 🔹 FINAL RESPONSE (ONLY AFTER SEND)
-    res.json({
+    return res.json({
       success: true,
       sent,
       failed,
-      batch: batch_no,
     });
 
   } catch (err) {
-    console.error("🔥 Send error:", err);
-    res.status(500).json({ success: false, error: err.message });
+    console.error("🔥 Announcement error:", err);
+    return res.status(500).json({
+      success: false,
+      error: err.message,
+    });
   }
 });
 
@@ -3336,7 +3343,7 @@ async function sendBatchEmails(data) {
     const { subject, message, messageType, batch_no } = data;
     
     // Get learners for batch
-    const learnerRes = await fetch(`http://localhost:5000/apigetlearners?batchno=${batch_no}`);
+    const learnerRes = await fetch(`https://engg-automation.onrender.com/apigetlearners?batchno=${batch_no}`);
     const learners = await learnerRes.json();
     const validLearners = learners.filter(l => l.email && l.email.trim());
 
