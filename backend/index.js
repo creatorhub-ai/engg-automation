@@ -116,10 +116,13 @@ const transporter = nodemailer.createTransport({
   port: 587,
   secure: false,
   auth: {
-    user: "coordinator@chipedge.com",
-    pass: "rjtjpkclsqgnafgs",
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
   },
 });
+
+await transporter.verify();
+console.log("✅ SMTP Ready");
 
 const validateMarkEntryWindow = (assessmentDate, assessmentType) => {
   try {
@@ -3268,87 +3271,61 @@ app.get('/api/marks/:category', async (req, res) => {
 });
 
 // ✅ FIXED: Main announcement endpoint - NO SYNTAX ERRORS
-app.post('/api/announcement/send-direct', async (req, res) => {
+app.post("/api/announcement/send-direct", async (req, res) => {
   try {
     const { subject, message, messageType, batch_no } = req.body;
 
     if (!subject || !message || !batch_no) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing required fields'
-      });
+      return res.status(400).json({ success: false, error: "Missing fields" });
     }
 
-    console.log('📥 Announcement request:', { subject, batch_no });
-
-    // 🔹 Fetch learners
+    // 🔹 Get learners
     const learnerRes = await fetch(
-      `${process.env.API_BASE_URL || 'http://localhost:5000'}/apigetlearners?batchno=${batch_no}`
+      `${process.env.API_BASE_URL}/apigetlearners?batchno=${batch_no}`
     );
     const learners = await learnerRes.json();
 
-    const validLearners = learners.filter(
-      l => l.email && l.email.trim()
-    );
-
-    if (validLearners.length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'No learners with valid email'
-      });
+    const validLearners = learners.filter(l => l.email?.trim());
+    if (!validLearners.length) {
+      return res.status(400).json({ success: false, error: "No learners found" });
     }
 
-    let sentCount = 0;
-    let failed = [];
+    let sent = 0;
+    let failed = 0;
 
+    // 🔹 Send emails SEQUENTIALLY (Gmail-safe)
     for (const learner of validLearners) {
       try {
-        const mailOptions = {
+        await transporter.sendMail({
           from: `"Training Team" <${process.env.EMAIL_USER}>`,
           to: learner.email,
           subject: `[${batch_no}] ${subject}`,
           text: message,
-          html: messageType === 'html'
-            ? `
-              <div style="font-family:Arial;padding:20px">
-                <h2>${subject}</h2>
-                <div>${message.replace(/\n/g, '<br>')}</div>
-                <p style="font-size:12px;color:#666">
-                  Batch: ${batch_no}<br/>
-                  ${new Date().toLocaleString('en-IN')}
-                </p>
-              </div>
-            `
-            : undefined
-        };
+          html:
+            messageType === "html"
+              ? `<div style="font-family:Arial">${message.replace(/\n/g, "<br>")}</div>`
+              : undefined,
+        });
 
-        await transporter.sendMail(mailOptions);
-        sentCount++;
-
-        // Gmail rate limit safety
-        await new Promise(r => setTimeout(r, 250));
-
+        sent++;
+        await new Promise(r => setTimeout(r, 150));
       } catch (err) {
-        failed.push({ email: learner.email, error: err.message });
-        console.error(`❌ Failed ${learner.email}`, err.message);
+        failed++;
+        console.error("❌ Mail failed:", learner.email, err.message);
       }
     }
 
-    console.log(`📊 RESULT: ${sentCount} sent, ${failed.length} failed`);
-
-    return res.json({
-      success: sentCount > 0,
-      sentCount,
-      failedCount: failed.length,
-      failed
+    // 🔹 FINAL RESPONSE (ONLY AFTER SEND)
+    res.json({
+      success: true,
+      sent,
+      failed,
+      batch: batch_no,
     });
 
   } catch (err) {
-    console.error('❌ Announcement fatal error:', err);
-    res.status(500).json({
-      success: false,
-      error: 'Server error while sending emails'
-    });
+    console.error("🔥 Send error:", err);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

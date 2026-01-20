@@ -104,50 +104,38 @@ export default function AnnouncementDashboard({ token }) {
     setError("");
     setSuccessMsg("");
 
-    if (!subject.trim()) return setError('Subject required');
-    if (!selectedBatch) return setError('Select batch');
-    if (!message.trim()) return setError('Message required');
+    if (!subject.trim()) return setError("Subject required");
+    if (!selectedBatch) return setError("Select batch");
+    if (!message.trim()) return setError("Message required");
 
     setSending(true);
+
     try {
-      let finalMessage = message.trim();
-      
-      if (file) {
-        finalMessage = await uploadFile(file);
-      }
-
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const payload = {
-        subject: subject.trim(),
-        message: finalMessage,
-        messageType,
-        batch_no: selectedBatch,
-        learner_count: learners.length,
-        // ✅ Backend will use EMAIL_USER as FROM address
-        from_email: process.env.REACT_APP_EMAIL_USER || "coordinator@chipedge.com"
-      };
 
-      console.log("📤 Sending via EMAIL_USER credentials:", payload);
-
-      // Backend endpoint configured to use EMAIL_USER/EMAIL_PASS from .env
       const res = await axios.post(
         `${API_BASE}/api/announcement/send-direct`,
-        payload,
         {
-          headers,
-          timeout: 120000
-        }
+          subject,
+          message,
+          messageType,
+          batch_no: selectedBatch,
+        },
+        { headers }
       );
 
       if (res.data.success) {
-        setSuccessMsg(`✅ Sent to ${res.data.sentTo || learners.length} learners from ${process.env.REACT_APP_EMAIL_USER}!`);
-        setSubject(""); setMessage(""); setFile(null); setSelectedBatch("");
+        setSuccessMsg(
+          `✅ Sent ${res.data.sent} emails (${res.data.failed} failed)`
+        );
+        setSubject("");
+        setMessage("");
+        setSelectedBatch("");
       } else {
         setError(res.data.error || "Send failed");
       }
-    } catch (e) {
-      console.error("Send error:", e);
-      setError(e.response?.data?.error || "Failed to send emails");
+    } catch (err) {
+      setError(err.response?.data?.error || "Email send failed");
     } finally {
       setSending(false);
     }
