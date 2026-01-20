@@ -621,18 +621,6 @@ function ManagerLeaveDashboard({ user, token }) {
             value={selectedTrainerId}
             onChange={(e) => setSelectedTrainerId(e.target.value)}
           >
-            <MenuItem value="all">
-              <em>All Trainers</em>
-            </MenuItem>
-            {trainers.map((t) => {
-              const key =
-                t.email?.toLowerCase() || `id:${r.trainer_id || t.id}`;
-              return (
-                <MenuItem key={key} value={key}>
-                  {t.name || t.trainer_name} ({t.email})
-                </MenuItem>
-              );
-              })}
           </Select>
         </FormControl>
       </Box>
@@ -703,19 +691,6 @@ function ManagerLeaveDashboard({ user, token }) {
             }}
           />
           <Typography variant="body2">Holiday</Typography>
-        </Box>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-          <Box
-            sx={{
-              width: 16,
-              height: 16,
-              bgcolor: deepPurple[50],
-              border: `1px solid ${deepPurple[200]}`,
-            }}
-          />
-          <Typography variant="body2">
-            Trainer Leave (unique per trainer)
-          </Typography>
         </Box>
       </Box>
 
