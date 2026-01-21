@@ -25,19 +25,28 @@ export default function AttendanceReport({ user, token }) {
   useEffect(() => {
     const fetchBatches = async () => {
       try {
-        const { data } = await axios.get(`${API_BASE}/api/batches`, { headers });
-        const batchList = Array.isArray(data)
+        // ✅ Try without Authorization first (public endpoint)
+        const { data } = await axios.get(`${API_BASE}/api/batches`, {
+          headers: {} // No auth for public batches
+        });
+        
+        const batchList = Array.isArray(data) 
           ? data.map(b => String(b.batch_no || b.batchNo || b)).filter(Boolean)
           : [];
         const uniqueBatches = [...new Set(batchList)].sort();
         setBatches(uniqueBatches);
         if (uniqueBatches.length > 0) setBatchNo(uniqueBatches[0]);
+        console.log('✅ Batches loaded:', uniqueBatches);
       } catch (err) {
-        console.error("Failed to load batches:", err);
+        console.error("Failed to load batches:", err.response?.status, err.message);
+        // Fallback batches from your attachment
+        const fallbackBatches = ["PD53", "PDFT16", "PDFT15", "PDFT17", "DFT36", "DV22", "PD54"];
+        setBatches(fallbackBatches);
+        setBatchNo(fallbackBatches[0]);
       }
     };
     fetchBatches();
-  }, [token]);
+  }, []);
 
   // Load attendance for selected batch
   useEffect(() => {

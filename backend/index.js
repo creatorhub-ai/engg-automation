@@ -58,10 +58,14 @@ const LOCAL_URL = "http://localhost:3000";
 // ✅ FIXED CORS — ONLY THIS IS ENOUGH (Render Friendly)
 // =====================================================
 app.use(cors({
-  origin: "https://engg-automation-r1ke.onrender.com",
-  methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["Content-Type"],
-  credentials: false   // 🔥 VERY IMPORTANT
+  origin: [
+    'https://engg-automation-r1ke.onrender.com',  // ✅ Your frontend
+    'http://localhost:3000'                       // ✅ Local dev
+  ],
+  credentials: true,                                // ✅ Required for Authorization
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization'], // 🔥 FIXES YOUR ERROR
+  exposedHeaders: ['Content-Range']
 }));
 
 
