@@ -7155,29 +7155,147 @@ app.get("/api/debug/routes-test", (req, res) => {
 app.get('/api/attendance-report', async (req, res) => {
   try {
     const { batch_no } = req.query;
-
+    
     if (!batch_no) {
-      return res.status(400).json({ error: 'batch_no required' });
+      return res.status(400).json({ error: 'batch_no is required' });
     }
 
-    console.log(`📊 Fetching attendance for batch: ${batch_no}`);
+    console.log(`📊 Generating attendance report for batch: ${batch_no}`);
 
-    const { data, error } = await supabase
+    // Step 1: Count TOTAL SESSIONS from course_planner_data (unique date + session combinations)
+    const { data: plannerData, error: plannerError } = await supabase
+      .from('course_planner_data')
+      .select('id, date, start_time, end_time, batch_no')
+      .eq('batch_no', batch_no)
+      .order('date, start_time');
+
+    if (plannerError) {
+      console.error('Planner query error:', plannerError);
+      throw new Error('Failed to fetch course planner data');
+    }
+
+    // Count unique sessions (date + session number combinations)
+    const sessionMap = new Map();
+    plannerData.forEach(row => {
+      const key = `${row.date}_${row.start_time}`; // or use session field if available
+      if (!sessionMap.has(key)) {
+        sessionMap.set(key, true);
+      }
+    });
+    
+    const total_sessions_for_batch = sessionMap.size;
+    console.log(`📅 Total sessions found: ${total_sessions_for_batch}`);
+
+    // Step 2: Fetch attendance records from learner_attendance (your actual table)
+    const { data: attendanceData, error: attendanceError } = await supabase
       .from('learner_attendance')
-      .select('id, learner_email, batch_no, date, session, status, marked_by, marked_at')
+      .select(`
+        id,
+        learner_email,
+        batch_no,
+        date,
+        session,
+        status,
+        marked_by,
+        marked_at
+      `)
       .eq('batch_no', batch_no)
       .order('date', { ascending: false })
       .order('session');
 
-    if (error) throw error;
+    if (attendanceError) {
+      console.error('Attendance query error:', attendanceError);
+      throw new Error('Failed to fetch attendance data');
+    }
 
-    console.log(`✅ Found ${data?.length || 0} records for ${batch_no}`);
-    res.json(data || []);
+    console.log(`✅ Found ${attendanceData?.length || 0} attendance records`);
+
+    // Step 3: Calculate per-learner statistics
+    const learnerStats = {};
+    
+    attendanceData.forEach(record => {
+      const email = record.learner_email?.trim().toLowerCase();
+      if (!email) return;
+
+      if (!learnerStats[email]) {
+        learnerStats[email] = {
+          learner_email: email,
+          name: email.split('@')[0].replace(/[._-]/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+          total_marked_sessions: 0,
+          present: 0,
+          leave: 0,
+          absent: 0,
+          sessions: [] // track which sessions attended
+        };
+      }
+
+      const stats = learnerStats[email];
+      stats.total_marked_sessions += 1;
+      stats.sessions.push({
+        date: record.date,
+        session: record.session,
+        status: record.status
+      });
+
+      // Count status
+      const status = String(record.status || '').toUpperCase();
+      if (status === 'P') stats.present += 1;
+      else if (status === 'L') stats.leave += 1;
+      else if (status === 'A' || status === 'NA') stats.absent += 1;
+    });
+
+    // Step 4: Calculate percentages using total_sessions_for_batch
+    const learners = Object.values(learnerStats);
+    const batchStats = {
+      total_learners: learners.length,
+      total_sessions: total_sessions_for_batch,
+      total_attendance_records: attendanceData.length
+    };
+
+    // Calculate batch average attendance
+    const batchAverage = learners.length > 0 
+      ? learners.reduce((sum, learner) => {
+          const attendancePercentage = total_sessions_for_batch > 0 
+            ? (learner.present / total_sessions_for_batch) * 100 
+            : 0;
+          return sum + attendancePercentage;
+        }, 0) / learners.length 
+      : 0;
+
+    // Add percentage and total_sessions to each learner
+    learners.forEach(learner => {
+      learner.percentage = total_sessions_for_batch > 0 
+        ? Math.round((learner.present / total_sessions_for_batch) * 100 * 10) / 10
+        : 0;
+      learner.total_sessions = total_sessions_for_batch;
+    });
+
+    const response = {
+      // Backend-calculated values (frontend uses these directly)
+      total_sessions_for_batch,
+      batch_average_percentage: Math.round(batchAverage * 10) / 10,
+      batch_stats,
+      
+      // Raw data (for detailed views)
+      rows: attendanceData,
+      
+      // Frontend-ready summary (already calculated percentages)
+      learners: learners.sort((a, b) => b.percentage - a.percentage)
+    };
+
+    console.log(`✅ Report generated: ${learners.length} learners, ${total_sessions_for_batch} sessions, ${batchAverage.toFixed(1)}% avg`);
+    
+    res.json(response);
+
   } catch (error) {
-    console.error('Attendance report error:', error);
-    res.status(500).json({ error: 'Failed to fetch attendance data' });
+    console.error('❌ Attendance report error:', error);
+    res.status(500).json({ 
+      error: 'Failed to generate attendance report',
+      details: error.message 
+    });
   }
 });
+
 
 // Fix the existing broken endpoint (optional)
 app.get('/api/attendance/by_batch', async (req, res) => {
