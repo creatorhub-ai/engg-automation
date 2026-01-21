@@ -519,29 +519,51 @@ export async function getDistinctTrainersForBatch(batchNo) {
 app.get('/api/session-attendance-report', async (req, res) => {
   try {
     const { batch_no } = req.query;
-    
-    console.log(`🔍 Fetching attendance for: ${batch_no}`);
-    
-    // Get ALL attendance data for this batch - NO FILTERS
+    console.log(`🔍=== DEBUG API CALLED === batch_no="${batch_no}"`);
+
+    // 1. SHOW ALL PDFT17 records (NO WHERE clause first)
+    const [allPDFT17] = await pool.execute(`
+      SELECT COUNT(*) as total_pdf, learner_email, batch_no, status, session 
+      FROM learner_attendance 
+      WHERE batch_no LIKE '%PDFT17%' 
+      LIMIT 5
+    `);
+    console.log(`📊 ALL PDFT17 records:`, allPDFT17);
+
+    // 2. EXACT MATCH count
+    const [exactMatch] = await pool.execute(`
+      SELECT COUNT(*) as exact_count FROM learner_attendance WHERE batch_no = ?
+    `, [batch_no]);
+    console.log(`📊 EXACT "${batch_no}" match:`, exactMatch[0].exact_count);
+
+    // 3. SHOW RAW FIRST RECORD
+    const [firstRecord] = await pool.execute(`
+      SELECT * FROM learner_attendance WHERE batch_no LIKE ? LIMIT 1
+    `, [`%${batch_no}%`]);
+    console.log(`🔍 FIRST RECORD:`, firstRecord[0]);
+
+    // 4. RETURN ALL MATCHING RECORDS (LENIENT)
     const [rows] = await pool.execute(`
       SELECT 
-        learner_email,
-        status,
-        session,
+        TRIM(learner_email) as learner_email,
+        UPPER(TRIM(status)) as status,
+        CAST(session AS UNSIGNED) as session,
         NOW() as date,
-        CONCAT('Session ', session) as topic_name,
-        SUBSTRING_INDEX(learner_email, '@', 1) as learner_name
+        CONCAT('Session ', CAST(session AS UNSIGNED)) as topic_name,
+        TRIM(learner_email) as learner_name
       FROM learner_attendance 
-      WHERE batch_no = ?
-      ORDER BY learner_email, session
-    `, [batch_no]);
-    
-    console.log(`✅ Returning ${rows.length} records for ${batch_no}`);
+      WHERE batch_no LIKE ? OR batch_no = ?
+        AND learner_email IS NOT NULL 
+        AND LENGTH(learner_email) > 3
+      ORDER BY session, learner_email
+    `, [`%${batch_no}%`, batch_no]);
+
+    console.log(`✅ RETURNING ${rows.length} records`);
     res.json(rows);
-    
+
   } catch (error) {
-    console.error('Attendance API error:', error);
-    res.json([]);
+    console.error('🚨 FULL ERROR:', error);
+    res.json([]); 
   }
 });
 
