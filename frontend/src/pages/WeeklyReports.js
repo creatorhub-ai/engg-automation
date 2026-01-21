@@ -115,6 +115,21 @@ export default function WeeklyReports({ user, token }) {
     loadWeeklyReport();
   }, [selectedBatch, selectedWeek, token]);
 
+  // Generate timestamp for PDF filename
+  const generateTimestamp = () => {
+    const now = new Date();
+    return now.toLocaleString('en-IN', { 
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    }).replace(/[,]/g, '').replace(/:/g, '-');
+  };
+
   // handle PDF download
   const handleDownloadPDF = async () => {
     if (!selectedBatch || !selectedWeek) {
@@ -124,6 +139,7 @@ export default function WeeklyReports({ user, token }) {
 
     setDownloading(true);
     try {
+      const timestamp = generateTimestamp();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
       const response = await axios.get(
         `${API_BASE}/api/weekly-date-report/${selectedBatch}/pdf`,
@@ -134,13 +150,13 @@ export default function WeeklyReports({ user, token }) {
         }
       );
 
-      // create blob and download
+      // create blob and download with timestamp
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement("a");
       link.href = url;
       link.setAttribute(
         "download",
-        `Weekly_Report_${selectedBatch}_Week${selectedWeek}.pdf`
+        `Weekly_Report_${selectedBatch}_Week${selectedWeek}_${timestamp}.pdf`
       );
       document.body.appendChild(link);
       link.click();
