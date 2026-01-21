@@ -68,14 +68,6 @@ app.use(cors({
 // 🔥 GLOBAL OPTIONS HANDLER - BEFORE ALL ROUTES
 app.options('*', cors());
 
-/* ================================
-   SUPABASE
-================================ */
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
-
 // Mount routers
 app.use('/api/marks', marksWindowsRouter);
 app.use('/api/marks', marksSaveRouter);
