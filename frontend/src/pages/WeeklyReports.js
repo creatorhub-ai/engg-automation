@@ -115,7 +115,19 @@ export default function WeeklyReports({ user, token }) {
     loadWeeklyReport();
   }, [selectedBatch, selectedWeek, token]);
 
-  // handle PDF download - using exact timestamp logic from AttendanceReport.js
+  // Format timestamp for PDF - IST with 24-hour format
+  const formatTimestamp = () => {
+    const now = new Date();
+    const day = String(now.getDate()).padStart(2, '0');
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const year = now.getFullYear();
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    const seconds = String(now.getSeconds()).padStart(2, '0');
+    return `${day}/${month}/${year}, ${hours}:${minutes}:${seconds}`;
+  };
+
+  // handle PDF download
   const handleDownloadPDF = async () => {
     if (!selectedBatch || !selectedWeek) {
       alert("Please select a batch and week first");
@@ -124,8 +136,8 @@ export default function WeeklyReports({ user, token }) {
 
     setDownloading(true);
     try {
-      const now = new Date();
-      const timestamp = now.toLocaleString('en-IN', { 
+      const timestamp = formatTimestamp();
+      const fileTimestamp = new Date().toLocaleString('en-IN', { 
         timeZone: 'Asia/Kolkata',
         year: 'numeric',
         month: '2-digit',
@@ -141,7 +153,10 @@ export default function WeeklyReports({ user, token }) {
         `${API_BASE}/api/weekly-date-report/${selectedBatch}/pdf`,
         {
           headers,
-          params: { week_no: selectedWeek },
+          params: { 
+            week_no: selectedWeek,
+            timestamp: timestamp
+          },
           responseType: "blob",
         }
       );
@@ -152,7 +167,7 @@ export default function WeeklyReports({ user, token }) {
       link.href = url;
       link.setAttribute(
         "download",
-        `Weekly_Report_${selectedBatch}_Week${selectedWeek}_${timestamp}.pdf`
+        `Weekly_Report_${selectedBatch}_Week${selectedWeek}_${fileTimestamp}.pdf`
       );
       document.body.appendChild(link);
       link.click();
@@ -166,9 +181,6 @@ export default function WeeklyReports({ user, token }) {
     }
   };
 
-  const roleTitle = user?.role
-    ? user.role.charAt(0).toUpperCase() + user.role.slice(1)
-    : "Admin";
   const welcomeName = user?.name || "User";
 
   return (
@@ -259,98 +271,114 @@ export default function WeeklyReports({ user, token }) {
       )}
 
       {!loading && selectedBatch && selectedWeek && (
-        <Paper elevation={2} sx={{ p: 2 }}>
-          <Typography variant="h6" color="primary" gutterBottom>
-            Week {selectedWeek} – Date Change Details
-          </Typography>
+        <Paper elevation={2} sx={{ p: 0, overflow: 'hidden' }}>
+          {/* Full-width header */}
+          <Box sx={{ bgcolor: "primary.main", color: "white", p: 2, width: '100%' }}>
+            <Typography variant="h6">
+              Week {selectedWeek} – Date Change Details
+            </Typography>
+          </Box>
 
-          <TableContainer>
-            <Table size="small">
-              <TableHead>
-                <TableRow sx={{ bgcolor: "#f5f5f5" }}>
-                  <TableCell>Module</TableCell>
-                  <TableCell>Topic</TableCell>
-                  <TableCell align="center">Planned Date</TableCell>
-                  <TableCell align="center">Actual Date</TableCell>
-                  <TableCell align="center">Difference</TableCell>
-                  <TableCell align="center">Status</TableCell>
-                  <TableCell align="center">Changed By</TableCell>
-                  <TableCell align="center">Changed At</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {rows.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={8} align="center" sx={{ py: 3 }}>
-                      <Typography variant="body2" color="text.secondary">
-                        No date changes recorded for this batch and week.
-                      </Typography>
-                    </TableCell>
+          <Box sx={{ p: 2 }}>
+            <TableContainer sx={{ maxHeight: 600 }}>
+              <Table size="small" sx={{ tableLayout: 'fixed' }}>
+                <TableHead>
+                  <TableRow sx={{ bgcolor: "#f5f5f5" }}>
+                    <TableCell sx={{ width: '8%', fontWeight: 'bold' }}>Module</TableCell>
+                    <TableCell sx={{ width: '15%', fontWeight: 'bold' }}>Topic</TableCell>
+                    <TableCell sx={{ width: '12%', fontWeight: 'bold', textAlign: 'center' }}>Planned Date</TableCell>
+                    <TableCell sx={{ width: '12%', fontWeight: 'bold', textAlign: 'center' }}>Actual Date</TableCell>
+                    <TableCell sx={{ width: '12%', fontWeight: 'bold', textAlign: 'center' }}>Difference</TableCell>
+                    <TableCell sx={{ width: '12%', fontWeight: 'bold', textAlign: 'center' }}>Status</TableCell>
+                    <TableCell sx={{ width: '14%', fontWeight: 'bold', textAlign: 'center' }}>Changed By</TableCell>
+                    <TableCell sx={{ width: '15%', fontWeight: 'bold', textAlign: 'center' }}>Changed At</TableCell>
                   </TableRow>
-                )}
+                </TableHead>
+                <TableBody>
+                  {rows.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={8} align="center" sx={{ py: 3 }}>
+                        <Typography variant="body2" color="text.secondary">
+                          No date changes recorded for this batch and week.
+                        </Typography>
+                      </TableCell>
+                    </TableRow>
+                  )}
 
-                {rows.map((row) => (
-                  <TableRow key={row.id}>
-                    <TableCell>{row.module_name || "N/A"}</TableCell>
-                    <TableCell>{row.topic_name}</TableCell>
-                    <TableCell align="center">
-                      {new Date(row.planned_date).toLocaleDateString("en-IN")}
-                    </TableCell>
-                    <TableCell align="center">
-                      {new Date(row.actual_date).toLocaleDateString("en-IN")}
-                    </TableCell>
-                    <TableCell align="center">
-                      <Chip
-                        label={
-                          row.date_difference > 0
-                            ? `+${row.date_difference} days`
-                            : row.date_difference < 0
-                            ? `${row.date_difference} days`
-                            : "On time"
-                        }
-                        size="small"
-                        color={
-                          row.date_difference > 2
-                            ? "error"
-                            : row.date_difference > 0
-                            ? "warning"
-                            : row.date_difference < 0
-                            ? "success"
-                            : "default"
-                        }
-                        sx={{ fontWeight: "bold", minWidth: 90 }}
-                      />
-                    </TableCell>
-                    <TableCell align="center">
-                      <Chip
-                        label={row.topic_status || "N/A"}
-                        size="small"
-                        variant="outlined"
-                        color={
-                          row.topic_status === "Completed"
-                            ? "success"
-                            : row.topic_status === "In Progress"
-                            ? "primary"
-                            : "default"
-                        }
-                      />
-                    </TableCell>
-                    <TableCell align="center">
-                      {row.changed_by || "N/A"}
-                    </TableCell>
-                    <TableCell align="center">
-                      {row.changed_at
-                        ? new Date(row.changed_at).toLocaleString("en-IN", {
-                            dateStyle: "short",
-                            timeStyle: "short",
-                          })
-                        : "-"}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
+                  {rows.map((row) => (
+                    <TableRow key={row.id}>
+                      <TableCell sx={{ fontSize: '0.85rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {row.module_name || "N/A"}
+                      </TableCell>
+                      <TableCell sx={{ fontSize: '0.85rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {row.topic_name}
+                      </TableCell>
+                      <TableCell sx={{ fontSize: '0.85rem', textAlign: 'center' }}>
+                        {new Date(row.planned_date).toLocaleDateString("en-IN")}
+                      </TableCell>
+                      <TableCell sx={{ fontSize: '0.85rem', textAlign: 'center' }}>
+                        {new Date(row.actual_date).toLocaleDateString("en-IN")}
+                      </TableCell>
+                      <TableCell sx={{ textAlign: 'center' }}>
+                        <Chip
+                          label={
+                            row.date_difference > 0
+                              ? `+${row.date_difference}d`
+                              : row.date_difference < 0
+                              ? `${row.date_difference}d`
+                              : "On time"
+                          }
+                          size="small"
+                          color={
+                            row.date_difference > 2
+                              ? "error"
+                              : row.date_difference > 0
+                              ? "warning"
+                              : row.date_difference < 0
+                              ? "success"
+                              : "default"
+                          }
+                          sx={{ fontWeight: "bold" }}
+                        />
+                      </TableCell>
+                      <TableCell sx={{ textAlign: 'center' }}>
+                        <Chip
+                          label={
+                            row.topic_status === "Completed"
+                              ? "Complete"
+                              : row.topic_status === "In Progress"
+                              ? "In Prog"
+                              : row.topic_status || "N/A"
+                          }
+                          size="small"
+                          variant="outlined"
+                          color={
+                            row.topic_status === "Completed"
+                              ? "success"
+                              : row.topic_status === "In Progress"
+                              ? "primary"
+                              : "default"
+                          }
+                          sx={{ fontSize: '0.75rem' }}
+                        />
+                      </TableCell>
+                      <TableCell sx={{ fontSize: '0.85rem', textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {row.changed_by || "N/A"}
+                      </TableCell>
+                      <TableCell sx={{ fontSize: '0.85rem', textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {row.changed_at
+                          ? new Date(row.changed_at).toLocaleString("en-IN", {
+                              dateStyle: "short",
+                              timeStyle: "short",
+                            })
+                          : "-"}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </Box>
         </Paper>
       )}
 
