@@ -53,23 +53,25 @@ export default function AttendanceReport({ user, token }) {
       setLoading(true);
       setError("");
       try {
-        // Fetch attendance data with session info
+        // 1. Fetch attendance data WITH token
         const attendanceRes = await axios.get(`${API_BASE}/api/session-attendance-report`, {
           params: { batch_no: batchNo },
-          headers
+          headers: headers  // ✅ This sends Authorization: Bearer <token>
         });
         
-        // Fetch learners data
+        // 2. Fetch learners data WITH token  
         const learnersRes = await axios.get(`${API_BASE}/api/learners`, {
           params: { batch_no: batchNo },
-          headers
+          headers: headers  // ✅ This sends Authorization: Bearer <token>
         });
 
         setAttendanceData(Array.isArray(attendanceRes.data) ? attendanceRes.data : []);
         setLearnersData(Array.isArray(learnersRes.data) ? learnersRes.data : []);
       } catch (err) {
+        console.error("Data fetch error:", err.response?.data || err.message); // Better error logging
         setError("Failed to load data");
-        console.error("Data fetch error:", err);
+        setAttendanceData([]);
+        setLearnersData([]);
       } finally {
         setLoading(false);
       }

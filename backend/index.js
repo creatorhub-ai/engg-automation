@@ -516,13 +516,10 @@ export async function getDistinctTrainersForBatch(batchNo) {
 }
 
 // Enhanced session-based attendance report API
-app.get('/api/session-attendance-report', authMiddleware, async (req, res) => {
+app.get('/api/session-attendance-report', async (req, res) => {
   try {
     const { batch_no } = req.query;
-    
-    if (!batch_no) {
-      return res.status(400).json({ error: 'batch_no is required' });
-    }
+    if (!batch_no) return res.status(400).json({ error: 'batch_no required' });
 
     const [rows] = await pool.execute(`
       SELECT 
@@ -531,7 +528,7 @@ app.get('/api/session-attendance-report', authMiddleware, async (req, res) => {
         la.session,
         la.date,
         la.topic_name,
-        ld.name as learner_name
+        COALESCE(ld.name, la.learner_email) as learner_name
       FROM learner_attendance la
       LEFT JOIN learners_data ld ON la.learner_email = ld.email
       WHERE la.batch_no = ?
@@ -540,8 +537,46 @@ app.get('/api/session-attendance-report', authMiddleware, async (req, res) => {
     
     res.json(rows);
   } catch (error) {
-    console.error('Session attendance report error:', error);
-    res.status(500).json({ error: 'Failed to fetch session attendance data' });
+    console.error('Session attendance error:', error);
+    res.status(500).json({ error: 'Failed to fetch data' });
+  }
+});
+
+// Learners by batch (NO authMiddleware)
+app.get('/api/learners', async (req, res) => {
+  try {
+    const { batch_no } = req.query;
+    
+    let query = supabase
+      .from("learners_data")
+      .select("id, name, email, phone, batch_no, status")
+      .order("name", { ascending: true });
+
+    if (batch_no) {
+      query = query.eq("batch_no", batch_no);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error("Learners error:", error);
+      return res.status(200).json([]);
+    }
+
+    const normalized = (data || []).map(row => ({
+      id: row.id,
+      name: row.name || "",
+      email: row.email || "",
+      phone: row.phone || "",
+      batchno: row.batch_no || "",
+      batch_no: row.batch_no || "",
+      status: row.status || "Enabled",
+    })).filter(row => row.name && row.email);
+
+    res.json(normalized);
+  } catch (err) {
+    console.error("Learners CRASH:", err);
+    res.status(200).json([]);
   }
 });
 
