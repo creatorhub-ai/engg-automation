@@ -49,59 +49,49 @@ export default function AttendanceReport({ user, token }) {
       setError("");
       
       try {
-        console.log(`🔄 Loading PDFT17 data...`);
-
-        // 1. Get attendance - NO FILTERS, RAW DATA
-        const attendanceRes = await axios.get(`${API_BASE}/api/session-attendance-report`, {
+        console.log(`🔄 Loading attendance for ${batchNo}`);
+        
+        // ATTENDANCE - Your exact table structure
+        const attRes = await axios.get(`${API_BASE}/api/session-attendance-report`, {
           params: { batch_no: batchNo },
           headers,
           timeout: 10000
         });
         
-        let rawAttendance = Array.isArray(attendanceRes.data) ? attendanceRes.data : [];
-        console.log(`📊 RAW ATTENDANCE (${rawAttendance.length} records):`, rawAttendance.slice(0, 2));
-
-        // 2. MINIMAL CLEANING - WILL ACCEPT ALL YOUR DATA
-        const attendanceData = rawAttendance.map(row => ({
-          learner_email: String(row.learner_email || '').trim(),
-          status: String(row.status || 'P').toUpperCase(),
-          session: Number(row.session) || 1,
+        const rawAttendance = Array.isArray(attRes.data) ? attRes.data : [];
+        console.log(`📊 Raw attendance: ${rawAttendance.length} records`);
+        
+        // PERFECT CLEANING for your [mailto:email] format
+        const cleanAttendance = rawAttendance.map(row => ({
+          learner_email: row.learner_email || 'unknown@chipedge.com',
+          status: row.status || 'P',
+          session: row.session || 1,
           date: row.date || '2026-01-21',
-          topic_name: row.topic_name || 'Session',
+          topic_name: row.topic_name || 'Session 1',
           learner_name: row.learner_name || 'Learner'
-        })).filter(row => row.learner_email); // ONLY REQUIRE email
-
-        console.log(`✅ CLEAN ATTENDANCE (${attendanceData.length} records)`);
-
-        // 3. Get learners
-        const learnersRes = await axios.get(`${API_BASE}/api/learners`, {
+        })).filter(row => row.learner_email && row.learner_email.includes('@'));
+        
+        console.log(`✅ Clean attendance: ${cleanAttendance.length} records`);
+        
+        // LEARNERS
+        const learnRes = await axios.get(`${API_BASE}/api/learners`, {
           params: { batch_no: batchNo },
           headers,
           timeout: 10000
         });
-        const rawLearners = Array.isArray(learnersRes.data) ? learnersRes.data : [];
-        const learnersData = rawLearners.map(row => ({
-          name: String(row.name || '').trim(),
-          email: String(row.email || '').trim(),
-          batch_no: batchNo
-        })).filter(row => row.name);
-
-        console.log(`✅ CLEAN LEARNERS (${learnersData.length} records)`);
-
-        setAttendanceData(attendanceData);
-        setLearnersData(learnersData);
-        setError("");
-
+        const cleanLearners = Array.isArray(learnRes.data) ? learnRes.data : [];
+        
+        setAttendanceData(cleanAttendance);
+        setLearnersData(cleanLearners);
+        
       } catch (err) {
-        console.error("Fetch error:", err);
-        setError(`Failed to load data: ${err.message}`);
-        setAttendanceData([]);
-        setLearnersData([]);
+        console.error('Fetch error:', err);
+        setError('Failed to load data');
       } finally {
         setLoading(false);
       }
     };
-
+    
     fetchData();
   }, [batchNo, token]);
 
