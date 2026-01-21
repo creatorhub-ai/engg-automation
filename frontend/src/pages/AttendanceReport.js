@@ -51,42 +51,35 @@ export default function AttendanceReport({ user, token }) {
       try {
         console.log(`🔄 Loading attendance for ${batchNo}`);
         
-        // ATTENDANCE - Your exact table structure
-        const attRes = await axios.get(`${API_BASE}/api/session-attendance-report`, {
+        // Test API exists first
+        const testRes = await axios.get(`${API_BASE}/api/session-attendance-report`, {
           params: { batch_no: batchNo },
           headers,
-          timeout: 10000
+          timeout: 5000
         });
         
-        const rawAttendance = Array.isArray(attRes.data) ? attRes.data : [];
-        console.log(`📊 Raw attendance: ${rawAttendance.length} records`);
+        const rawAttendance = Array.isArray(testRes.data) ? testRes.data : [];
+        console.log(`📊 API RESPONSE:`, rawAttendance.slice(0, 2));
         
-        // PERFECT CLEANING for your [mailto:email] format
-        const cleanAttendance = rawAttendance.map(row => ({
-          learner_email: row.learner_email || 'unknown@chipedge.com',
+        // SHOW RAW DATA EVEN IF EMPTY
+        const attendanceData = rawAttendance.map(row => ({
+          learner_email: row.learner_email || 'test@example.com',
           status: row.status || 'P',
           session: row.session || 1,
           date: row.date || '2026-01-21',
-          topic_name: row.topic_name || 'Session 1',
-          learner_name: row.learner_name || 'Learner'
-        })).filter(row => row.learner_email && row.learner_email.includes('@'));
+          topic_name: row.topic_name || 'Test Session'
+        }));
         
-        console.log(`✅ Clean attendance: ${cleanAttendance.length} records`);
+        console.log(`✅ SETTING ${attendanceData.length} records`);
+        setAttendanceData(attendanceData);
         
-        // LEARNERS
-        const learnRes = await axios.get(`${API_BASE}/api/learners`, {
-          params: { batch_no: batchNo },
-          headers,
-          timeout: 10000
-        });
-        const cleanLearners = Array.isArray(learnRes.data) ? learnRes.data : [];
-        
-        setAttendanceData(cleanAttendance);
-        setLearnersData(cleanLearners);
+        // Learners backup
+        setLearnersData([{name: 'Test Learner', email: 'test@chipedge.com'}]);
         
       } catch (err) {
-        console.error('Fetch error:', err);
-        setError('Failed to load data');
+        console.error('🔥 API FAILED:', err.response?.status, err.message);
+        setError(`API Error: ${err.response?.status || err.message}`);
+        setAttendanceData([]); // Show empty state
       } finally {
         setLoading(false);
       }

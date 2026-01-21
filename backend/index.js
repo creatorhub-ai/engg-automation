@@ -519,31 +519,39 @@ export async function getDistinctTrainersForBatch(batchNo) {
 app.get('/api/session-attendance-report', async (req, res) => {
   try {
     const { batch_no } = req.query;
+    console.log(`🔍=== API HIT === batch_no="${batch_no}"`);
     
-    console.log(`🔍 Querying learner_attendance for batch_no: "${batch_no}"`);
+    // STEP 1: Count ALL records for this batch
+    const [countResult] = await pool.execute(`
+      SELECT COUNT(*) as total 
+      FROM learner_attendance 
+      WHERE TRIM(batch_no) = ?
+    `, [batch_no]);
     
+    console.log(`📊 COUNT RESULT: ${countResult[0].total} records`);
+    
+    // STEP 2: Get actual data with your EXACT format
     const [rows] = await pool.execute(`
       SELECT 
         TRIM(REGEXP_REPLACE(learner_email, '\\[mailto:([^\\]]+)\\].*', '$1')) as learner_email,
-        UPPER(LEFT(TRIM(status), 1)) as status,
+        LEFT(TRIM(status), 1) as status,
         CAST(session AS UNSIGNED) as session,
         date as date,
         CONCAT('Session ', CAST(session AS UNSIGNED)) as topic_name,
         TRIM(REGEXP_REPLACE(learner_email, '\\[mailto:([^\\]]+)\\].*', '$1')) as learner_name
       FROM learner_attendance 
       WHERE TRIM(batch_no) = ?
-        AND learner_email IS NOT NULL
-        AND status IS NOT NULL
-        AND session IS NOT NULL
-      ORDER BY session ASC, learner_email ASC
+      ORDER BY session, learner_email
     `, [batch_no]);
     
-    console.log(`✅ Found ${rows.length} records for ${batch_no}`);
+    console.log(`✅ RETURNING ${rows.length} rows`);
+    console.log('FIRST ROW:', rows[0]);
+    
     res.json(rows);
     
   } catch (error) {
-    console.error('Attendance API error:', error);
-    res.json([]);
+    console.error('🚨 API ERROR:', error.message);
+    res.json([]); // Always return array
   }
 });
 
