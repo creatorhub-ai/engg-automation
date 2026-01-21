@@ -104,6 +104,7 @@ app.options("*", (req, res) => {
 // =====================================================
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
+app.use("/api/marks", require("./routes/marks"));
 
 // =====================================================
 // Multer File Upload Config
@@ -6325,7 +6326,7 @@ app.post("/api/attendance/upload", upload.single("file"), async (req, res) => {
 
 // Optional: root route for testing API status
 app.get("/", (req, res) => {
-  res.send("Attendance Mailer API is running");
+  res.send("Backend is Running");
 });
 
 // Other endpoints (examples)
