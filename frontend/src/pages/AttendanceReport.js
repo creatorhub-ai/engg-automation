@@ -4,7 +4,7 @@ import axios from "axios";
 import {
   Box, Paper, Typography, FormControl, InputLabel, Select, MenuItem,
   Button, Table, TableHead, TableBody, TableRow, TableCell, TableContainer,
-  CircularProgress, Alert, Grid, Card, CardContent, Chip, Tabs, Tab,
+  CircularProgress, Alert, Grid, Card, CardContent, Chip,
   Dialog, DialogTitle, DialogContent, ToggleButtonGroup, ToggleButton
 } from "@mui/material";
 import jsPDF from "jspdf";
@@ -17,12 +17,11 @@ export default function AttendanceReport({ user, token }) {
   const [batchNo, setBatchNo] = useState("");
   const [attendanceData, setAttendanceData] = useState([]);
   const [learnersData, setLearnersData] = useState([]);
-  const [sessionData, setSessionData] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [selectedLearner, setSelectedLearner] = useState(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
-  const [detailFilter, setDetailFilter] = useState('all'); // all, present, leave, absent
+  const [detailFilter, setDetailFilter] = useState('all');
   const [detailFilteredData, setDetailFilteredData] = useState([]);
 
   const headers = { Authorization: `Bearer ${token}` };
@@ -45,7 +44,7 @@ export default function AttendanceReport({ user, token }) {
     fetchBatches();
   }, [token]);
 
-  // Load all required data for selected batch
+  // Load all required data for selected batch - FIXED
   useEffect(() => {
     if (!batchNo) return;
 
@@ -58,39 +57,70 @@ export default function AttendanceReport({ user, token }) {
       try {
         console.log(`🔄 Loading data for batch: ${batchNo}`);
 
-        // Fetch attendance data (try/catch each individually)
-        let attendanceData = [];
+        // 1. Fetch attendance data
+        let attendanceDataRaw = [];
         try {
           const attendanceRes = await axios.get(`${API_BASE}/api/session-attendance-report`, {
             params: { batch_no: batchNo },
             headers: headers,
-            timeout: 10000 // 10s timeout
+            timeout: 10000
           });
-          attendanceData = Array.isArray(attendanceRes.data) ? attendanceRes.data : [];
-          console.log(`✅ Attendance: ${attendanceData.length} records`);
+          attendanceDataRaw = Array.isArray(attendanceRes.data) ? attendanceRes.data : [];
+          console.log(`✅ Raw attendance: ${attendanceDataRaw.length} records`);
         } catch (attendanceErr) {
           console.warn('Attendance fetch failed:', attendanceErr.response?.status, attendanceErr.message);
         }
 
-        // Fetch learners data (independent fetch)
-        let learnersData = [];
+        // CLEAN & TRANSFORM attendance data
+        const cleanAttendanceData = attendanceDataRaw
+          .map(row => ({
+            learner_email: String(row.learner_email || '').replace(/\[mailto:(.*?)\]/, '$1').trim(),
+            status: String(row.status || '').toUpperCase(),
+            session: parseInt(row.session) || 1,
+            date: row.date || '2026-01-21',
+            topic_name: row.topic_name || `Session ${row.session || 1}`,
+            learner_name: row.learner_name || row.learner_email
+          }))
+          .filter(row => row.learner_email && row.status && row.status.length <= 2)
+          .filter(row => row.learner_email.includes('@'));
+
+        console.log(`✅ Clean attendance: ${cleanAttendanceData.length} records`);
+
+        // 2. Fetch learners data
+        let learnersDataRaw = [];
         try {
           const learnersRes = await axios.get(`${API_BASE}/api/learners`, {
             params: { batch_no: batchNo },
             headers: headers,
             timeout: 10000
           });
-          learnersData = Array.isArray(learnersRes.data) ? learnersRes.data : [];
-          console.log(`✅ Learners: ${learnersData.length} records`);
+          learnersDataRaw = Array.isArray(learnersRes.data) ? learnersRes.data : [];
+          console.log(`✅ Raw learners: ${learnersDataRaw.length} records`);
         } catch (learnersErr) {
           console.warn('Learners fetch failed:', learnersErr.response?.status, learnersErr.message);
         }
 
-        setAttendanceData(attendanceData);
-        setLearnersData(learnersData);
+        // CLEAN learners data
+        const cleanLearnersData = learnersDataRaw
+          .map(row => ({
+            name: String(row.name || '').trim(),
+            email: String(row.email || '').trim(),
+            batch_no: row.batch_no || batchNo,
+            id: row.id
+          }))
+          .filter(row => row.name && row.email && row.email.includes('@'));
 
-        if (attendanceData.length === 0 && learnersData.length === 0) {
+        console.log(`✅ Clean learners: ${cleanLearnersData.length} records`);
+
+        setAttendanceData(cleanAttendanceData);
+        setLearnersData(cleanLearnersData);
+
+        if (cleanAttendanceData.length === 0 && cleanLearnersData.length > 0) {
+          setError(`No valid attendance records found for ${batchNo} (${cleanLearnersData.length} learners exist)`);
+        } else if (cleanAttendanceData.length === 0 && cleanLearnersData.length === 0) {
           setError(`No data found for batch ${batchNo}`);
+        } else {
+          setError("");
         }
 
       } catch (err) {
@@ -102,25 +132,17 @@ export default function AttendanceReport({ user, token }) {
     };
 
     fetchAllData();
-  }, [batchNo, token]);
+  }, [batchNo, token]); // FIXED: Properly closed useEffect
 
   // Aggregate attendance data by sessions
   const summary = useMemo(() => {
     const learnerStats = {};
-    
-    // Create session map for total sessions per learner
-    const sessionMap = {};
-    attendanceData.forEach(row => {
-      const sessionKey = `${row.learner_email}-${row.session}`;
-      sessionMap[sessionKey] = true;
-    });
 
     attendanceData.forEach(row => {
       const email = row.learner_email?.trim();
       if (!email) return;
 
       if (!learnerStats[email]) {
-        // Get name from learners_data
         const learnerInfo = learnersData.find(l => l.email === email);
         learnerStats[email] = {
           name: learnerInfo?.name || email.split('@')[0].replace(/[._]/g, ' '),
@@ -134,9 +156,8 @@ export default function AttendanceReport({ user, token }) {
       }
 
       const stats = learnerStats[email];
-      const sessionKey = `${email}-${row.session}`;
-      
-      // Count unique sessions
+
+      // Count unique sessions per learner
       if (!stats.sessions.has(row.session)) {
         stats.sessions.add(row.session);
         stats.totalSessions += 1;
@@ -155,7 +176,7 @@ export default function AttendanceReport({ user, token }) {
       : 0;
 
     return {
-      learners: learners.sort((a, b) => b.present / b.totalSessions - a.present / a.totalSessions),
+      learners: learners.sort((a, b) => (b.present / b.totalSessions) - (a.present / a.totalSessions)),
       totalLearners,
       totalSessions: Math.max(...Object.values(learnerStats).map(l => l.totalSessions)) || 0,
       avgAttendance: Math.round(avgAttendance * 10) / 10
@@ -186,16 +207,30 @@ export default function AttendanceReport({ user, token }) {
   const RadialProgress = ({ percentage }) => (
     <div style={{ width: 140, height: 140, position: 'relative' }}>
       <svg viewBox="0 0 36 36" width="140" height="140">
-        <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" 
-              fill="none" stroke="#e5e5e5" strokeWidth="3"/>
-        <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" 
-              fill="none" stroke="#4CAF50" strokeWidth="3" strokeLinecap="round"
-              strokeDasharray={`${percentage * 0.352}, 100`}
-              transform="rotate(-90 18 18)"/>
+        <path 
+          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" 
+          fill="none" 
+          stroke="#e5e5e5" 
+          strokeWidth="3"
+        />
+        <path 
+          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" 
+          fill="none" 
+          stroke="#4CAF50" 
+          strokeWidth="3" 
+          strokeLinecap="round"
+          strokeDasharray={`${percentage * 0.352}, 100`}
+          transform="rotate(-90 18 18)"
+        />
       </svg>
       <div style={{
-        position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
-        fontSize: '20px', fontWeight: 'bold', color: percentage >= 75 ? '#4CAF50' : '#F44336'
+        position: 'absolute', 
+        top: '50%', 
+        left: '50%', 
+        transform: 'translate(-50%, -50%)',
+        fontSize: '20px', 
+        fontWeight: 'bold', 
+        color: percentage >= 75 ? '#4CAF50' : '#F44336'
       }}>
         {Math.round(percentage)}%
       </div>
