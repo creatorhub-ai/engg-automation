@@ -58,15 +58,23 @@ const LOCAL_URL = "http://localhost:3000";
 // ✅ FIXED CORS — ONLY THIS IS ENOUGH (Render Friendly)
 // =====================================================
 app.use(cors({
-  origin: 'https://engg-automation-r1ke.onrender.com',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type'],
-  credentials: true
+  origin: "https://engg-automation-r1ke.onrender.com",
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type"],
+  credentials: false   // 🔥 VERY IMPORTANT
 }));
 
 
 // 🔥 GLOBAL OPTIONS HANDLER - BEFORE ALL ROUTES
 app.options('*', cors());
+
+/* ================================
+   SUPABASE
+================================ */
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
 
 // Mount routers
 app.use('/api/marks', marksWindowsRouter);
@@ -699,7 +707,7 @@ app.get("/api/marks/window-status", async (req, res) => {
 });
 
 // 2) POST /api/marks/:assessmentType
-app.post('/api/marks/:assessmentType', async (req, res) => {
+app.post("/api/marks/:assessmentType", async (req, res) => {
   try {
     const { assessmentType } = req.params;
     const {
@@ -712,94 +720,46 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
       percentage
     } = req.body;
 
-    /* ===============================
-       CORS (DO NOT REMOVE)
-    =============================== */
-    res.header('Access-Control-Allow-Credentials', 'true');
-
-    /* ===============================
-       BASIC VALIDATION
-    =============================== */
     if (!learner_id || !batch_no || !week_no || !assessment_date || !out_off) {
-      return res.status(400).json({ error: 'Missing required fields' });
+      return res.status(400).json({ error: "Missing required fields" });
     }
 
-    /* ===============================
-       DATE NORMALIZATION (🔥 FIX)
-    =============================== */
-    const normalizeDate = (dateStr) => {
-      if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
-
-      const m = dateStr.match(/(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/);
-      if (!m) return null;
-
-      const [, d, mth, y] = m;
-      return `${y}-${mth.padStart(2, '0')}-${d.padStart(2, '0')}`;
-    };
-
-    const normalizedDate = normalizeDate(assessment_date);
-    if (!normalizedDate) {
-      return res.status(400).json({ error: 'Invalid assessment_date format' });
-    }
-
-    /* ===============================
-       WINDOW VALIDATION (AS-IS)
-    =============================== */
-    const windowCheck = validateMarkEntryWindow(normalizedDate, assessmentType);
-    if (!windowCheck.valid) {
-      console.log(`🚫 BLOCKED: ${windowCheck.error}`);
-      return res.status(403).json({ error: windowCheck.error });
-    }
-
-    /* ===============================
-       TABLE MAPPING (AS-IS)
-    =============================== */
     const tableMap = {
-      'weekly-assessment': 'weeklyassessmentmarks',
-      'intermediate-assessment': 'intermediateassessmentmarks',
-      'module-level-assessment': 'modulelevelassessmentmarks',
-      'weekly-quiz': 'weeklyquizmarks'
+      "weekly-assessment": "weeklyassessmentmarks",
+      "intermediate-assessment": "intermediateassessmentmarks",
+      "module-level-assessment": "modulelevelassessmentmarks",
+      "weekly-quiz": "weeklyquizmarks"
     };
 
     const tableName = tableMap[assessmentType];
     if (!tableName) {
-      return res.status(400).json({ error: 'Invalid assessment type' });
+      return res.status(400).json({ error: "Invalid assessment type" });
     }
 
-    /* ===============================
-       UPSERT DATA
-    =============================== */
-    const upsertData = {
-      learner_id: Number(learner_id),
-      batch_no,
-      week_no: Number(week_no),
-      assessment_date: normalizedDate,
-      out_off: Number(out_off),
-      points: points !== undefined ? Number(points) : null,
-      percentage: percentage !== undefined ? Number(percentage) : null
-    };
-
-    /* ===============================
-       🔥 CRITICAL FIX HERE 🔥
-       assessment_date MUST be in conflict key
-    =============================== */
     const { error } = await supabase
       .from(tableName)
-      .upsert(upsertData, {
-        onConflict: 'learner_id,batch_no,week_no,assessment_date'
+      .upsert({
+        learner_id: Number(learner_id),
+        batch_no,
+        week_no: Number(week_no),
+        assessment_date,
+        out_off: Number(out_off),
+        points: points !== "" ? Number(points) : null,
+        percentage: percentage !== "" ? Number(percentage) : null
+      }, {
+        onConflict: "learner_id,batch_no,week_no,assessment_date"
       });
 
     if (error) {
-      console.error('❌ Database error:', error);
-      return res.status(500).json({ error: 'Failed to save marks' });
+      console.error("DB ERROR:", error);
+      return res.status(500).json({ error: "Database error" });
     }
 
-    console.log(`✅ SAVED: ${learner_id} | ${batch_no} | ${normalizedDate}`);
     res.json({ success: true });
 
   } catch (err) {
-    console.error('❌ Marks endpoint error:', err);
-    res.status(500).json({ error: 'Server error' });
+    console.error("SERVER ERROR:", err);
+    res.status(500).json({ error: "Server crash" });
   }
 });
 
