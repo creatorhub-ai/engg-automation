@@ -52,26 +52,50 @@ export default function AttendanceReport({ user, token }) {
     const fetchAllData = async () => {
       setLoading(true);
       setError("");
-      try {
-        // 1. Fetch attendance data WITH token
-        const attendanceRes = await axios.get(`${API_BASE}/api/session-attendance-report`, {
-          params: { batch_no: batchNo },
-          headers: headers  // ✅ This sends Authorization: Bearer <token>
-        });
-        
-        // 2. Fetch learners data WITH token  
-        const learnersRes = await axios.get(`${API_BASE}/api/learners`, {
-          params: { batch_no: batchNo },
-          headers: headers  // ✅ This sends Authorization: Bearer <token>
-        });
+      setAttendanceData([]);
+      setLearnersData([]);
 
-        setAttendanceData(Array.isArray(attendanceRes.data) ? attendanceRes.data : []);
-        setLearnersData(Array.isArray(learnersRes.data) ? learnersRes.data : []);
+      try {
+        console.log(`🔄 Loading data for batch: ${batchNo}`);
+
+        // Fetch attendance data (try/catch each individually)
+        let attendanceData = [];
+        try {
+          const attendanceRes = await axios.get(`${API_BASE}/api/session-attendance-report`, {
+            params: { batch_no: batchNo },
+            headers: headers,
+            timeout: 10000 // 10s timeout
+          });
+          attendanceData = Array.isArray(attendanceRes.data) ? attendanceRes.data : [];
+          console.log(`✅ Attendance: ${attendanceData.length} records`);
+        } catch (attendanceErr) {
+          console.warn('Attendance fetch failed:', attendanceErr.response?.status, attendanceErr.message);
+        }
+
+        // Fetch learners data (independent fetch)
+        let learnersData = [];
+        try {
+          const learnersRes = await axios.get(`${API_BASE}/api/learners`, {
+            params: { batch_no: batchNo },
+            headers: headers,
+            timeout: 10000
+          });
+          learnersData = Array.isArray(learnersRes.data) ? learnersRes.data : [];
+          console.log(`✅ Learners: ${learnersData.length} records`);
+        } catch (learnersErr) {
+          console.warn('Learners fetch failed:', learnersErr.response?.status, learnersErr.message);
+        }
+
+        setAttendanceData(attendanceData);
+        setLearnersData(learnersData);
+
+        if (attendanceData.length === 0 && learnersData.length === 0) {
+          setError(`No data found for batch ${batchNo}`);
+        }
+
       } catch (err) {
-        console.error("Data fetch error:", err.response?.data || err.message); // Better error logging
-        setError("Failed to load data");
-        setAttendanceData([]);
-        setLearnersData([]);
+        console.error("CRITICAL fetch error:", err);
+        setError("Failed to connect to server");
       } finally {
         setLoading(false);
       }

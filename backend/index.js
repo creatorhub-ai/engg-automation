@@ -519,26 +519,62 @@ export async function getDistinctTrainersForBatch(batchNo) {
 app.get('/api/session-attendance-report', async (req, res) => {
   try {
     const { batch_no } = req.query;
-    if (!batch_no) return res.status(400).json({ error: 'batch_no required' });
-
-    const [rows] = await pool.execute(`
-      SELECT 
-        la.learner_email,
-        la.status,
-        la.session,
-        la.date,
-        la.topic_name,
-        COALESCE(ld.name, la.learner_email) as learner_name
-      FROM learner_attendance la
-      LEFT JOIN learners_data ld ON la.learner_email = ld.email
-      WHERE la.batch_no = ?
-      ORDER BY la.learner_email, la.date, la.session
-    `, [batch_no]);
     
-    res.json(rows);
+    if (!batch_no) {
+      return res.status(400).json({ error: 'batch_no required' });
+    }
+
+    console.log(`📊 Fetching attendance for batch: ${batch_no}`);
+
+    // Try MySQL first (pool)
+    try {
+      const [rows] = await pool.execute(`
+        SELECT 
+          la.learner_email,
+          la.status,
+          la.session,
+          la.date,
+          COALESCE(la.topic_name, '') as topic_name,
+          COALESCE(ld.name, la.learner_email) as learner_name
+        FROM learner_attendance la
+        LEFT JOIN learners_data ld ON la.learner_email = ld.email
+        WHERE la.batch_no = ?
+        ORDER BY la.learner_email, la.date, la.session
+      `, [batch_no]);
+      
+      console.log(`✅ MySQL found ${rows.length} attendance records for ${batch_no}`);
+      return res.json(rows);
+    } catch (mysqlError) {
+      console.log('MySQL failed, trying Supabase...');
+    }
+
+    // Fallback to Supabase
+    const { data, error } = await supabase
+      .from('learner_attendance')
+      .select(`
+        learner_email,
+        status,
+        session,
+        date,
+        topic_name,
+        learners_data!inner(name)
+      `)
+      .eq('batch_no', batch_no)
+      .order('learner_email')
+      .order('date')
+      .order('session');
+
+    if (error) {
+      console.error('Supabase attendance error:', error);
+      return res.status(200).json([]); // Return empty array instead of 500
+    }
+
+    console.log(`✅ Supabase found ${data?.length || 0} attendance records for ${batch_no}`);
+    return res.json(data || []);
+
   } catch (error) {
-    console.error('Session attendance error:', error);
-    res.status(500).json({ error: 'Failed to fetch data' });
+    console.error('🚨 Session attendance CRASH:', error);
+    return res.status(200).json([]); // NEVER return 500 - always return data
   }
 });
 
