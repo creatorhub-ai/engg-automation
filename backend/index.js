@@ -519,38 +519,29 @@ export async function getDistinctTrainersForBatch(batchNo) {
 app.get('/api/session-attendance-report', async (req, res) => {
   try {
     const { batch_no } = req.query;
-    console.log(`🔍 PDFT17 API called: "${batch_no}"`);
     
-    // STEP 1: Count raw records
-    const [count] = await pool.execute(
-      'SELECT COUNT(*) as total FROM learner_attendance WHERE batch_no = ?', 
-      [batch_no]
-    );
-    console.log(`📊 RAW COUNT: ${count[0].total} records for ${batch_no}`);
+    console.log(`🔍 Fetching attendance for: ${batch_no}`);
     
-    // STEP 2: Return EXACTLY your data structure
+    // Get ALL attendance data for this batch - NO FILTERS
     const [rows] = await pool.execute(`
       SELECT 
-        learner_email as learner_email,
-        status as status,
-        session as session,
+        learner_email,
+        status,
+        session,
         NOW() as date,
         CONCAT('Session ', session) as topic_name,
-        learner_email as learner_name
+        SUBSTRING_INDEX(learner_email, '@', 1) as learner_name
       FROM learner_attendance 
       WHERE batch_no = ?
-        AND learner_email LIKE '%@%'
-        AND status IN ('P', 'A', 'L')
-      ORDER BY session ASC, learner_email ASC
+      ORDER BY learner_email, session
     `, [batch_no]);
     
-    console.log(`✅ FINAL: ${rows.length} rows returned`);
-    console.log('FIRST ROW:', JSON.stringify(rows[0]));
-    
+    console.log(`✅ Returning ${rows.length} records for ${batch_no}`);
     res.json(rows);
+    
   } catch (error) {
-    console.error('🚨 API ERROR:', error);
-    res.json([]); // NEVER FAIL
+    console.error('Attendance API error:', error);
+    res.json([]);
   }
 });
 
