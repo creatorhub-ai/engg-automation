@@ -3421,6 +3421,59 @@ app.post('/api/test-email', async (req, res) => {
   }
 });
 
+// =====================================================
+// 🔹 Get trainer schedule for leave date
+// =====================================================
+app.get("/api/trainer-leave-schedule", async (req, res) => {
+  try {
+    const { trainer_email, trainer_name, date } = req.query;
+
+    if (!date || (!trainer_email && !trainer_name)) {
+      return res.status(400).json({
+        error: "trainer_email or trainer_name and date are required",
+      });
+    }
+
+    const result = await pool.query(
+      `
+      SELECT
+        batch_no,
+        module_name
+      FROM course_planner_data
+      WHERE
+        DATE(date) = DATE($1)
+        AND (
+          LOWER(trainer_email) = LOWER($2)
+          OR LOWER(trainer_name) = LOWER($3)
+        )
+      `,
+      [date, trainer_email || "", trainer_name || ""]
+    );
+
+    // Group batches with unique modules
+    const batchMap = {};
+
+    result.rows.forEach((row) => {
+      if (!batchMap[row.batch_no]) {
+        batchMap[row.batch_no] = new Set();
+      }
+      batchMap[row.batch_no].add(row.module_name);
+    });
+
+    const response = Object.entries(batchMap).map(
+      ([batch_no, modules]) => ({
+        batch_no,
+        modules: Array.from(modules),
+      })
+    );
+
+    res.json(response);
+  } catch (err) {
+    console.error("Trainer leave schedule error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 
 // === Schedule Email API (with Templates + Course Application Emails + Internal Emails) ===
 // === Schedule Email API (with Templates + Mock Interview Emails) ===
