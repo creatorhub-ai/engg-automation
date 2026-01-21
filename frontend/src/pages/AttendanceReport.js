@@ -73,18 +73,26 @@ export default function AttendanceReport({ user, token }) {
 
         // CLEAN & TRANSFORM attendance data
         const cleanAttendanceData = attendanceDataRaw
-          .map(row => ({
-            learner_email: String(row.learner_email || '').replace(/\[mailto:(.*?)\]/, '$1').trim(),
-            status: String(row.status || '').toUpperCase(),
-            session: parseInt(row.session) || 1,
-            date: row.date || '2026-01-21',
-            topic_name: row.topic_name || `Session ${row.session || 1}`,
-            learner_name: row.learner_name || row.learner_email
-          }))
-          .filter(row => row.learner_email && row.status && row.status.length <= 2)
-          .filter(row => row.learner_email.includes('@'));
+          .map(row => {
+            // Extract clean email (handles mailto and raw emails)
+            let email = String(row.learner_email || '').trim();
+            email = email.replace(/\[mailto:([^\]]+)\]/, '$1'); // Remove mailto
+            email = email.replace(/^\[.*\]\(([^)]+)\)/, '$1'); // Remove markdown links
+            
+            return {
+              learner_email: email,
+              status: String(row.status || '').toUpperCase().substring(0,1), // First char only
+              session: parseInt(row.session) || 1,
+              date: row.date || '2026-01-21',
+              topic_name: row.topic_name || `Session ${row.session || 1}`,
+              learner_name: row.learner_name || email.split('@')[0]
+            };
+          })
+          // ✅ VERY LENIENT FILTERS - WILL ACCEPT YOUR DATA
+          .filter(row => row.learner_email.length > 5) // Any valid-looking email
+          .filter(row => row.status.length === 1 && ['P','A','L'].includes(row.status)); // Single char status
 
-        console.log(`✅ Clean attendance: ${cleanAttendanceData.length} records`);
+        console.log(`✅ Raw→Clean: ${attendanceDataRaw.length} → ${cleanAttendanceData.length}`);
 
         // 2. Fetch learners data
         let learnersDataRaw = [];

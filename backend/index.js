@@ -519,38 +519,32 @@ export async function getDistinctTrainersForBatch(batchNo) {
 app.get('/api/session-attendance-report', async (req, res) => {
   try {
     const { batch_no } = req.query;
+    console.log(`🔍 API Called: batch_no="${batch_no}"`);
     
-    if (!batch_no) {
-      return res.status(400).json({ error: 'batch_no required' });
-    }
-
-    console.log(`🔍 Fetching attendance for batch: ${batch_no}`);
-
-    // ✅ EXACTLY MATCHES YOUR TABLE COLUMNS
     const [rows] = await pool.execute(`
       SELECT 
-        la.learner_email,
-        la.status,
-        la.session,
-        '2026-01-21' as date,  -- ✅ FIXED: Replace ######## with valid date
-        COALESCE(la.topic_name, 'Session') as topic_name,
-        COALESCE(ld.name, SUBSTRING_INDEX(la.learner_email, '@', 1)) as learner_name
-      FROM learner_attendance la
-      LEFT JOIN learners_data ld ON TRIM(la.learner_email) = TRIM(ld.email)
-      WHERE TRIM(la.batch_no) = TRIM(?)
-        AND la.status IS NOT NULL
-        AND la.session IS NOT NULL
-      ORDER BY la.learner_email, la.session
+        learner_email,
+        status,
+        session,
+        DATE(NOW()) as date,
+        CONCAT('Session ', session) as topic_name,
+        SUBSTRING_INDEX(learner_email, '@', 1) as learner_name
+      FROM learner_attendance 
+      WHERE batch_no = ? 
+        AND learner_email IS NOT NULL 
+        AND status IS NOT NULL
+      ORDER BY session, learner_email
     `, [batch_no]);
     
-    console.log(`✅ SUCCESS: Found ${rows.length} attendance records for ${batch_no}`);
+    console.log(`✅ API Response: ${rows.length} rows for ${batch_no}`);
     res.json(rows);
-
   } catch (error) {
-    console.error('🚨 Attendance error:', error);
-    res.status(200).json([]); // Always return array
+    console.error('API Error:', error);
+    res.json([]);
   }
 });
+
+
 // Learners by batch (NO authMiddleware)
 app.get('/api/learners', async (req, res) => {
   try {
