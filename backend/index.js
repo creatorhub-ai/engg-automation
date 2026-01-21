@@ -104,7 +104,6 @@ app.options("*", (req, res) => {
 // =====================================================
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
-app.use("/api/marks", require("./routes/marks"));
 
 // =====================================================
 // Multer File Upload Config
@@ -716,25 +715,61 @@ app.get("/api/marks/window-status", async (req, res) => {
 app.post('/api/marks/:assessmentType', async (req, res) => {
   try {
     const { assessmentType } = req.params;
-    const { learner_id, batch_no, week_no, assessment_date, out_off, points, percentage } = req.body;
+    const {
+      learner_id,
+      batch_no,
+      week_no,
+      assessment_date,
+      out_off,
+      points,
+      percentage
+    } = req.body;
 
-    // CORS headers for direct response
+    /* ===============================
+       CORS (DO NOT REMOVE)
+    =============================== */
     res.header('Access-Control-Allow-Origin', 'https://engg-automation-r1ke.onrender.com');
     res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.header('Access-Control-Allow-Headers', 'Content-Type');
+    res.header('Access-Control-Allow-Credentials', 'true');
 
+    /* ===============================
+       BASIC VALIDATION
+    =============================== */
     if (!learner_id || !batch_no || !week_no || !assessment_date || !out_off) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    // CRITICAL: Window validation FIRST
-    const windowCheck = validateMarkEntryWindow(assessment_date, assessmentType);
+    /* ===============================
+       DATE NORMALIZATION (🔥 FIX)
+    =============================== */
+    const normalizeDate = (dateStr) => {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+
+      const m = dateStr.match(/(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/);
+      if (!m) return null;
+
+      const [, d, mth, y] = m;
+      return `${y}-${mth.padStart(2, '0')}-${d.padStart(2, '0')}`;
+    };
+
+    const normalizedDate = normalizeDate(assessment_date);
+    if (!normalizedDate) {
+      return res.status(400).json({ error: 'Invalid assessment_date format' });
+    }
+
+    /* ===============================
+       WINDOW VALIDATION (AS-IS)
+    =============================== */
+    const windowCheck = validateMarkEntryWindow(normalizedDate, assessmentType);
     if (!windowCheck.valid) {
       console.log(`🚫 BLOCKED: ${windowCheck.error}`);
       return res.status(403).json({ error: windowCheck.error });
     }
 
-    // Table mapping
+    /* ===============================
+       TABLE MAPPING (AS-IS)
+    =============================== */
     const tableMap = {
       'weekly-assessment': 'weeklyassessmentmarks',
       'intermediate-assessment': 'intermediateassessmentmarks',
@@ -747,33 +782,43 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
       return res.status(400).json({ error: 'Invalid assessment type' });
     }
 
-    // Save to database
+    /* ===============================
+       UPSERT DATA
+    =============================== */
     const upsertData = {
       learner_id: Number(learner_id),
       batch_no,
       week_no: Number(week_no),
-      assessment_date,
+      assessment_date: normalizedDate,
       out_off: Number(out_off),
-      points: points ? Number(points) : null,
-      percentage: percentage ? Number(percentage) : null
+      points: points !== undefined ? Number(points) : null,
+      percentage: percentage !== undefined ? Number(percentage) : null
     };
 
+    /* ===============================
+       🔥 CRITICAL FIX HERE 🔥
+       assessment_date MUST be in conflict key
+    =============================== */
     const { error } = await supabase
       .from(tableName)
-      .upsert(upsertData, { onConflict: 'learner_id,batch_no,week_no' });
+      .upsert(upsertData, {
+        onConflict: 'learner_id,batch_no,week_no,assessment_date'
+      });
 
     if (error) {
-      console.error('Database error:', error);
+      console.error('❌ Database error:', error);
       return res.status(500).json({ error: 'Failed to save marks' });
     }
 
-    console.log(`✅ SAVED: ${learner_id} | ${batch_no} | ${assessment_date}`);
+    console.log(`✅ SAVED: ${learner_id} | ${batch_no} | ${normalizedDate}`);
     res.json({ success: true });
+
   } catch (err) {
-    console.error('Marks endpoint error:', err);
+    console.error('❌ Marks endpoint error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
+
 
 // 3) POST /api/marks/extension-request
 app.post("/api/marks/extension-request", async (req, res) => {
