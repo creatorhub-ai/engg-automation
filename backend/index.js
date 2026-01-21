@@ -57,21 +57,13 @@ const LOCAL_URL = "http://localhost:3000";
 // =====================================================
 // ✅ FIXED CORS — ONLY THIS IS ENOUGH (Render Friendly)
 // =====================================================
-app.use(
-  cors({
-    origin: ['https://engg-automation-r1ke.onrender.com', 'http://localhost:3000'],
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: [
-      "Origin",
-      "X-Requested-With",
-      "Content-Type",
-      "Accept",
-      "Authorization",
-      "Cache-Control",
-    ],
-  })
-);
+app.use(cors({
+  origin: 'https://engg-automation-r1ke.onrender.com',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type'],
+  credentials: true
+}));
+
 
 // 🔥 GLOBAL OPTIONS HANDLER - BEFORE ALL ROUTES
 app.options('*', cors());
@@ -723,9 +715,6 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
     /* ===============================
        CORS (DO NOT REMOVE)
     =============================== */
-    res.header('Access-Control-Allow-Origin', 'https://engg-automation-r1ke.onrender.com');
-    res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type');
     res.header('Access-Control-Allow-Credentials', 'true');
 
     /* ===============================
