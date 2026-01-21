@@ -4,7 +4,8 @@ import axios from "axios";
 import {
   Box, Paper, Typography, FormControl, InputLabel, Select, MenuItem,
   Button, Table, TableHead, TableBody, TableRow, TableCell, TableContainer,
-  CircularProgress, Alert, Grid, Card, CardContent, Chip
+  CircularProgress, Alert, Grid, Card, CardContent, Chip, Tabs, Tab,
+  Dialog, DialogTitle, DialogContent, ToggleButtonGroup, ToggleButton
 } from "@mui/material";
 import jsPDF from "jspdf";
 import "jspdf-autotable";
@@ -15,8 +16,14 @@ export default function AttendanceReport({ user, token }) {
   const [batches, setBatches] = useState([]);
   const [batchNo, setBatchNo] = useState("");
   const [attendanceData, setAttendanceData] = useState([]);
+  const [learnersData, setLearnersData] = useState([]);
+  const [sessionData, setSessionData] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [selectedLearner, setSelectedLearner] = useState(null);
+  const [detailDialogOpen, setDetailDialogOpen] = useState(false);
+  const [detailFilter, setDetailFilter] = useState('all'); // all, present, leave, absent
+  const [detailFilteredData, setDetailFilteredData] = useState([]);
 
   const headers = { Authorization: `Bearer ${token}` };
 
@@ -38,52 +45,76 @@ export default function AttendanceReport({ user, token }) {
     fetchBatches();
   }, [token]);
 
-  // Load attendance for selected batch
+  // Load all required data for selected batch
   useEffect(() => {
     if (!batchNo) return;
 
-    const fetchAttendance = async () => {
+    const fetchAllData = async () => {
       setLoading(true);
       setError("");
       try {
-        const { data } = await axios.get(`${API_BASE}/api/attendance-report`, {
+        // Fetch attendance data with session info
+        const attendanceRes = await axios.get(`${API_BASE}/api/session-attendance-report`, {
           params: { batch_no: batchNo },
           headers
         });
-        setAttendanceData(Array.isArray(data) ? data : []);
+        
+        // Fetch learners data
+        const learnersRes = await axios.get(`${API_BASE}/api/learners`, {
+          params: { batch_no: batchNo },
+          headers
+        });
+
+        setAttendanceData(Array.isArray(attendanceRes.data) ? attendanceRes.data : []);
+        setLearnersData(Array.isArray(learnersRes.data) ? learnersRes.data : []);
       } catch (err) {
-        setError("Failed to load attendance data");
-        setAttendanceData([]);
-        console.error("Attendance fetch error:", err);
+        setError("Failed to load data");
+        console.error("Data fetch error:", err);
       } finally {
         setLoading(false);
       }
     };
 
-    fetchAttendance();
+    fetchAllData();
   }, [batchNo, token]);
 
-  // Aggregate attendance data
+  // Aggregate attendance data by sessions
   const summary = useMemo(() => {
     const learnerStats = {};
+    
+    // Create session map for total sessions per learner
+    const sessionMap = {};
+    attendanceData.forEach(row => {
+      const sessionKey = `${row.learner_email}-${row.session}`;
+      sessionMap[sessionKey] = true;
+    });
 
     attendanceData.forEach(row => {
       const email = row.learner_email?.trim();
       if (!email) return;
 
       if (!learnerStats[email]) {
+        // Get name from learners_data
+        const learnerInfo = learnersData.find(l => l.email === email);
         learnerStats[email] = {
-          name: email.split('@')[0].replace(/[._]/g, ' '),
+          name: learnerInfo?.name || email.split('@')[0].replace(/[._]/g, ' '),
           email,
-          total: 0,
+          totalSessions: 0,
           present: 0,
           leave: 0,
-          absent: 0
+          absent: 0,
+          sessions: new Set()
         };
       }
 
       const stats = learnerStats[email];
-      stats.total += 1;
+      const sessionKey = `${email}-${row.session}`;
+      
+      // Count unique sessions
+      if (!stats.sessions.has(row.session)) {
+        stats.sessions.add(row.session);
+        stats.totalSessions += 1;
+      }
 
       const status = String(row.status || '').toUpperCase();
       if (status === 'P') stats.present += 1;
@@ -94,21 +125,40 @@ export default function AttendanceReport({ user, token }) {
     const learners = Object.values(learnerStats);
     const totalLearners = learners.length;
     const avgAttendance = totalLearners > 0 
-      ? learners.reduce((sum, l) => sum + (l.present / l.total * 100), 0) / totalLearners 
+      ? learners.reduce((sum, l) => sum + (l.present / l.totalSessions * 100), 0) / totalLearners 
       : 0;
 
     return {
-      learners: learners.sort((a, b) => b.present / b.total - a.present / a.total),
+      learners: learners.sort((a, b) => b.present / b.totalSessions - a.present / a.totalSessions),
       totalLearners,
-      totalSessions: attendanceData.length,
+      totalSessions: Math.max(...Object.values(learnerStats).map(l => l.totalSessions)) || 0,
       avgAttendance: Math.round(avgAttendance * 10) / 10
     };
-  }, [attendanceData]);
+  }, [attendanceData, learnersData]);
+
+  // Filter details for selected learner
+  useEffect(() => {
+    if (!selectedLearner) return;
+    
+    const filterData = () => {
+      let filtered = attendanceData.filter(row => row.learner_email === selectedLearner.email);
+      
+      if (detailFilter === 'present') {
+        filtered = filtered.filter(row => String(row.status || '').toUpperCase() === 'P');
+      } else if (detailFilter === 'leave') {
+        filtered = filtered.filter(row => String(row.status || '').toUpperCase() === 'L');
+      } else if (detailFilter === 'absent') {
+        filtered = filtered.filter(row => ['A', 'NA'].includes(String(row.status || '').toUpperCase()));
+      }
+      
+      setDetailFilteredData(filtered);
+    };
+    
+    filterData();
+  }, [selectedLearner, detailFilter, attendanceData]);
 
   const RadialProgress = ({ percentage }) => (
-    <div style={{ 
-      width: 140, height: 140, position: 'relative' 
-    }}>
+    <div style={{ width: 140, height: 140, position: 'relative' }}>
       <svg viewBox="0 0 36 36" width="140" height="140">
         <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" 
               fill="none" stroke="#e5e5e5" strokeWidth="3"/>
@@ -148,15 +198,15 @@ export default function AttendanceReport({ user, token }) {
       i + 1,
       learner.name.slice(0, 20),
       learner.email.slice(0, 25),
-      learner.total,
+      learner.totalSessions,
       learner.present,
       learner.leave,
       learner.absent,
-      ((learner.present / learner.total) * 100).toFixed(1)
+      ((learner.present / learner.totalSessions) * 100).toFixed(1)
     ]);
 
     doc.autoTable({
-      head: [['#', 'Name', 'Email', 'Total', 'P', 'L', 'A', '%']],
+      head: [['#', 'Name', 'Email', 'Sessions', 'P', 'L', 'A', '%']],
       body: tableData,
       startY: 65,
       styles: { fontSize: 7 },
@@ -166,11 +216,16 @@ export default function AttendanceReport({ user, token }) {
     doc.save(`attendance_${batchNo}_${timestamp}.pdf`);
   };
 
+  const handleLearnerClick = (learner) => {
+    setSelectedLearner(learner);
+    setDetailDialogOpen(true);
+  };
+
   return (
     <Box sx={{ maxWidth: 1600, p: 3 }}>
       <Paper sx={{ p: 4 }}>
         <Typography variant="h4" gutterBottom align="center">
-          📊 Attendance Report
+          📊 Attendance Report (Session-based)
         </Typography>
 
         <Box sx={{ display: 'flex', gap: 2, mb: 4, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -217,7 +272,7 @@ export default function AttendanceReport({ user, token }) {
                           {summary.avgAttendance}%
                         </Typography>
                         <Typography color="text.secondary">
-                          Average Attendance
+                          Average Attendance (Sessions)
                         </Typography>
                       </Box>
                     </Box>
@@ -249,16 +304,16 @@ export default function AttendanceReport({ user, token }) {
 
             <Paper sx={{ overflow: 'hidden' }}>
               <Box sx={{ bgcolor: 'primary.main', color: 'white', p: 2 }}>
-                <Typography variant="h6">📋 Detailed Report</Typography>
+                <Typography variant="h6">📋 Detailed Report (Click learner for session details)</Typography>
               </Box>
               <TableContainer sx={{ maxHeight: 600 }}>
                 <Table stickyHeader size="small">
                   <TableHead>
                     <TableRow>
                       <TableCell sx={{ bgcolor: 'primary.dark', color: 'white', fontWeight: 'bold' }}>#</TableCell>
-                      <TableCell sx={{ bgcolor: 'primary.dark', color: 'white', fontWeight: 'bold' }}>Learner</TableCell>
+                      <TableCell sx={{ bgcolor: 'primary.dark', color: 'white', fontWeight: 'bold' }}>Learner Name</TableCell>
                       <TableCell sx={{ bgcolor: 'primary.dark', color: 'white', fontWeight: 'bold' }}>Email</TableCell>
-                      <TableCell sx={{ bgcolor: 'primary.dark', color: 'white', fontWeight: 'bold', textAlign: 'right' }}>Total</TableCell>
+                      <TableCell sx={{ bgcolor: 'primary.dark', color: 'white', fontWeight: 'bold', textAlign: 'right' }}>Sessions</TableCell>
                       <TableCell sx={{ bgcolor: 'primary.dark', color: 'white', fontWeight: 'bold', textAlign: 'right' }}>P</TableCell>
                       <TableCell sx={{ bgcolor: 'primary.dark', color: 'white', fontWeight: 'bold', textAlign: 'right' }}>L</TableCell>
                       <TableCell sx={{ bgcolor: 'primary.dark', color: 'white', fontWeight: 'bold', textAlign: 'right' }}>A</TableCell>
@@ -267,15 +322,19 @@ export default function AttendanceReport({ user, token }) {
                   </TableHead>
                   <TableBody>
                     {summary.learners.map((learner, index) => {
-                      const percentage = learner.total > 0 ? (learner.present / learner.total) * 100 : 0;
+                      const percentage = learner.totalSessions > 0 ? (learner.present / learner.totalSessions) * 100 : 0;
                       const rowColor = percentage >= 80 ? '#e8f5e8' : percentage >= 60 ? '#fff3e0' : '#ffebee';
                       
                       return (
-                        <TableRow key={learner.email} sx={{ bgcolor: rowColor }}>
+                        <TableRow 
+                          key={learner.email} 
+                          sx={{ bgcolor: rowColor, cursor: 'pointer' }}
+                          onClick={() => handleLearnerClick(learner)}
+                        >
                           <TableCell>{index + 1}</TableCell>
                           <TableCell sx={{ fontWeight: 500 }}>{learner.name}</TableCell>
                           <TableCell sx={{ maxWidth: 250, wordBreak: 'break-all' }}>{learner.email}</TableCell>
-                          <TableCell align="right"><strong>{learner.total}</strong></TableCell>
+                          <TableCell align="right"><strong>{learner.totalSessions}</strong></TableCell>
                           <TableCell align="right" sx={{ color: '#4caf50', fontWeight: 'bold' }}>{learner.present}</TableCell>
                           <TableCell align="right">{learner.leave}</TableCell>
                           <TableCell align="right" sx={{ color: '#f44336' }}>{learner.absent}</TableCell>
@@ -293,6 +352,56 @@ export default function AttendanceReport({ user, token }) {
                 </Table>
               </TableContainer>
             </Paper>
+
+            {/* Learner Detail Dialog */}
+            <Dialog open={detailDialogOpen} onClose={() => setDetailDialogOpen(false)} maxWidth="md" fullWidth>
+              <DialogTitle>
+                Session Details - {selectedLearner?.name} ({selectedLearner?.email})
+              </DialogTitle>
+              <DialogContent>
+                <Box sx={{ mb: 2 }}>
+                  <ToggleButtonGroup
+                    value={detailFilter}
+                    exclusive
+                    onChange={(e, newFilter) => newFilter && setDetailFilter(newFilter)}
+                    sx={{ mb: 2 }}
+                  >
+                    <ToggleButton value="all">All ({detailFilteredData.length})</ToggleButton>
+                    <ToggleButton value="present">Present ({selectedLearner?.present || 0})</ToggleButton>
+                    <ToggleButton value="leave">Leave ({selectedLearner?.leave || 0})</ToggleButton>
+                    <ToggleButton value="absent">Absent ({selectedLearner?.absent || 0})</ToggleButton>
+                  </ToggleButtonGroup>
+                </Box>
+                <TableContainer sx={{ maxHeight: 400 }}>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Date</TableCell>
+                        <TableCell>Session</TableCell>
+                        <TableCell>Status</TableCell>
+                        <TableCell sx={{ width: 200 }}>Topic</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {detailFilteredData.map((row, index) => (
+                        <TableRow key={`${row.date}-${row.session}`}>
+                          <TableCell>{new Date(row.date).toLocaleDateString('en-IN')}</TableCell>
+                          <TableCell>{row.session}</TableCell>
+                          <TableCell>
+                            <Chip 
+                              label={row.status} 
+                              color={row.status === 'P' ? 'success' : row.status === 'L' ? 'warning' : 'error'}
+                              size="small"
+                            />
+                          </TableCell>
+                          <TableCell>{row.topic_name}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              </DialogContent>
+            </Dialog>
           </>
         )}
       </Paper>

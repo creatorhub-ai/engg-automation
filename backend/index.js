@@ -515,6 +515,36 @@ export async function getDistinctTrainersForBatch(batchNo) {
   return emails;
 }
 
+// Enhanced session-based attendance report API
+app.get('/api/session-attendance-report', authMiddleware, async (req, res) => {
+  try {
+    const { batch_no } = req.query;
+    
+    if (!batch_no) {
+      return res.status(400).json({ error: 'batch_no is required' });
+    }
+
+    const [rows] = await pool.execute(`
+      SELECT 
+        la.learner_email,
+        la.status,
+        la.session,
+        la.date,
+        la.topic_name,
+        ld.name as learner_name
+      FROM learner_attendance la
+      LEFT JOIN learners_data ld ON la.learner_email = ld.email
+      WHERE la.batch_no = ?
+      ORDER BY la.learner_email, la.date, la.session
+    `, [batch_no]);
+    
+    res.json(rows);
+  } catch (error) {
+    console.error('Session attendance report error:', error);
+    res.status(500).json({ error: 'Failed to fetch session attendance data' });
+  }
+});
+
 // API to schedule batch with classroom suggestion and license check
 app.post('/api/scheduleBatch', async (req, res) => {
   try {
@@ -6949,12 +6979,21 @@ app.get('/api/tutors/modules/:email/:batch_no', async (req, res) => {
 
 // ==================== LEARNERS APIs ====================
 // GET all learners from learners_data table
-app.get("/api/learners", async (req, res) => {
+app.get("/api/learners", authMiddleware, async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from("learners_data")  // ✅ Correct table name
+    const { batch_no } = req.query;
+    
+    let query = supabase
+      .from("learners_data")
       .select("id, name, email, phone, batch_no, status")
       .order("name", { ascending: true });
+
+    // 🔥 NEW: Filter by batch_no if provided (for AttendanceReport)
+    if (batch_no) {
+      query = query.eq("batch_no", batch_no);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       console.error("GET /api/learners error:", error);
@@ -6966,13 +7005,14 @@ app.get("/api/learners", async (req, res) => {
       name: row.name || "",
       email: row.email || "",
       phone: row.phone || "",
-      batchno: row.batch_no || "",  // ✅ Map batch_no → batchno
+      batchno: row.batch_no || "",  // ✅ Map batch_no → batchno (backward compatibility)
       batch_no: row.batch_no || "",
       status: row.status || "Enabled",
-    })).filter(row => row.name && row.email && row.batch_no); // Filter invalid
+    })).filter(row => row.name && row.email); // Filter invalid records
 
-    console.log(`GET /api/learners: found ${normalized.length} valid learners`);
+    console.log(`GET /api/learners: found ${normalized.length} learners${batch_no ? ` for batch ${batch_no}` : ''}`);
     return res.status(200).json(normalized);
+    
   } catch (err) {
     console.error("GET /api/learners CRASH:", err);
     return res.status(200).json([]); // ✅ Always return array
@@ -7134,27 +7174,21 @@ app.get("/api/debug/routes-test", (req, res) => {
 });
 
 // NEW ENDPOINT - Attendance Report (THIS IS THE KEY)
-app.get('/api/attendance-report', async (req, res) => {
+app.get('/api/attendance-report', authMiddleware, async (req, res) => {
   try {
     const { batch_no } = req.query;
-
-    if (!batch_no) {
-      return res.status(400).json({ error: 'batch_no required' });
-    }
-
-    console.log(`📊 Fetching attendance for batch: ${batch_no}`);
-
-    const { data, error } = await supabase
-      .from('learner_attendance')
-      .select('id, learner_email, batch_no, date, session, status, marked_by, marked_at')
-      .eq('batch_no', batch_no)
-      .order('date', { ascending: false })
-      .order('session');
-
-    if (error) throw error;
-
-    console.log(`✅ Found ${data?.length || 0} records for ${batch_no}`);
-    res.json(data || []);
+    
+    const [rows] = await pool.execute(`
+      SELECT 
+        la.learner_email,
+        la.status,
+        la.date
+      FROM learner_attendance la
+      WHERE la.batch_no = ?
+      ORDER BY la.learner_email, la.date
+    `, [batch_no || '']);
+    
+    res.json(rows);
   } catch (error) {
     console.error('Attendance report error:', error);
     res.status(500).json({ error: 'Failed to fetch attendance data' });
