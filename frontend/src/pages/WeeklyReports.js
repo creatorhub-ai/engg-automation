@@ -115,16 +115,19 @@ export default function WeeklyReports({ user, token }) {
     loadWeeklyReport();
   }, [selectedBatch, selectedWeek, token]);
 
-  // Format timestamp for PDF - IST with 24-hour format
-  const formatTimestamp = () => {
+  // Generate IST timestamp for filename (backend handles PDF content timestamp)
+  const generateFileTimestamp = () => {
     const now = new Date();
-    const day = String(now.getDate()).padStart(2, '0');
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const year = now.getFullYear();
-    const hours = String(now.getHours()).padStart(2, '0');
-    const minutes = String(now.getMinutes()).padStart(2, '0');
-    const seconds = String(now.getSeconds()).padStart(2, '0');
-    return `${day}/${month}/${year}, ${hours}:${minutes}:${seconds}`;
+    return now.toLocaleString('en-IN', { 
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    }).replace(/[,]/g, '').replace(/:/g, '-');
   };
 
   // handle PDF download
@@ -136,32 +139,18 @@ export default function WeeklyReports({ user, token }) {
 
     setDownloading(true);
     try {
-      const timestamp = formatTimestamp();
-      const fileTimestamp = new Date().toLocaleString('en-IN', { 
-        timeZone: 'Asia/Kolkata',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: false
-      }).replace(/[,]/g, '').replace(/:/g, '-');
-      
+      const fileTimestamp = generateFileTimestamp();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
       const response = await axios.get(
         `${API_BASE}/api/weekly-date-report/${selectedBatch}/pdf`,
         {
           headers,
-          params: { 
-            week_no: selectedWeek,
-            timestamp: timestamp
-          },
+          params: { week_no: selectedWeek },
           responseType: "blob",
         }
       );
 
-      // create blob and download with timestamp
+      // create blob and download with correct timestamp filename
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement("a");
       link.href = url;
@@ -198,8 +187,7 @@ export default function WeeklyReports({ user, token }) {
             Weekly Reports - CMS
           </Typography>
           <Typography variant="subtitle2" color="text.secondary">
-            Hello {welcomeName}, view date change statistics week‑wise for each
-            batch.
+            Hello {welcomeName}, view date change statistics week‑wise for each batch.
           </Typography>
         </Box>
         <Button
@@ -272,26 +260,90 @@ export default function WeeklyReports({ user, token }) {
 
       {!loading && selectedBatch && selectedWeek && (
         <Paper elevation={2} sx={{ p: 0, overflow: 'hidden' }}>
-          {/* Full-width header */}
-          <Box sx={{ bgcolor: "primary.main", color: "white", p: 2, width: '100%' }}>
-            <Typography variant="h6">
-              Week {selectedWeek} – Date Change Details
+          {/* Full-width header - STRETCHED */}
+          <Box sx={{ 
+            bgcolor: "primary.main", 
+            color: "white", 
+            p: 2.5,
+            width: '100%',
+            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+          }}>
+            <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
+              📋 Week {selectedWeek} – Date Change Details (Batch: {selectedBatch})
             </Typography>
           </Box>
 
           <Box sx={{ p: 2 }}>
-            <TableContainer sx={{ maxHeight: 600 }}>
-              <Table size="small" sx={{ tableLayout: 'fixed' }}>
+            <TableContainer sx={{ maxHeight: 600, width: '100%' }}>
+              <Table size="small" sx={{ 
+                tableLayout: 'fixed', 
+                width: '100%',
+                fontSize: '0.8rem'
+              }}>
                 <TableHead>
-                  <TableRow sx={{ bgcolor: "#f5f5f5" }}>
-                    <TableCell sx={{ width: '8%', fontWeight: 'bold' }}>Module</TableCell>
-                    <TableCell sx={{ width: '15%', fontWeight: 'bold' }}>Topic</TableCell>
-                    <TableCell sx={{ width: '12%', fontWeight: 'bold', textAlign: 'center' }}>Planned Date</TableCell>
-                    <TableCell sx={{ width: '12%', fontWeight: 'bold', textAlign: 'center' }}>Actual Date</TableCell>
-                    <TableCell sx={{ width: '12%', fontWeight: 'bold', textAlign: 'center' }}>Difference</TableCell>
-                    <TableCell sx={{ width: '12%', fontWeight: 'bold', textAlign: 'center' }}>Status</TableCell>
-                    <TableCell sx={{ width: '14%', fontWeight: 'bold', textAlign: 'center' }}>Changed By</TableCell>
-                    <TableCell sx={{ width: '15%', fontWeight: 'bold', textAlign: 'center' }}>Changed At</TableCell>
+                  <TableRow sx={{ bgcolor: "#f5f5f5 !important" }}>
+                    <TableCell sx={{ 
+                      width: '8%', 
+                      fontWeight: 'bold !important',
+                      fontSize: '0.85rem',
+                      p: 0.5,
+                      border: '1px solid #ddd'
+                    }}>Module</TableCell>
+                    <TableCell sx={{ 
+                      width: '14%', 
+                      fontWeight: 'bold !important',
+                      fontSize: '0.85rem',
+                      p: 0.5,
+                      border: '1px solid #ddd'
+                    }}>Topic</TableCell>
+                    <TableCell sx={{ 
+                      width: '11%', 
+                      fontWeight: 'bold !important',
+                      fontSize: '0.85rem',
+                      p: 0.5,
+                      textAlign: 'center',
+                      border: '1px solid #ddd'
+                    }}>Planned</TableCell>
+                    <TableCell sx={{ 
+                      width: '11%', 
+                      fontWeight: 'bold !important',
+                      fontSize: '0.85rem',
+                      p: 0.5,
+                      textAlign: 'center',
+                      border: '1px solid #ddd'
+                    }}>Actual</TableCell>
+                    <TableCell sx={{ 
+                      width: '10%', 
+                      fontWeight: 'bold !important',
+                      fontSize: '0.85rem',
+                      p: 0.5,
+                      textAlign: 'center',
+                      border: '1px solid #ddd'
+                    }}>Diff</TableCell>
+                    <TableCell sx={{ 
+                      width: '10%', 
+                      fontWeight: 'bold !important',
+                      fontSize: '0.85rem',
+                      p: 0.5,
+                      textAlign: 'center',
+                      border: '1px solid #ddd'
+                    }}>Status</TableCell>
+                    <TableCell sx={{ 
+                      width: '12%', 
+                      fontWeight: 'bold !important',
+                      fontSize: '0.85rem',
+                      p: 0.5,
+                      textAlign: 'center',
+                      border: '1px solid #ddd'
+                    }}>By</TableCell>
+                    <TableCell sx={{ 
+                      width: '14%', 
+                      fontWeight: 'bold !important',
+                      fontSize: '0.85rem',
+                      p: 0.5,
+                      textAlign: 'center',
+                      border: '1px solid #ddd'
+                    }}>Date</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -305,28 +357,56 @@ export default function WeeklyReports({ user, token }) {
                     </TableRow>
                   )}
 
-                  {rows.map((row) => (
-                    <TableRow key={row.id}>
-                      <TableCell sx={{ fontSize: '0.85rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {rows.map((row, index) => (
+                    <TableRow key={row.id || index} hover>
+                      <TableCell sx={{ 
+                        fontSize: '0.8rem',
+                        p: 0.5,
+                        border: '1px solid #eee',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap'
+                      }}>
                         {row.module_name || "N/A"}
                       </TableCell>
-                      <TableCell sx={{ fontSize: '0.85rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <TableCell sx={{ 
+                        fontSize: '0.8rem',
+                        p: 0.5,
+                        border: '1px solid #eee',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap'
+                      }}>
                         {row.topic_name}
                       </TableCell>
-                      <TableCell sx={{ fontSize: '0.85rem', textAlign: 'center' }}>
+                      <TableCell sx={{ 
+                        fontSize: '0.8rem',
+                        p: 0.5,
+                        textAlign: 'center',
+                        border: '1px solid #eee'
+                      }}>
                         {new Date(row.planned_date).toLocaleDateString("en-IN")}
                       </TableCell>
-                      <TableCell sx={{ fontSize: '0.85rem', textAlign: 'center' }}>
+                      <TableCell sx={{ 
+                        fontSize: '0.8rem',
+                        p: 0.5,
+                        textAlign: 'center',
+                        border: '1px solid #eee'
+                      }}>
                         {new Date(row.actual_date).toLocaleDateString("en-IN")}
                       </TableCell>
-                      <TableCell sx={{ textAlign: 'center' }}>
+                      <TableCell sx={{ 
+                        p: 0.25,
+                        textAlign: 'center',
+                        border: '1px solid #eee'
+                      }}>
                         <Chip
                           label={
                             row.date_difference > 0
-                              ? `+${row.date_difference}d`
+                              ? `+${row.date_difference}`
                               : row.date_difference < 0
-                              ? `${row.date_difference}d`
-                              : "On time"
+                              ? `${row.date_difference}`
+                              : "0"
                           }
                           size="small"
                           color={
@@ -338,17 +418,25 @@ export default function WeeklyReports({ user, token }) {
                               ? "success"
                               : "default"
                           }
-                          sx={{ fontWeight: "bold" }}
+                          sx={{ 
+                            fontSize: '0.7rem',
+                            height: 22,
+                            fontWeight: "bold"
+                          }}
                         />
                       </TableCell>
-                      <TableCell sx={{ textAlign: 'center' }}>
+                      <TableCell sx={{ 
+                        p: 0.25,
+                        textAlign: 'center',
+                        border: '1px solid #eee'
+                      }}>
                         <Chip
                           label={
                             row.topic_status === "Completed"
-                              ? "Complete"
+                              ? "Done"
                               : row.topic_status === "In Progress"
-                              ? "In Prog"
-                              : row.topic_status || "N/A"
+                              ? "Prog"
+                              : "N/A"
                           }
                           size="small"
                           variant="outlined"
@@ -359,19 +447,36 @@ export default function WeeklyReports({ user, token }) {
                               ? "primary"
                               : "default"
                           }
-                          sx={{ fontSize: '0.75rem' }}
+                          sx={{ 
+                            fontSize: '0.7rem',
+                            height: 22 
+                          }}
                         />
                       </TableCell>
-                      <TableCell sx={{ fontSize: '0.85rem', textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {row.changed_by || "N/A"}
+                      <TableCell sx={{ 
+                        fontSize: '0.8rem',
+                        p: 0.5,
+                        textAlign: 'center',
+                        border: '1px solid #eee',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap'
+                      }}>
+                        {row.changed_by ? row.changed_by.split('@')[0] : "N/A"}
                       </TableCell>
-                      <TableCell sx={{ fontSize: '0.85rem', textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {row.changed_at
-                          ? new Date(row.changed_at).toLocaleString("en-IN", {
-                              dateStyle: "short",
-                              timeStyle: "short",
-                            })
-                          : "-"}
+                      <TableCell sx={{ 
+                        fontSize: '0.75rem',
+                        p: 0.5,
+                        textAlign: 'center',
+                        border: '1px solid #eee',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap'
+                      }}>
+                        {row.changed_at ? new Date(row.changed_at).toLocaleString("en-IN", {
+                          dateStyle: "short",
+                          timeStyle: "short",
+                        }).split(',')[0] : "-"}
                       </TableCell>
                     </TableRow>
                   ))}
