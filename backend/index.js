@@ -555,6 +555,35 @@ app.get('/api/session-attendance-report', async (req, res) => {
   }
 });
 
+// Add this route to your Express app
+app.get('/api/modules-by-date', async (req, res) => {
+  try {
+    const { dates } = req.query; // comma-separated dates: 2026-01-21,2026-01-22
+    
+    if (!dates) {
+      return res.json([]);
+    }
+    
+    const dateArray = dates.split(',').map(d => d.trim());
+    
+    const [rows] = await pool.execute(`
+      SELECT DISTINCT 
+        DATE(date) as date,
+        module_name
+      FROM course_planner_data 
+      WHERE DATE(date) IN (?)
+        AND module_name IS NOT NULL 
+        AND module_name != ''
+      ORDER BY date, module_name
+    `, [dateArray]);
+    
+    res.json(rows);
+  } catch (error) {
+    console.error('Modules API error:', error);
+    res.json([]);
+  }
+});
+
 
 // Learners by batch (NO authMiddleware)
 app.get('/api/learners', async (req, res) => {
