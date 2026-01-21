@@ -268,6 +268,11 @@ function MarkSheet() {
     let anySaved = false;
 
     try {
+      setMessage("⏳ Saving marks...");
+      
+      // Test API first
+      console.log('🔍 Testing endpoint:', endpoint);
+      
       for (let learner of learners) {
         if (!marks[learner.id]?.points) continue;
         
@@ -281,18 +286,22 @@ function MarkSheet() {
           percentage: marks[learner.id].percentage || null,
         };
 
+        console.log(`📤 Saving for ${learner.name}:`, payload);
+
         const res = await fetch(endpoint, {
           method: "POST",
-          mode: "cors",
-          credentials: "include", // 🔥 REQUIRED
-          headers: { "Content-Type": "application/json" },
+          headers: { 
+            "Content-Type": "application/json"
+          },
           body: JSON.stringify(payload),
         });
 
         if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.error || `HTTP ${res.status}`);
+          const errorText = await res.text();
+          console.error('❌ Backend error:', res.status, errorText);
+          throw new Error(`HTTP ${res.status}: ${errorText}`);
         }
+        
         anySaved = true;
       }
 
@@ -303,11 +312,11 @@ function MarkSheet() {
         setMessage("⚠️ Please enter points for at least one learner.");
       }
     } catch (err) {
-      console.error("Save error:", err);
-      setMessage(`❌ Error: ${err.message}`);
+      console.error("💥 Full error:", err);
+      setMessage(`❌ Failed: ${err.message}`);
     }
 
-    setTimeout(() => setMessage(""), 4000);
+    setTimeout(() => setMessage(""), 5000);
   };
 
   const currentType = ASSESSMENT_TYPES.find(at => at.key === assessmentType);

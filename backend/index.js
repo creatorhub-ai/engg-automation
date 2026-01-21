@@ -59,7 +59,7 @@ const LOCAL_URL = "http://localhost:3000";
 // =====================================================
 app.use(
   cors({
-    origin: [FRONTEND_URL, LOCAL_URL],
+    origin: ['https://engg-automation-r1ke.onrender.com', 'http://localhost:3000'],
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: [
@@ -74,12 +74,7 @@ app.use(
 );
 
 // 🔥 GLOBAL OPTIONS HANDLER - BEFORE ALL ROUTES
-app.options("*", (req, res) => {
-  res.header('Access-Control-Allow-Origin', 'https://engg-automation-r1ke.onrender.com');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cache-Control, Accept');
-  res.status(200).end();
-});
+app.options('*', cors());
 
 // Mount routers
 app.use('/api/marks', marksWindowsRouter);
