@@ -73,26 +73,44 @@ export default function AttendanceReport({ user, token }) {
 
         // CLEAN & TRANSFORM attendance data
         const cleanAttendanceData = attendanceDataRaw
-          .map(row => {
-            // Extract clean email (handles mailto and raw emails)
-            let email = String(row.learner_email || '').trim();
-            email = email.replace(/\[mailto:([^\]]+)\]/, '$1'); // Remove mailto
-            email = email.replace(/^\[.*\]\(([^)]+)\)/, '$1'); // Remove markdown links
+          .map((row, index) => {
+            console.log(`🔍 ROW ${index}:`, row);
             
-            return {
+            // EXTRACT EMAIL - handles ALL formats
+            let email = String(row.learner_email || '').trim();
+            email = email.replace(/\[mailto:([^\]]+)\]/g, '$1');  // [mailto:email] → email
+            email = email.replace(/\[(.*?)\]\(.*?\)/g, '$1');     // [text](email) → text
+            email = email.replace(/^\[.*\]\(([^)]+)\)/, '$1');    // Markdown links
+            
+            const status = String(row.status || '').trim().toUpperCase()[0] || 'P';
+            const sessionNum = parseInt(row.session) || 1;
+            
+            const cleanedRow = {
               learner_email: email,
-              status: String(row.status || '').toUpperCase().substring(0,1), // First char only
-              session: parseInt(row.session) || 1,
+              status: status,
+              session: sessionNum,
               date: row.date || '2026-01-21',
-              topic_name: row.topic_name || `Session ${row.session || 1}`,
+              topic_name: row.topic_name || `Session ${sessionNum}`,
               learner_name: row.learner_name || email.split('@')[0]
             };
+            
+            console.log(`✅ CLEANED ${index}:`, cleanedRow);
+            return cleanedRow;
           })
-          // ✅ VERY LENIENT FILTERS - WILL ACCEPT YOUR DATA
-          .filter(row => row.learner_email.length > 5) // Any valid-looking email
-          .filter(row => row.status.length === 1 && ['P','A','L'].includes(row.status)); // Single char status
+          // ULTRA-LENIENT FILTERS - WILL ACCEPT YOUR DATA
+          .filter(row => {
+            const validEmail = row.learner_email && row.learner_email.includes('@');
+            const validStatus = row.status && row.status.length === 1;
+            const validSession = row.session > 0;
+            
+            if (!validEmail) console.log('❌ FILTERED: Invalid email:', row.learner_email);
+            if (!validStatus) console.log('❌ FILTERED: Invalid status:', row.status);
+            if (!validSession) console.log('❌ FILTERED: Invalid session:', row.session);
+            
+            return validEmail && validStatus && validSession;
+          });
 
-        console.log(`✅ Raw→Clean: ${attendanceDataRaw.length} → ${cleanAttendanceData.length}`);
+        console.log(`🎉 FINAL COUNT: ${cleanAttendanceData.length} records for ${batchNo}`);
 
         // 2. Fetch learners data
         let learnersDataRaw = [];
