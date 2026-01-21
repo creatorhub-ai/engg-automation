@@ -127,9 +127,22 @@ export default function AttendanceReport({ user, token }) {
   );
 
   const downloadPDF = () => {
+    const now = new Date();
+    const timestamp = now.toLocaleString('en-IN', { 
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    }).replace(/[,]/g, '').replace(/:/g, '-');
+    
     const doc = new jsPDF('landscape');
     doc.text(`Attendance Report - ${batchNo}`, 14, 20);
-    doc.text(`Overall: ${summary.avgAttendance}% (${summary.totalLearners} learners)`, 14, 40);
+    doc.text(`Generated: ${timestamp}`, 14, 35);
+    doc.text(`Overall: ${summary.avgAttendance}% (${summary.totalLearners} learners)`, 14, 50);
 
     const tableData = summary.learners.map((learner, i) => [
       i + 1,
@@ -145,12 +158,12 @@ export default function AttendanceReport({ user, token }) {
     doc.autoTable({
       head: [['#', 'Name', 'Email', 'Total', 'P', 'L', 'A', '%']],
       body: tableData,
-      startY: 50,
+      startY: 65,
       styles: { fontSize: 7 },
       headStyles: { fillColor: [41, 128, 185] }
     });
 
-    doc.save(`attendance_${batchNo}.pdf`);
+    doc.save(`attendance_${batchNo}_${timestamp}.pdf`);
   };
 
   return (
