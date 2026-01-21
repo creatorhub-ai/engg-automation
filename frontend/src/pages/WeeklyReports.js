@@ -115,22 +115,7 @@ export default function WeeklyReports({ user, token }) {
     loadWeeklyReport();
   }, [selectedBatch, selectedWeek, token]);
 
-  // Generate timestamp for PDF filename
-  const generateTimestamp = () => {
-    const now = new Date();
-    return now.toLocaleString('en-IN', { 
-      timeZone: 'Asia/Kolkata',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false
-    }).replace(/[,]/g, '').replace(/:/g, '-');
-  };
-
-  // handle PDF download
+  // handle PDF download - using exact timestamp logic from AttendanceReport.js
   const handleDownloadPDF = async () => {
     if (!selectedBatch || !selectedWeek) {
       alert("Please select a batch and week first");
@@ -139,7 +124,18 @@ export default function WeeklyReports({ user, token }) {
 
     setDownloading(true);
     try {
-      const timestamp = generateTimestamp();
+      const now = new Date();
+      const timestamp = now.toLocaleString('en-IN', { 
+        timeZone: 'Asia/Kolkata',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      }).replace(/[,]/g, '').replace(/:/g, '-');
+      
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
       const response = await axios.get(
         `${API_BASE}/api/weekly-date-report/${selectedBatch}/pdf`,
