@@ -797,118 +797,6 @@ app.get("/api/marks/window-status", async (req, res) => {
 });
 
 // 2) POST /api/marks/:assessmentType
-app.post('/api/marks/:assessmentType', async (req, res) => {
-  try {
-    const { assessmentType } = req.params;
-    const payload = req.body;
-
-    console.log("📝 Processing assessment type:", assessmentType);
-    console.log("📝 Payload:", JSON.stringify(payload, null, 2));
-
-    // Validate required fields
-    if (!payload.learner_id || !payload.batch_no || !payload.assessment_date || !payload.out_off || !payload.points) {
-      return res.status(400).json({ error: "Missing required fields: learner_id, batch_no, assessment_date, out_off, points" });
-    }
-
-    // Fetch course_planner_id
-    const { data: courseData, error: courseError } = await supabase
-      .from('course_planner_data')
-      .select('id')
-      .eq('batch_no', payload.batch_no)
-      .order('id', { ascending: true })
-      .limit(1)
-      .single();
-
-    if (courseError || !courseData) {
-      console.error("Course fetch error:", courseError);
-      return res.status(400).json({ error: `Batch '${payload.batch_no}' not found in course_planner_data. Add it first.` });
-    }
-
-    const coursePlannerId = courseData.id;
-
-    // Date conversion
-    let isoDate = payload.assessment_date;
-    if (payload.assessment_date.includes('-') || payload.assessment_date.includes('/')) {
-      const parts = payload.assessment_date.split(/[-\/]/);
-      if (parts.length === 3) {
-        const [d, m, y] = parts.map(Number);
-        if (d >= 1 && d <= 31 && m >= 1 && m <= 12 && y >= 1900) {
-          isoDate = `${y}-${m.toString().padStart(2, '0')}-${d.toString().padStart(2, '0')}`;
-        } else {
-          return res.status(400).json({ error: "Invalid date format" });
-        }
-      }
-    }
-
-    // Build insert data
-    let tableName, insertData;
-    switch (assessmentType) {
-      case "weekly-assessment":
-      case "weekly-quiz":
-        if (!payload.week_no) return res.status(400).json({ error: "week_no required" });
-        tableName = "weekly_assessment_scores";
-        insertData = {
-          learner_id: parseInt(payload.learner_id),
-          course_planner_id: coursePlannerId,
-          batch_no: payload.batch_no,
-          week_no: parseInt(payload.week_no),
-          assessment_date: isoDate,
-          out_off: parseInt(payload.out_off),
-          points: parseFloat(payload.points),
-          percentage: payload.percentage ? parseFloat(payload.percentage) : null
-        };
-        break;
-      case "intermediate-assessment":
-        if (!payload.week_no || !payload.assessment_name) return res.status(400).json({ error: "week_no and assessment_name required" });
-        tableName = "intermediate_assessment_scores";
-        insertData = {
-          learner_id: parseInt(payload.learner_id),
-          course_planner_id: coursePlannerId,
-          batch_no: payload.batch_no,
-          week_no: parseInt(payload.week_no),
-          assessment_date: isoDate,
-          assessment_name: payload.assessment_name,
-          out_off: parseInt(payload.out_off),
-          points: parseFloat(payload.points),
-          percentage: payload.percentage ? parseFloat(payload.percentage) : null
-        };
-        break;
-      case "module-level-assessment":
-        if (!payload.module_no || !payload.assessment_name) return res.status(400).json({ error: "module_no and assessment_name required" });
-        tableName = "module_level_assessment_scores";
-        insertData = {
-          learner_id: parseInt(payload.learner_id),
-          course_planner_id: coursePlannerId,
-          batch_no: payload.batch_no,
-          module_no: parseInt(payload.module_no),
-          assessment_date: isoDate,
-          assessment_name: payload.assessment_name,
-          out_off: parseInt(payload.out_off),
-          points: parseFloat(payload.points),
-          percentage: payload.percentage ? parseFloat(payload.percentage) : null
-        };
-        break;
-      default:
-        return res.status(400).json({ error: "Invalid assessment type" });
-    }
-
-    // Insert or update
-    const { error } = await supabase
-      .from(tableName)
-      .upsert(insertData, { onConflict: 'learner_id,course_planner_id,' + (assessmentType === "module-level-assessment" ? 'module_no' : 'week_no') + ',assessment_date' });
-
-    if (error) {
-      console.error("DB error:", error);
-      return res.status(500).json({ error: error.message, details: "Check foreign keys or data types" });
-    }
-
-    res.json({ success: true, message: "Marks saved" });
-
-  } catch (err) {
-    console.error("Server error:", err);
-    res.status(500).json({ error: "Internal server error", details: err.message });
-  }
-});
 
 
 // 3) POST /api/marks/extension-request
@@ -3371,6 +3259,18 @@ app.post('/api/marks/weekly-assessment', async (req, res) => {
       return res.status(400).json({ error: "Missing required fields: learner_id, batch_no, assessment_date, out_off, points, week_no" });
     }
 
+    // Check if learner exists
+    const { data: learnerData, error: learnerError } = await supabase
+      .from('learners_data')
+      .select('id')
+      .eq('id', payload.learner_id)
+      .single();
+
+    if (learnerError || !learnerData) {
+      console.error("Learner check error:", learnerError);
+      return res.status(400).json({ error: `Learner with id ${payload.learner_id} not found in learners_data. Add the learner first.` });
+    }
+
     // Fetch course_planner_id
     const { data: courseData, error: courseError } = await supabase
       .from('course_planner_data')
@@ -3382,12 +3282,13 @@ app.post('/api/marks/weekly-assessment', async (req, res) => {
 
     if (courseError || !courseData) {
       console.error("Course fetch error:", courseError);
-      return res.status(400).json({ error: `Batch '${payload.batch_no}' not found in course_planner_data. Add it first.` });
+      return res.status(400).json({ error: `Batch '${payload.batch_no}' not found in course_planner_data. Add the batch first.` });
     }
 
     const coursePlannerId = courseData.id;
+    console.log(`📋 Fetched course_planner_id: ${coursePlannerId} for batch_no: ${payload.batch_no}`);
 
-    // Date conversion (assume YYYY-MM-DD or DD-MM-YYYY)
+    // Date conversion
     let isoDate = payload.assessment_date;
     if (payload.assessment_date.includes('-') || payload.assessment_date.includes('/')) {
       const parts = payload.assessment_date.split(/[-\/]/);
@@ -3413,16 +3314,19 @@ app.post('/api/marks/weekly-assessment', async (req, res) => {
       percentage: payload.percentage ? parseFloat(payload.percentage) : null
     };
 
-    // Insert or update
+    console.log("📤 Insert data:", JSON.stringify(insertData, null, 2));
+
+    // Upsert
     const { error } = await supabase
       .from('weekly_assessment_scores')
       .upsert(insertData, { onConflict: 'learner_id,course_planner_id,week_no,assessment_date' });
 
     if (error) {
-      console.error("DB error:", error);
-      return res.status(500).json({ error: error.message, details: "Check foreign keys or data types" });
+      console.error("DB upsert error:", error);
+      return res.status(500).json({ error: error.message || "Database error", details: error.details || "Check constraints or data types" });
     }
 
+    console.log("✅ Marks saved successfully");
     res.json({ success: true, message: "Marks saved successfully" });
 
   } catch (err) {
