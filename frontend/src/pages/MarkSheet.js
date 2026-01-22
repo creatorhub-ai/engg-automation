@@ -47,7 +47,6 @@ function MarkSheet() {
 
   const numberLabel = "Week No";
 
-  // Update current date every second
   useEffect(() => {
     const interval = setInterval(() => {
       setCurrentDate(new Date());
@@ -55,23 +54,19 @@ function MarkSheet() {
     return () => clearInterval(interval);
   }, []);
 
-  // ✅ FIXED: Correct date parsing for DD-MM-YYYY format
   const parseAssessmentDate = (dateStr) => {
     console.log("🔍 Parsing date:", dateStr);
     
     if (!dateStr || typeof dateStr !== 'string') return null;
 
-    // Handle both DD-MM-YYYY and YYYY-MM-DD formats
     let day, month, year;
     
-    // Try DD-MM-YYYY first (most common from your API)
     const ddmmyyyyMatch = dateStr.match(/(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/);
     if (ddmmyyyyMatch) {
       day = parseInt(ddmmyyyyMatch[1], 10);
       month = parseInt(ddmmyyyyMatch[2], 10);
       year = parseInt(ddmmyyyyMatch[3], 10);
     } 
-    // Try YYYY-MM-DD format
     else {
       const yyyymmddMatch = dateStr.match(/(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})/);
       if (yyyymmddMatch) {
@@ -86,16 +81,13 @@ function MarkSheet() {
 
     console.log("Parsed components:", { day, month, year });
 
-    // Validate ranges
     if (day < 1 || day > 31 || month < 1 || month > 12 || year < 1900 || year > 2100) {
       console.log("❌ Invalid date components");
       return null;
     }
 
-    // Create date object
     const date = new Date(year, month - 1, day);
     
-    // Validate the date is valid (handles Feb 30th, etc.)
     if (isNaN(date.getTime()) || 
         date.getDate() !== day || 
         date.getMonth() !== month - 1 || 
@@ -108,7 +100,6 @@ function MarkSheet() {
     return date;
   };
 
-  // ✅ FIXED: Window validation with proper date calculation
   const checkMarkEntryWindow = (assessmentDateStr) => {
     console.log("🧮 Checking window for assessment date:", assessmentDateStr);
     
@@ -131,7 +122,6 @@ function MarkSheet() {
       console.log("Days window:", daysWindow);
       console.log("Current time:", now.toLocaleString('en-GB'));
 
-      // Calculate closing date: assessment date + daysWindow days at 11:59 PM
       const closeDate = new Date(assessmentDate);
       closeDate.setDate(assessmentDate.getDate() + daysWindow);
       closeDate.setHours(23, 59, 59, 999);
@@ -140,7 +130,6 @@ function MarkSheet() {
 
       const isOpen = now <= closeDate;
       
-      // Format close date properly as DD/MM/YYYY
       const closeDateFormatted = closeDate.toLocaleDateString('en-GB', {
         day: '2-digit', 
         month: '2-digit', 
@@ -165,7 +154,6 @@ function MarkSheet() {
     }
   };
 
-  // Load learners
   useEffect(() => {
     if (batchNo) {
       fetch(`${API_BASE}/apigetlearners?batchno=${encodeURIComponent(batchNo)}`)
@@ -188,7 +176,6 @@ function MarkSheet() {
     }
   }, [batchNo]);
 
-  // Load periods
   useEffect(() => {
     if (batchNo) {
       fetch(`${API_BASE}/apiperiods/${encodeURIComponent(batchNo)}/${encodeURIComponent(assessmentType)}`)
@@ -201,7 +188,6 @@ function MarkSheet() {
           console.error("Failed to load periods:", err);
           setPeriods([]);
         });
-      // Reset selections
       setPeriodValue(""); 
       setSelectedWeekNo(""); 
       setSelectedDate(""); 
@@ -214,7 +200,6 @@ function MarkSheet() {
     }
   }, [assessmentType, batchNo]);
 
-  // Check window on date change
   useEffect(() => {
     if (selectedDate) {
       checkMarkEntryWindow(selectedDate);
@@ -277,30 +262,28 @@ function MarkSheet() {
       for (let learner of learners) {
         if (!marks[learner.id]?.points) continue;
 
+        // ✅ FIXED: Base payload with ALL common fields
         const payload = {
           learner_id: learner.id,
           batch_no: batchNo,
           assessment_date: selectedDate,
+          week_no: selectedWeekNo || null,  // ✅ ALWAYS send week_no
           out_off: outOff,
           points: marks[learner.id].points,
           percentage: marks[learner.id].percentage || null,
         };
 
-        // Add type-specific fields
-        if (assessmentType === "weekly-assessment" || assessmentType === "weekly-quiz") {
-          payload.week_no = selectedWeekNo || null;
-        }
-
-        if (assessmentType === "intermediate-assessment") {
+        // ✅ Add assessment_name for intermediate and module-level
+        if (assessmentType === "intermediate-assessment" || assessmentType === "module-level-assessment") {
           payload.assessment_name = selectedTopic || null;
         }
 
+        // ✅ Add module_no for module-level assessment
         if (assessmentType === "module-level-assessment") {
           payload.module_no = selectedWeekNo || null;
-          payload.assessment_name = selectedTopic || null;
         }
 
-        console.log("📤 Sending payload:", payload);
+        console.log("📤 Sending payload:", JSON.stringify(payload, null, 2));
 
         const res = await fetch(`${API_BASE}/api/marks/${assessmentType}`, {
           method: "POST",
@@ -335,7 +318,6 @@ function MarkSheet() {
 
   const currentType = ASSESSMENT_TYPES.find(at => at.key === assessmentType);
 
-  // Format current date for display
   const formatCurrentDate = () => {
     const options = {
       day: '2-digit',
@@ -354,7 +336,6 @@ function MarkSheet() {
   return (
     <Box sx={{ maxWidth: 1200, mx: "auto", my: 3 }}>
       <Paper elevation={6} sx={{ p: 4, borderRadius: 3 }}>
-        {/* Date display on top right */}
         <Box sx={{ 
           display: "flex", 
           justifyContent: "space-between", 

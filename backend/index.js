@@ -801,9 +801,16 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
   try {
     const { assessmentType } = req.params;
     const payload = req.body;
-    console.log("📝 RAW Payload:", payload);
+    console.log("📝 RAW Payload:", JSON.stringify(payload, null, 2));
 
-    // 🔴 FIX: Convert DD-MM-YYYY → YYYY-MM-DD
+    // Validate required base fields
+    if (!payload.learner_id || !payload.batch_no || !payload.assessment_date || !payload.out_off) {
+      return res.status(400).json({ 
+        error: "Required fields missing (learner_id, batch_no, assessment_date, out_off)" 
+      });
+    }
+
+    // Convert DD-MM-YYYY → YYYY-MM-DD
     let isoDate = payload.assessment_date;
     if (payload.assessment_date.includes("-")) {
       const parts = payload.assessment_date.split("-");
@@ -817,38 +824,45 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
       learner_id: Number(payload.learner_id),
       batch_no: payload.batch_no,
       assessment_date: isoDate,
+      out_off: Number(payload.out_off),
       points: Number(payload.points),
       percentage: payload.percentage ? Number(payload.percentage) : null,
-      out_off: Number(payload.out_off), // ✅ ALWAYS include out_off
     };
 
     switch (assessmentType) {
       case "intermediate-assessment":
         tableName = "intermediate_assessment_scores";
-        insertData.assessment_name = payload.assessment_name || null; // ✅ FIX
+        insertData.week_no = payload.week_no ? Number(payload.week_no) : null;
+        insertData.assessment_name = payload.assessment_name || null;
         break;
 
       case "weekly-assessment":
         tableName = "weekly_assessment_scores";
+        if (!payload.week_no) {
+          return res.status(400).json({ error: "week_no is required for weekly assessment" });
+        }
         insertData.week_no = Number(payload.week_no);
         break;
 
       case "weekly-quiz":
         tableName = "weekly_assessment_scores";
+        if (!payload.week_no) {
+          return res.status(400).json({ error: "week_no is required for weekly quiz" });
+        }
         insertData.week_no = Number(payload.week_no);
         break;
 
       case "module-level-assessment":
         tableName = "module_level_assessment_scores";
-        insertData.module_no = Number(payload.module_no); // ✅ FIX
-        insertData.assessment_name = payload.assessment_name || null; // ✅ FIX
+        insertData.module_no = payload.module_no ? Number(payload.module_no) : null;
+        insertData.assessment_name = payload.assessment_name || null;
         break;
 
       default:
         return res.status(400).json({ error: "Invalid assessment type" });
     }
 
-    console.log(`📤 FINAL INSERT → ${tableName}`, insertData);
+    console.log(`📤 FINAL INSERT → ${tableName}`, JSON.stringify(insertData, null, 2));
 
     const { error } = await supabase
       .from(tableName)
