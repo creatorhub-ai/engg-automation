@@ -252,14 +252,14 @@ function MarkSheet() {
   };
 
   const handleSave = async () => {
-    if (!selectedWeekNo || !outOff) {
-      setMessage("⚠️ Select period and out-off before saving.");
+    if (!selectedDate || !outOff) {
+      setMessage("⚠️ Select period/date and out-off first.");
       setTimeout(() => setMessage(""), 3000);
       return;
     }
 
     if (!isWindowOpen || windowStatus !== "valid") {
-      setMessage("❌ Mark entry window CLOSED.");
+      setMessage("❌ Window CLOSED.");
       setTimeout(() => setMessage(""), 5000);
       return;
     }
@@ -271,8 +271,7 @@ function MarkSheet() {
       for (let learner of learners) {
         if (!marks[learner.id]?.points) continue;
         
-        // ✅ CORRECT PAYLOAD PER ASSESSMENT TYPE
-        const payload = {
+        const basePayload = {
           learner_id: learner.id,
           batch_no: batchNo,
           assessment_date: selectedDate,
@@ -280,22 +279,19 @@ function MarkSheet() {
           percentage: marks[learner.id].percentage || null,
         };
 
-        // ADD TYPE-SPECIFIC FIELDS
-        if (assessmentType === 'weekly-assessment' || assessmentType === 'weekly-quiz') {
-          payload.week_no = selectedWeekNo;
-          payload.out_off = outOff;
-        }
-        
-        if (assessmentType === 'intermediate-assessment') {
-          payload.assessment_name = selectedTopic || 'Intermediate Assessment';
-        }
-        
-        if (assessmentType === 'module-level-assessment') {
-          payload.assessment_name = selectedTopic || 'Module Level Assessment';
-          payload.module_no = selectedWeekNo;
-        }
+        // ONLY ADD EXTRA FIELDS FOR SPECIFIC TYPES
+        const payload = {
+          ...basePayload,
+          ...(assessmentType === 'weekly-assessment' && { week_no: selectedWeekNo, out_off: outOff }),
+          ...(assessmentType === 'weekly-quiz' && { week_no: selectedWeekNo, out_off: outOff }),
+          ...(assessmentType === 'intermediate-assessment' && { assessment_name: selectedTopic }),
+          ...(assessmentType === 'module-level-assessment' && { 
+            assessment_name: selectedTopic, 
+            module_no: selectedWeekNo 
+          }),
+        };
 
-        console.log(`📤 Payload:`, payload);
+        console.log(`📤 Sending:`, payload);
 
         const res = await fetch(`${API_BASE}/api/marks/${assessmentType}`, {
           method: "POST",
@@ -307,21 +303,21 @@ function MarkSheet() {
         });
 
         if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.error || `HTTP ${res.status}`);
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${res.status}`);
         }
-        
+
         anySaved = true;
       }
 
       if (anySaved) {
-        setMessage("✅ Marks saved successfully!");
+        setMessage("✅ Marks SAVED!");
         setMarks({});
       } else {
-        setMessage("⚠️ Enter marks for at least one learner.");
+        setMessage("⚠️ Enter marks first.");
       }
     } catch (err) {
-      console.error("🚨 Save error:", err);
+      console.error("🚨 ERROR:", err);
       setMessage(`❌ ${err.message}`);
     }
 

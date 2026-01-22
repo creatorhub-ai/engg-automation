@@ -798,7 +798,6 @@ app.get("/api/marks/window-status", async (req, res) => {
 
 // 2) POST /api/marks/:assessmentType
 app.post('/api/marks/:assessmentType', async (req, res) => {
-  // CORS Headers FIRST
   res.header('Access-Control-Allow-Origin', 'https://engg-automation-r1ke.onrender.com');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -809,12 +808,13 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
     const { assessmentType } = req.params;
     const payload = req.body;
 
-    console.log(`📝 SAVE [${assessmentType}]:`, payload);
+    console.log(`📝 [${assessmentType}] Payload:`, payload);
 
-    // COMMON REQUIRED FIELDS
+    // ✅ MINIMAL VALIDATION - ONLY COMMON FIELDS
     if (!payload.learner_id || !payload.batch_no || !payload.assessment_date || !payload.points) {
       return res.status(400).json({ 
-        error: 'Missing required: learner_id, batch_no, assessment_date, points' 
+        error: `Missing COMMON fields for ${assessmentType}`,
+        received: payload 
       });
     }
 
@@ -822,63 +822,55 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
       learner_id: parseInt(payload.learner_id),
       batch_no: payload.batch_no,
       points: parseFloat(payload.points),
-      assessment_date: payload.assessment_date,
-      percentage: payload.percentage ? parseFloat(payload.percentage) : null
+      percentage: payload.percentage ? parseFloat(payload.percentage) : null,
+      assessment_date: payload.assessment_date
     };
 
-    // TYPE-SPECIFIC LOGIC
+    // ✅ TYPE-SPECIFIC FIELDS ONLY WHEN PROVIDED
     switch (assessmentType) {
       case 'weekly-assessment':
-        if (!payload.week_no || !payload.out_off) {
-          return res.status(400).json({ error: 'week_no and out_off required' });
-        }
         tableName = 'weekly_assessment_scores';
-        insertData.week_no = payload.week_no;
-        insertData.out_off = parseFloat(payload.out_off);
+        if (payload.week_no) insertData.week_no = payload.week_no;
+        if (payload.out_off) insertData.out_off = parseFloat(payload.out_off);
         break;
 
       case 'intermediate-assessment':
         tableName = 'intermediate_assessment_scores';
-        insertData.assessment_name = payload.assessment_name || 'Intermediate Assessment';
+        if (payload.assessment_name) insertData.assessment_name = payload.assessment_name;
         break;
 
       case 'module-level-assessment':
-        if (!payload.module_no) {
-          return res.status(400).json({ error: 'module_no required' });
-        }
         tableName = 'module_level_assessment_scores';
-        insertData.assessment_name = payload.assessment_name || 'Module Level Assessment';
-        insertData.module_no = payload.module_no;
+        if (payload.assessment_name) insertData.assessment_name = payload.assessment_name;
+        if (payload.module_no) insertData.module_no = payload.module_no;
         break;
 
       case 'weekly-quiz':
         tableName = 'weekly_assessment_scores';
-        insertData.week_no = payload.week_no || 'Quiz';
-        insertData.out_off = parseFloat(payload.out_off) || 10;
+        if (payload.week_no) insertData.week_no = payload.week_no;
+        if (payload.out_off) insertData.out_off = parseFloat(payload.out_off) || 10;
         break;
 
       default:
         return res.status(400).json({ error: 'Invalid assessment type' });
     }
 
-    console.log(`📤 Insert → ${tableName}:`, insertData);
+    console.log(`📤 SAVE → ${tableName}:`, insertData);
 
-    // SUPABASE INSERT/UPDATE
     const { data, error } = await supabase
       .from(tableName)
-      .upsert(insertData)
-      .select()
-      .maybeSingle(); // Use maybeSingle for new records
+      .upsert(insertData);
 
     if (error) {
-      console.error('❌ DB Error:', error);
+      console.error('❌ ERROR:', error);
       return res.status(500).json({ error: error.message });
     }
 
-    res.json({ success: true, table: tableName, rows: data?.length || 1 });
-    
+    console.log(`✅ SAVED to ${tableName}`);
+    res.json({ success: true, table: tableName });
+
   } catch (error) {
-    console.error('🚨 ERROR:', error);
+    console.error('🚨 CRASH:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
