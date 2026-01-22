@@ -848,11 +848,13 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
 
     let tableName;
     let insertData = {};
+    let onConflictColumns;
 
     // Build data based on assessment type
     switch (assessmentType) {
       case "weekly-assessment":
         tableName = "weekly_assessment_scores";
+        onConflictColumns = 'learner_id,batch_no,week_no,assessment_date';
         if (!payload.week_no) {
           return res.status(400).json({ error: "week_no is required for weekly-assessment" });
         }
@@ -869,6 +871,7 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
 
       case "weekly-quiz":
         tableName = "weekly_assessment_scores";
+        onConflictColumns = 'learner_id,batch_no,week_no,assessment_date';
         if (!payload.week_no) {
           return res.status(400).json({ error: "week_no is required for weekly-quiz" });
         }
@@ -885,6 +888,7 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
 
       case "intermediate-assessment":
         tableName = "intermediate_assessment_scores";
+        onConflictColumns = 'learner_id,batch_no,week_no,assessment_date';
         if (!payload.week_no) {
           return res.status(400).json({ error: "week_no is required for intermediate-assessment" });
         }
@@ -905,6 +909,7 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
 
       case "module-level-assessment":
         tableName = "module_level_assessment_scores";
+        onConflictColumns = 'learner_id,batch_no,module_no,assessment_date';
         if (!payload.module_no) {
           return res.status(400).json({ error: "module_no is required for module-level-assessment" });
         }
@@ -927,24 +932,24 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
         return res.status(400).json({ error: `Invalid assessment type: ${assessmentType}` });
     }
 
-    console.log(`📤 Inserting into table: ${tableName}`);
-    console.log(`📤 Insert data:`, JSON.stringify(insertData, null, 2));
+    console.log(`📤 Upserting into table: ${tableName} with onConflict: ${onConflictColumns}`);
+    console.log(`📤 Upsert data:`, JSON.stringify(insertData, null, 2));
 
-    // Insert into Supabase
+    // Upsert into Supabase (updates if conflict, inserts if not)
     const { data, error } = await supabase
       .from(tableName)
-      .insert(insertData);
+      .upsert(insertData, { onConflict: onConflictColumns });
 
     if (error) {
-      console.error("❌ SUPABASE ERROR:", error);
+      console.error("❌ SUPABASE UPSERT ERROR:", error);
       console.error("❌ Error details:", JSON.stringify(error, null, 2));
       return res.status(500).json({ 
-        error: error.message || "Database error",
+        error: error.message || "Database upsert error",
         details: error.details || "No additional details"
       });
     }
 
-    console.log("✅ SUCCESS! Data inserted");
+    console.log("✅ SUCCESS! Data upserted");
     res.json({ success: true, message: "Marks saved successfully" });
 
   } catch (err) {
