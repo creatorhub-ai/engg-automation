@@ -56,8 +56,13 @@ function MarkSheet() {
         const res = await fetch(`${API_BASE}/api/batches`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        setAvailableBatches(Array.isArray(data) ? data : []);
-        console.log("Batches loaded:", data);
+        console.log("Raw data from API:", data);
+        // Extract batch_no if objects, or use as strings if already strings
+        const distinctBatches = Array.isArray(data)
+          ? [...new Set(data.map(item => (typeof item === 'string' ? item : item?.batch_no)).filter(Boolean))]
+          : [];
+        setAvailableBatches(distinctBatches);
+        console.log("Processed batches:", distinctBatches);
       } catch (err) {
         console.error("Failed to load batches:", err);
         setMessage("❌ Failed to load batches. Check console.");
