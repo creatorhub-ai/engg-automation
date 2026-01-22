@@ -802,13 +802,22 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
     const { assessmentType } = req.params;
     const payload = req.body;
 
-    console.log("📝 Payload:", payload);
+    console.log("📝 RAW Payload:", payload);
+
+    // 🔴 FIX: Convert DD-MM-YYYY → YYYY-MM-DD
+    let isoDate = payload.assessment_date;
+    if (payload.assessment_date.includes("-")) {
+      const parts = payload.assessment_date.split("-");
+      if (parts[0].length === 2) {
+        isoDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+      }
+    }
 
     let tableName;
     let insertData = {
       learner_id: Number(payload.learner_id),
       batch_no: payload.batch_no,
-      assessment_date: payload.assessment_date,
+      assessment_date: isoDate,   // ✅ FIXED
       points: Number(payload.points),
       percentage: payload.percentage ? Number(payload.percentage) : null,
     };
@@ -839,20 +848,20 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
         return res.status(400).json({ error: "Invalid assessment type" });
     }
 
-    console.log(`📤 Inserting into ${tableName}`, insertData);
+    console.log(`📤 FINAL INSERT → ${tableName}`, insertData);
 
     const { error } = await supabase
       .from(tableName)
       .insert(insertData);
 
     if (error) {
-      console.error("❌ Supabase error:", error);
+      console.error("❌ SUPABASE ERROR:", error);
       return res.status(500).json({ error: error.message });
     }
 
     res.json({ success: true });
   } catch (err) {
-    console.error("🚨 Server crash:", err);
+    console.error("🚨 SERVER CRASH:", err);
     res.status(500).json({ error: "Internal server error" });
   }
 });
