@@ -801,98 +801,52 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
   try {
     const { assessmentType } = req.params;
     const payload = req.body;
-    
-    console.log("=".repeat(60));
-    console.log("📝 Assessment Type:", assessmentType);
-    console.log("📝 RAW Payload:", JSON.stringify(payload, null, 2));
-    console.log("=".repeat(60));
+
+    console.log("📝 Processing assessment type:", assessmentType);
+    console.log("📝 Payload:", JSON.stringify(payload, null, 2));
 
     // Validate required fields
-    if (!payload.learner_id) {
-      return res.status(400).json({ error: "learner_id is required" });
-    }
-    if (!payload.batch_no) {
-      return res.status(400).json({ error: "batch_no is required" });
-    }
-    if (!payload.assessment_date) {
-      return res.status(400).json({ error: "assessment_date is required" });
-    }
-    if (!payload.out_off) {
-      return res.status(400).json({ error: "out_off is required" });
-    }
-    if (!payload.points) {
-      return res.status(400).json({ error: "points is required" });
+    if (!payload.learner_id || !payload.batch_no || !payload.assessment_date || !payload.out_off || !payload.points) {
+      return res.status(400).json({ error: "Missing required fields: learner_id, batch_no, assessment_date, out_off, points" });
     }
 
-    // Fetch course_planner_id from course_planner_data based on batch_no
+    // Fetch course_planner_id
     const { data: courseData, error: courseError } = await supabase
       .from('course_planner_data')
       .select('id')
       .eq('batch_no', payload.batch_no)
-      .order('id', { ascending: true })  // Pick the smallest id if multiple
+      .order('id', { ascending: true })
       .limit(1)
       .single();
 
     if (courseError || !courseData) {
-      console.error("❌ COURSE PLANNER FETCH ERROR:", courseError);
-      return res.status(400).json({ 
-        error: `Invalid batch_no: ${payload.batch_no}. No matching record in course_planner_data. Ensure the batch exists.`,
-        details: courseError ? courseError.message : "No data found"
-      });
+      console.error("Course fetch error:", courseError);
+      return res.status(400).json({ error: `Batch '${payload.batch_no}' not found in course_planner_data. Add it first.` });
     }
 
     const coursePlannerId = courseData.id;
-    console.log(`📋 Fetched course_planner_id: ${coursePlannerId} for batch_no: ${payload.batch_no}`);
 
-    // Convert date to YYYY-MM-DD (handles DD-MM-YYYY, DD/MM/YYYY, or YYYY-MM-DD)
+    // Date conversion
     let isoDate = payload.assessment_date;
-    if (payload.assessment_date) {
-      const parts = payload.assessment_date.split(/[-\/]/); // Split on - or /
+    if (payload.assessment_date.includes('-') || payload.assessment_date.includes('/')) {
+      const parts = payload.assessment_date.split(/[-\/]/);
       if (parts.length === 3) {
-        const [first, second, third] = parts.map(p => parseInt(p, 10));
-        if (first >= 1 && first <= 31 && second >= 1 && second <= 12 && third >= 1900 && third <= 2100) {
-          // Assume DD-MM-YYYY or DD/MM/YYYY
-          isoDate = `${third}-${second.toString().padStart(2, '0')}-${first.toString().padStart(2, '0')}`;
-          console.log(`📅 Date converted: ${payload.assessment_date} → ${isoDate}`);
-        } else if (first >= 1900 && first <= 2100 && second >= 1 && second <= 12 && third >= 1 && third <= 31) {
-          // Already YYYY-MM-DD
-          isoDate = payload.assessment_date;
-          console.log(`📅 Date already in YYYY-MM-DD: ${isoDate}`);
+        const [d, m, y] = parts.map(Number);
+        if (d >= 1 && d <= 31 && m >= 1 && m <= 12 && y >= 1900) {
+          isoDate = `${y}-${m.toString().padStart(2, '0')}-${d.toString().padStart(2, '0')}`;
         } else {
-          return res.status(400).json({ error: "Invalid date format. Expected DD-MM-YYYY, DD/MM/YYYY, or YYYY-MM-DD." });
+          return res.status(400).json({ error: "Invalid date format" });
         }
-      } else {
-        return res.status(400).json({ error: "Invalid date format. Expected DD-MM-YYYY, DD/MM/YYYY, or YYYY-MM-DD." });
       }
     }
 
-    let tableName;
-    let insertData = {};
-
-    // Build data based on assessment type
+    // Build insert data
+    let tableName, insertData;
     switch (assessmentType) {
       case "weekly-assessment":
-        tableName = "weekly_assessment_scores";
-        if (!payload.week_no) {
-          return res.status(400).json({ error: "week_no is required for weekly-assessment" });
-        }
-        insertData = {
-          learner_id: parseInt(payload.learner_id),
-          course_planner_id: coursePlannerId,
-          batch_no: payload.batch_no,
-          week_no: parseInt(payload.week_no),
-          assessment_date: isoDate,
-          out_off: parseInt(payload.out_off),
-          points: parseFloat(payload.points),
-          percentage: payload.percentage ? parseFloat(payload.percentage) : null
-        };
-        break;
-
       case "weekly-quiz":
+        if (!payload.week_no) return res.status(400).json({ error: "week_no required" });
         tableName = "weekly_assessment_scores";
-        if (!payload.week_no) {
-          return res.status(400).json({ error: "week_no is required for weekly-quiz" });
-        }
         insertData = {
           learner_id: parseInt(payload.learner_id),
           course_planner_id: coursePlannerId,
@@ -904,15 +858,9 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
           percentage: payload.percentage ? parseFloat(payload.percentage) : null
         };
         break;
-
       case "intermediate-assessment":
+        if (!payload.week_no || !payload.assessment_name) return res.status(400).json({ error: "week_no and assessment_name required" });
         tableName = "intermediate_assessment_scores";
-        if (!payload.week_no) {
-          return res.status(400).json({ error: "week_no is required for intermediate-assessment" });
-        }
-        if (!payload.assessment_name) {
-          return res.status(400).json({ error: "assessment_name is required for intermediate-assessment" });
-        }
         insertData = {
           learner_id: parseInt(payload.learner_id),
           course_planner_id: coursePlannerId,
@@ -925,15 +873,9 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
           percentage: payload.percentage ? parseFloat(payload.percentage) : null
         };
         break;
-
       case "module-level-assessment":
+        if (!payload.module_no || !payload.assessment_name) return res.status(400).json({ error: "module_no and assessment_name required" });
         tableName = "module_level_assessment_scores";
-        if (!payload.module_no) {
-          return res.status(400).json({ error: "module_no is required for module-level-assessment" });
-        }
-        if (!payload.assessment_name) {
-          return res.status(400).json({ error: "assessment_name is required for module-level-assessment" });
-        }
         insertData = {
           learner_id: parseInt(payload.learner_id),
           course_planner_id: coursePlannerId,
@@ -946,70 +888,25 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
           percentage: payload.percentage ? parseFloat(payload.percentage) : null
         };
         break;
-
       default:
-        return res.status(400).json({ error: `Invalid assessment type: ${assessmentType}` });
+        return res.status(400).json({ error: "Invalid assessment type" });
     }
 
-    console.log(`📤 Inserting into table: ${tableName}`);
-    console.log(`📤 Insert data:`, JSON.stringify(insertData, null, 2));
-
-    // Attempt insert into Supabase
-    let { data, error } = await supabase
+    // Insert or update
+    const { error } = await supabase
       .from(tableName)
-      .insert(insertData);
+      .upsert(insertData, { onConflict: 'learner_id,course_planner_id,' + (assessmentType === "module-level-assessment" ? 'module_no' : 'week_no') + ',assessment_date' });
 
     if (error) {
-      console.error("❌ SUPABASE INSERT ERROR:", error);
-      console.error("❌ Error details:", JSON.stringify(error, null, 2));
-      
-      // Check if it's a duplicate key error
-      if (error.message && error.message.includes('duplicate key')) {
-        console.log("🔄 Duplicate detected, attempting update...");
-        const updateData = { ...insertData };
-        delete updateData.learner_id;
-        delete updateData.course_planner_id;
-        delete updateData.week_no;
-        delete updateData.assessment_date;
-        if (assessmentType === "module-level-assessment") {
-          delete updateData.module_no;
-        }
-        
-        const { data: updateDataResult, error: updateError } = await supabase
-          .from(tableName)
-          .update(updateData)
-          .eq('learner_id', insertData.learner_id)
-          .eq('course_planner_id', insertData.course_planner_id)
-          .eq(assessmentType === "module-level-assessment" ? 'module_no' : 'week_no', insertData[assessmentType === "module-level-assessment" ? 'module_no' : 'week_no'])
-          .eq('assessment_date', insertData.assessment_date);
-        
-        if (updateError) {
-          console.error("❌ SUPABASE UPDATE ERROR:", updateError);
-          return res.status(500).json({ 
-            error: updateError.message || "Database update error",
-            details: updateError.details || "No additional details"
-          });
-        }
-        console.log("✅ SUCCESS! Data updated");
-        return res.json({ success: true, message: "Marks updated successfully" });
-      } else {
-        return res.status(500).json({ 
-          error: error.message || "Database insert error",
-          details: error.details || "No additional details"
-        });
-      }
+      console.error("DB error:", error);
+      return res.status(500).json({ error: error.message, details: "Check foreign keys or data types" });
     }
 
-    console.log("✅ SUCCESS! Data inserted");
-    res.json({ success: true, message: "Marks saved successfully" });
+    res.json({ success: true, message: "Marks saved" });
 
   } catch (err) {
-    console.error("🚨 SERVER CRASH:", err);
-    console.error("🚨 Stack trace:", err.stack);
-    res.status(500).json({ 
-      error: "Internal server error",
-      message: err.message 
-    });
+    console.error("Server error:", err);
+    res.status(500).json({ error: "Internal server error", details: err.message });
   }
 });
 
