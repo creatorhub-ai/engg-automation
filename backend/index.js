@@ -3249,6 +3249,8 @@ app.post('/api/trainer-leaves', async (req, res) => {
 // Add or update Weekly Assessment Score
 app.post("/api/marks/weekly-assessment", async (req, res) => {
   try {
+    console.log("📥 Incoming payload:", req.body);
+
     const {
       learner_id,
       batch_no,
@@ -3259,44 +3261,39 @@ app.post("/api/marks/weekly-assessment", async (req, res) => {
       percentage
     } = req.body;
 
-    if (
-      !learner_id ||
-      !batch_no ||
-      !week_no ||
-      !assessment_date ||
-      !out_off ||
-      !points
-    ) {
-      return res.status(400).json({ error: "Missing required fields" });
-    }
+    console.log("🔎 Looking up planner with:", {
+      batch_no,
+      week_no
+    });
 
-    // 🔹 STEP 1: Get course_planner_id
     const { data: planner, error: plannerError } = await supabase
       .from("course_planner_data")
       .select("id")
       .eq("batch_no", batch_no)
-      .eq("week_no", week_no)
-      .single();
+      .eq("week_no", Number(week_no)) // 🔥 FORCE NUMBER
+      .maybeSingle(); // 🔥 SAFER THAN single()
 
-    if (plannerError || !planner) {
-      return res.status(404).json({
-        error: "Course planner entry not found",
-        details: plannerError
-      });
+    if (plannerError) {
+      console.error("❌ Planner lookup error:", plannerError);
+      return res.status(500).json({ error: plannerError.message });
     }
 
-    const course_planner_id = planner.id;
+    if (!planner) {
+      console.warn("⚠️ No planner found");
+      return res.status(404).json({ error: "Course planner not found" });
+    }
 
-    // 🔹 STEP 2: UPSERT marks (prevents PK crash)
+    console.log("✅ Planner found:", planner.id);
+
     const { error: insertError } = await supabase
       .from("weekly_assessment_scores")
       .upsert(
         {
           learner_id,
-          course_planner_id,
+          course_planner_id: planner.id,
           batch_no,
-          week_no,
-          assessment_date,
+          week_no: Number(week_no),
+          assessment_date: assessment_date.split("T")[0], // 🔥 DATE FIX
           out_off,
           points,
           percentage
@@ -3307,16 +3304,17 @@ app.post("/api/marks/weekly-assessment", async (req, res) => {
       );
 
     if (insertError) {
-      console.error("Insert error:", insertError);
+      console.error("❌ Insert error:", insertError);
       return res.status(500).json({ error: insertError.message });
     }
 
-    return res.json({ success: true });
+    res.json({ success: true });
   } catch (err) {
-    console.error("Server error:", err);
-    return res.status(500).json({ error: "Internal server error" });
+    console.error("🔥 Server crash:", err);
+    res.status(500).json({ error: err.message });
   }
 });
+
 
 // Add or update Intermediate Assessment Score
 app.post('/api/marks/intermediate-assessment', async (req, res) => {
