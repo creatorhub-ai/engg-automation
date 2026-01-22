@@ -3257,6 +3257,53 @@ app.post('/api/trainer-leaves', async (req, res) => {
   }
 });
 
+//get the topics from course planner table
+app.get("/api/topic", async (req, res) => {
+  try {
+    const { batch_no, date } = req.query;
+
+    const { data, error } = await supabase
+      .from("course_planner_data")
+      .select("id, topic_name")
+      .eq("batch_no", batch_no)
+      .eq("date", date)
+      .limit(1)
+      .single();
+
+    if (error) return res.status(404).json(null);
+
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+//get the assessment dates
+app.get("/api/assessment-dates", async (req, res) => {
+  const { batch_no, type } = req.query;
+
+  const textMap = {
+    weekly: "Weekly Assessment",
+    intermediate: "Intermediate Assessment",
+    module: "Module Level Assessment",
+  };
+
+  const searchText = textMap[type];
+
+  const { data, error } = await supabase
+    .from("course_planner_data")
+    .select("date, week_no, module_no")
+    .eq("batch_no", batch_no)
+    .ilike("topic_name", `${searchText}%`)
+    .order("date");
+
+  if (error) {
+    return res.status(500).json({ error: error.message });
+  }
+
+  res.json(data);
+});
+
 // Add or update Weekly Assessment Score
 app.post("/api/marks/weekly-assessment", async (req, res) => {
   try {
@@ -3316,8 +3363,17 @@ app.post("/api/marks/intermediate-assessment", async (req, res) => {
       percentage
     } = req.body;
 
-    const planner = await getPlannerByBatchAndDate(batch_no, assessment_date);
-    if (!planner) return res.status(409).json({ error: "Planner not found" });
+    const { data: planner } = await supabase
+      .from("course_planner_data")
+      .select("id")
+      .eq("batch_no", batch_no)
+      .eq("date", assessment_date)
+      .limit(1)
+      .single();
+
+    if (!planner) {
+      return res.status(409).json({ error: "Planner not found" });
+    }
 
     const { error } = await supabase
       .from("intermediate_assessment_scores")
@@ -3335,7 +3391,7 @@ app.post("/api/marks/intermediate-assessment", async (req, res) => {
           marked_at: new Date()
         },
         {
-          onConflict: "learner_id,course_planner_id,week_no,assessment_date"
+          onConflict: "learner_id,course_planner_id,assessment_date"
         }
       );
 
@@ -3361,8 +3417,17 @@ app.post("/api/marks/module-level-assessment", async (req, res) => {
       percentage
     } = req.body;
 
-    const planner = await getPlannerByBatchAndDate(batch_no, assessment_date);
-    if (!planner) return res.status(409).json({ error: "Planner not found" });
+    const { data: planner } = await supabase
+      .from("course_planner_data")
+      .select("id")
+      .eq("batch_no", batch_no)
+      .eq("date", assessment_date)
+      .limit(1)
+      .single();
+
+    if (!planner) {
+      return res.status(409).json({ error: "Planner not found" });
+    }
 
     const { error } = await supabase
       .from("module_level_assessment_scores")
@@ -3380,7 +3445,7 @@ app.post("/api/marks/module-level-assessment", async (req, res) => {
           marked_at: new Date()
         },
         {
-          onConflict: "learner_id,course_planner_id,module_no,assessment_date"
+          onConflict: "learner_id,course_planner_id,assessment_date"
         }
       );
 

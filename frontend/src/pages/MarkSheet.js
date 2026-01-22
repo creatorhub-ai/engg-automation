@@ -79,24 +79,14 @@ function MarkSheet() {
 
   /* ---------------- FETCH LEARNERS ---------------- */
   useEffect(() => {
-    if (!batchNo) return setLearners([]);
+    if (!batchNo || !assessmentType) return;
 
-    const fetchLearners = async () => {
-      setLoadingLearners(true);
-      try {
-        const res = await fetch(
-          `${API_BASE}/apigetlearners?batchno=${batchNo}`
-        );
-        const data = await res.json();
-        setLearners(data || []);
-      } catch {
-        setLearners([]);
-      } finally {
-        setLoadingLearners(false);
-      }
-    };
-    fetchLearners();
-  }, [batchNo]);
+    fetch(
+      `${API_BASE}/api/assessment-dates?batch_no=${batchNo}&type=${assessmentType}`
+    )
+      .then(res => res.json())
+      .then(data => setPeriods(data || []));
+  }, [batchNo, assessmentType]);
 
   /* ---------------- FETCH PERIODS (DISTINCT) ---------------- */
   useEffect(() => {
@@ -145,22 +135,18 @@ function MarkSheet() {
   }, [selectedDate, assessmentType, currentDate]);
 
   /* ---------------- HANDLERS ---------------- */
-  const handlePeriodSelect = async (e) => {
-    const value = e.target.value;
-    setPeriodValue(value);
+  const handlePeriodSelect = async (date) => {
+    setAssessmentDate(date);
 
-    const [w, d] = value.split("::");
-    setSelectedWeekNo(w);
-    setSelectedDate(d);
+    const res = await fetch(
+      `${API_BASE}/api/topic?batch_no=${batchNo}&date=${date}`
+    );
 
-    try {
-      const res = await fetch(
-        `${API_BASE}/api/topic?batch_no=${batchNo}&date=${d}`
-      );
+    if (res.ok) {
       const data = await res.json();
-      setTopicMap(data || {});
-    } catch {
-      setTopicMap({});
+      setTopicMap(data);
+    } else {
+      setTopicMap(null);
     }
   };
 
