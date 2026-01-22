@@ -802,32 +802,22 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
     const { assessmentType } = req.params;
     const payload = req.body;
 
-    console.log(`📝 [${assessmentType}] Payload:`, payload);
+    console.log("📝 Payload:", payload);
 
-    // ✅ COMMON VALIDATION
-    if (
-      !payload.learner_id ||
-      !payload.batch_no ||
-      !payload.assessment_date ||
-      payload.points === undefined
-    ) {
-      return res.status(400).json({
-        error: "Missing required fields",
-        received: payload
-      });
-    }
-
-    let tableName = "";
+    let tableName;
     let insertData = {
       learner_id: Number(payload.learner_id),
       batch_no: payload.batch_no,
       assessment_date: payload.assessment_date,
       points: Number(payload.points),
-      percentage: payload.percentage ? Number(payload.percentage) : null
+      percentage: payload.percentage ? Number(payload.percentage) : null,
     };
 
-    // ✅ STRICT PER-TYPE MAPPING
     switch (assessmentType) {
+      case "intermediate-assessment":
+        tableName = "intermediate_assessment_scores";
+        break;
+
       case "weekly-assessment":
         tableName = "weekly_assessment_scores";
         insertData.week_no = Number(payload.week_no);
@@ -840,11 +830,6 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
         insertData.out_off = Number(payload.out_off || 10);
         break;
 
-      case "intermediate-assessment":
-        tableName = "intermediate_assessment_scores";
-        // 🚨 DO NOT SEND EXTRA FIELDS
-        break;
-
       case "module-level-assessment":
         tableName = "module_level_assessment_scores";
         insertData.module_no = Number(payload.module_no);
@@ -854,11 +839,11 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
         return res.status(400).json({ error: "Invalid assessment type" });
     }
 
-    console.log(`📤 INSERT → ${tableName}`, insertData);
+    console.log(`📤 Inserting into ${tableName}`, insertData);
 
     const { error } = await supabase
       .from(tableName)
-      .insert(insertData);   // ⬅️ INSERT (not upsert)
+      .insert(insertData);
 
     if (error) {
       console.error("❌ Supabase error:", error);
@@ -867,7 +852,7 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
 
     res.json({ success: true });
   } catch (err) {
-    console.error("🚨 SERVER CRASH:", err);
+    console.error("🚨 Server crash:", err);
     res.status(500).json({ error: "Internal server error" });
   }
 });
