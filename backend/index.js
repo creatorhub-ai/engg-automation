@@ -3247,91 +3247,74 @@ app.post('/api/trainer-leaves', async (req, res) => {
 });
 
 // Add or update Weekly Assessment Score
-app.post('/api/marks/weekly-assessment', async (req, res) => {
+app.post("/api/marks/weekly-assessment", async (req, res) => {
   try {
-    const payload = req.body;
+    const {
+      learner_id,
+      batch_no,
+      week_no,
+      assessment_date,
+      out_off,
+      points,
+      percentage
+    } = req.body;
 
-    console.log("📝 Processing weekly-assessment");
-    console.log("📝 Payload:", JSON.stringify(payload, null, 2));
-
-    // Validate required fields
-    if (!payload.learner_id || !payload.batch_no || !payload.assessment_date || !payload.out_off || !payload.points || !payload.week_no) {
-      return res.status(400).json({ error: "Missing required fields: learner_id, batch_no, assessment_date, out_off, points, week_no" });
+    if (
+      !learner_id ||
+      !batch_no ||
+      !week_no ||
+      !assessment_date ||
+      !out_off ||
+      !points
+    ) {
+      return res.status(400).json({ error: "Missing required fields" });
     }
 
-    // Check if learner exists
-    const { data: learnerData, error: learnerError } = await supabase
-      .from('learners_data')
-      .select('id')
-      .eq('id', payload.learner_id)
+    // 🔹 STEP 1: Get course_planner_id
+    const { data: planner, error: plannerError } = await supabase
+      .from("course_planner_data")
+      .select("id")
+      .eq("batch_no", batch_no)
+      .eq("week_no", week_no)
       .single();
 
-    if (learnerError || !learnerData) {
-      console.error("Learner check error:", learnerError);
-      return res.status(400).json({ error: `Learner with id ${payload.learner_id} not found in learners_data. Add the learner first.` });
+    if (plannerError || !planner) {
+      return res.status(404).json({
+        error: "Course planner entry not found",
+        details: plannerError
+      });
     }
 
-    // Fetch course_planner_id
-    const { data: courseData, error: courseError } = await supabase
-      .from('course_planner_data')
-      .select('id')
-      .eq('batch_no', payload.batch_no)
-      .order('id', { ascending: true })
-      .limit(1)
-      .single();
+    const course_planner_id = planner.id;
 
-    if (courseError || !courseData) {
-      console.error("Course fetch error:", courseError);
-      return res.status(400).json({ error: `Batch '${payload.batch_no}' not found in course_planner_data. Add the batch first.` });
-    }
-
-    const coursePlannerId = courseData.id;
-    console.log(`📋 Fetched course_planner_id: ${coursePlannerId} for batch_no: ${payload.batch_no}`);
-
-    // Date conversion
-    let isoDate = payload.assessment_date;
-    if (payload.assessment_date.includes('-') || payload.assessment_date.includes('/')) {
-      const parts = payload.assessment_date.split(/[-\/]/);
-      if (parts.length === 3) {
-        const [d, m, y] = parts.map(Number);
-        if (d >= 1 && d <= 31 && m >= 1 && m <= 12 && y >= 1900) {
-          isoDate = `${y}-${m.toString().padStart(2, '0')}-${d.toString().padStart(2, '0')}`;
-        } else {
-          return res.status(400).json({ error: "Invalid date format" });
+    // 🔹 STEP 2: UPSERT marks (prevents PK crash)
+    const { error: insertError } = await supabase
+      .from("weekly_assessment_scores")
+      .upsert(
+        {
+          learner_id,
+          course_planner_id,
+          batch_no,
+          week_no,
+          assessment_date,
+          out_off,
+          points,
+          percentage
+        },
+        {
+          onConflict: "learner_id,course_planner_id,week_no,assessment_date"
         }
-      }
+      );
+
+    if (insertError) {
+      console.error("Insert error:", insertError);
+      return res.status(500).json({ error: insertError.message });
     }
 
-    // Build insert data
-    const insertData = {
-      learner_id: parseInt(payload.learner_id),
-      course_planner_id: coursePlannerId,
-      batch_no: payload.batch_no,
-      week_no: parseInt(payload.week_no),
-      assessment_date: isoDate,
-      out_off: parseInt(payload.out_off),
-      points: parseFloat(payload.points),
-      percentage: payload.percentage ? parseFloat(payload.percentage) : null
-    };
-
-    console.log("📤 Insert data:", JSON.stringify(insertData, null, 2));
-
-    // Upsert
-    const { error } = await supabase
-      .from('weekly_assessment_scores')
-      .upsert(insertData, { onConflict: 'learner_id,course_planner_id,week_no,assessment_date' });
-
-    if (error) {
-      console.error("DB upsert error:", error);
-      return res.status(500).json({ error: error.message || "Database error", details: error.details || "Check constraints or data types" });
-    }
-
-    console.log("✅ Marks saved successfully");
-    res.json({ success: true, message: "Marks saved successfully" });
-
+    return res.json({ success: true });
   } catch (err) {
     console.error("Server error:", err);
-    res.status(500).json({ error: "Internal server error", details: err.message });
+    return res.status(500).json({ error: "Internal server error" });
   }
 });
 
