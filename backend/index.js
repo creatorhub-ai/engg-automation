@@ -835,7 +835,10 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
 
     if (courseError || !courseData) {
       console.error("❌ COURSE PLANNER FETCH ERROR:", courseError);
-      return res.status(400).json({ error: `Invalid batch_no: ${payload.batch_no}. No matching record in course_planner_data.` });
+      return res.status(400).json({ 
+        error: `Invalid batch_no: ${payload.batch_no}. No matching record in course_planner_data. Ensure the batch exists.`,
+        details: courseError ? courseError.message : "No data found"
+      });
     }
 
     const coursePlannerId = courseData.id;
@@ -876,7 +879,7 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
         insertData = {
           learner_id: parseInt(payload.learner_id),
           course_planner_id: coursePlannerId,
-          batch_no: payload.batch_no,  // Keep for reference
+          batch_no: payload.batch_no,
           week_no: parseInt(payload.week_no),
           assessment_date: isoDate,
           out_off: parseInt(payload.out_off),
@@ -893,7 +896,7 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
         insertData = {
           learner_id: parseInt(payload.learner_id),
           course_planner_id: coursePlannerId,
-          batch_no: payload.batch_no,  // Keep for reference
+          batch_no: payload.batch_no,
           week_no: parseInt(payload.week_no),
           assessment_date: isoDate,
           out_off: parseInt(payload.out_off),
@@ -913,7 +916,7 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
         insertData = {
           learner_id: parseInt(payload.learner_id),
           course_planner_id: coursePlannerId,
-          batch_no: payload.batch_no,  // Keep for reference
+          batch_no: payload.batch_no,
           week_no: parseInt(payload.week_no),
           assessment_date: isoDate,
           assessment_name: payload.assessment_name,
@@ -934,7 +937,7 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
         insertData = {
           learner_id: parseInt(payload.learner_id),
           course_planner_id: coursePlannerId,
-          batch_no: payload.batch_no,  // Keep for reference
+          batch_no: payload.batch_no,
           module_no: parseInt(payload.module_no),
           assessment_date: isoDate,
           assessment_name: payload.assessment_name,
@@ -963,12 +966,11 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
       // Check if it's a duplicate key error
       if (error.message && error.message.includes('duplicate key')) {
         console.log("🔄 Duplicate detected, attempting update...");
-        // Attempt update instead
         const updateData = { ...insertData };
-        delete updateData.learner_id; // Remove keys not to update
+        delete updateData.learner_id;
         delete updateData.course_planner_id;
         delete updateData.week_no;
-        delete updateData.assessment_date; // Adjust based on your unique key
+        delete updateData.assessment_date;
         if (assessmentType === "module-level-assessment") {
           delete updateData.module_no;
         }
@@ -991,7 +993,6 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
         console.log("✅ SUCCESS! Data updated");
         return res.json({ success: true, message: "Marks updated successfully" });
       } else {
-        // Not a duplicate, return the error
         return res.status(500).json({ 
           error: error.message || "Database insert error",
           details: error.details || "No additional details"
