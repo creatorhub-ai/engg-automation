@@ -3362,33 +3362,72 @@ app.post('/api/trainer-leaves', async (req, res) => {
 app.post('/api/marks/weekly-assessment', async (req, res) => {
   try {
     const payload = req.body;
-    console.log('REQ BODY:', payload);
-    // List all columns exactly as in your table
-    const { learner_id, batch_no, week_no, points, percentage, assessment_date, out_off } = payload;
-    // Convert types as needed
-    const upsertData = {
-      learner_id: parseInt(learner_id, 10), // Change/remove if id is truly string
-      batch_no: batch_no,
-      week_no: parseInt(week_no, 10),
-      points: points ? parseInt(points, 10) : null,
-      percentage: percentage ? parseInt(percentage, 10) : null,
-      assessment_date: assessment_date ? assessment_date : null,
-      out_off: out_off ? parseInt(out_off, 10) : null
-    };
-    console.log('UPSERT DATA:', upsertData);
 
-    const { data, error } = await supabase
+    console.log("📝 Processing weekly-assessment");
+    console.log("📝 Payload:", JSON.stringify(payload, null, 2));
+
+    // Validate required fields
+    if (!payload.learner_id || !payload.batch_no || !payload.assessment_date || !payload.out_off || !payload.points || !payload.week_no) {
+      return res.status(400).json({ error: "Missing required fields: learner_id, batch_no, assessment_date, out_off, points, week_no" });
+    }
+
+    // Fetch course_planner_id
+    const { data: courseData, error: courseError } = await supabase
+      .from('course_planner_data')
+      .select('id')
+      .eq('batch_no', payload.batch_no)
+      .order('id', { ascending: true })
+      .limit(1)
+      .single();
+
+    if (courseError || !courseData) {
+      console.error("Course fetch error:", courseError);
+      return res.status(400).json({ error: `Batch '${payload.batch_no}' not found in course_planner_data. Add it first.` });
+    }
+
+    const coursePlannerId = courseData.id;
+
+    // Date conversion (assume YYYY-MM-DD or DD-MM-YYYY)
+    let isoDate = payload.assessment_date;
+    if (payload.assessment_date.includes('-') || payload.assessment_date.includes('/')) {
+      const parts = payload.assessment_date.split(/[-\/]/);
+      if (parts.length === 3) {
+        const [d, m, y] = parts.map(Number);
+        if (d >= 1 && d <= 31 && m >= 1 && m <= 12 && y >= 1900) {
+          isoDate = `${y}-${m.toString().padStart(2, '0')}-${d.toString().padStart(2, '0')}`;
+        } else {
+          return res.status(400).json({ error: "Invalid date format" });
+        }
+      }
+    }
+
+    // Build insert data
+    const insertData = {
+      learner_id: parseInt(payload.learner_id),
+      course_planner_id: coursePlannerId,
+      batch_no: payload.batch_no,
+      week_no: parseInt(payload.week_no),
+      assessment_date: isoDate,
+      out_off: parseInt(payload.out_off),
+      points: parseFloat(payload.points),
+      percentage: payload.percentage ? parseFloat(payload.percentage) : null
+    };
+
+    // Insert or update
+    const { error } = await supabase
       .from('weekly_assessment_scores')
-      .upsert([upsertData], { onConflict: ['learner_id', 'batch_no', 'week_no'] }); // Unique constraint must exist in DB!
+      .upsert(insertData, { onConflict: 'learner_id,course_planner_id,week_no,assessment_date' });
 
     if (error) {
-      console.error('SUPABASE ERROR:', error);
-      throw error;
+      console.error("DB error:", error);
+      return res.status(500).json({ error: error.message, details: "Check foreign keys or data types" });
     }
-    res.json({ success: true, data });
-  } catch (error) {
-    console.error('CATCH ERROR:', error);
-    res.status(500).json({ success: false, error: error.message || error });
+
+    res.json({ success: true, message: "Marks saved successfully" });
+
+  } catch (err) {
+    console.error("Server error:", err);
+    res.status(500).json({ error: "Internal server error", details: err.message });
   }
 });
 
