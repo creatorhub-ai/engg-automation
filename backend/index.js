@@ -811,7 +811,11 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
     console.log(`📝 [${assessmentType}] Payload:`, payload);
 
     // ✅ MINIMAL VALIDATION - ONLY COMMON FIELDS
-    if (!payload.learner_id || !payload.batch_no || !payload.assessment_date || !payload.points) {
+    if (!payload.learner_id ||
+      !payload.batch_no ||
+      !payload.assessment_date ||
+      payload.points === undefined
+    ) {
       return res.status(400).json({ 
         error: `Missing COMMON fields for ${assessmentType}`,
         received: payload 

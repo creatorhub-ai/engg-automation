@@ -252,8 +252,14 @@ function MarkSheet() {
   };
 
   const handleSave = async () => {
-    if (!selectedDate || !outOff) {
-      setMessage("⚠️ Select period/date and out-off first.");
+    if (!selectedDate) {
+      setMessage("⚠️ Select period/date first.");
+      setTimeout(() => setMessage(""), 3000);
+      return;
+    }
+
+    if (!outOff) {
+      setMessage("⚠️ Enter Out-Off marks.");
       setTimeout(() => setMessage(""), 3000);
       return;
     }
@@ -270,36 +276,36 @@ function MarkSheet() {
     try {
       for (let learner of learners) {
         if (!marks[learner.id]?.points) continue;
-        
-        const basePayload = {
+
+        const payload = {
           learner_id: learner.id,
           batch_no: batchNo,
           assessment_date: selectedDate,
+          week_no: selectedWeekNo || null,   // ✅ ALWAYS SEND
+          out_off: outOff,                   // ✅ ALWAYS SEND
           points: marks[learner.id].points,
           percentage: marks[learner.id].percentage || null,
+
+          // type-specific
+          ...(assessmentType !== "weekly-assessment" &&
+            assessmentType !== "weekly-quiz" && {
+              assessment_name: selectedTopic
+            }),
+
+          ...(assessmentType === "module-level-assessment" && {
+            module_no: selectedWeekNo
+          })
         };
 
-        // ONLY ADD EXTRA FIELDS FOR SPECIFIC TYPES
-        const payload = {
-          ...basePayload,
-          ...(assessmentType === 'weekly-assessment' && { week_no: selectedWeekNo, out_off: outOff }),
-          ...(assessmentType === 'weekly-quiz' && { week_no: selectedWeekNo, out_off: outOff }),
-          ...(assessmentType === 'intermediate-assessment' && { assessment_name: selectedTopic }),
-          ...(assessmentType === 'module-level-assessment' && { 
-            assessment_name: selectedTopic, 
-            module_no: selectedWeekNo 
-          }),
-        };
-
-        console.log(`📤 Sending:`, payload);
+        console.log("📤 Sending payload:", payload);
 
         const res = await fetch(`${API_BASE}/api/marks/${assessmentType}`, {
           method: "POST",
-          headers: { 
+          headers: {
             "Content-Type": "application/json",
-            "Accept": "application/json"
+            Accept: "application/json"
           },
-          body: JSON.stringify(payload),
+          body: JSON.stringify(payload)
         });
 
         if (!res.ok) {
@@ -472,7 +478,12 @@ function MarkSheet() {
                       inputProps={{ min: 0, max: outOff || undefined }}
                       onChange={(e) => handleMarksInput(learner.id, e.target.value)}
                       size="small"
-                      disabled={!isWindowOpen || windowStatus !== "valid" || !selectedWeekNo || !outOff}
+                      disabled={
+                        !isWindowOpen ||
+                        windowStatus !== "valid" ||
+                        !outOff ||
+                        !selectedDate
+                      }
                       sx={{ width: 100 }}
                     />
                   </TableCell>
