@@ -801,82 +801,148 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
   try {
     const { assessmentType } = req.params;
     const payload = req.body;
+    
+    console.log("=".repeat(60));
+    console.log("📝 Assessment Type:", assessmentType);
     console.log("📝 RAW Payload:", JSON.stringify(payload, null, 2));
+    console.log("=".repeat(60));
 
-    // Validate required base fields
-    if (!payload.learner_id || !payload.batch_no || !payload.assessment_date || !payload.out_off) {
-      return res.status(400).json({ 
-        error: "Required fields missing (learner_id, batch_no, assessment_date, out_off)" 
-      });
+    // Validate required fields
+    if (!payload.learner_id) {
+      return res.status(400).json({ error: "learner_id is required" });
+    }
+    if (!payload.batch_no) {
+      return res.status(400).json({ error: "batch_no is required" });
+    }
+    if (!payload.assessment_date) {
+      return res.status(400).json({ error: "assessment_date is required" });
+    }
+    if (!payload.out_off) {
+      return res.status(400).json({ error: "out_off is required" });
+    }
+    if (!payload.points) {
+      return res.status(400).json({ error: "points is required" });
     }
 
-    // Convert DD-MM-YYYY → YYYY-MM-DD
+    // Convert DD-MM-YYYY to YYYY-MM-DD
     let isoDate = payload.assessment_date;
-    if (payload.assessment_date.includes("-")) {
+    if (payload.assessment_date && payload.assessment_date.includes("-")) {
       const parts = payload.assessment_date.split("-");
-      if (parts[0].length === 2) {
+      if (parts.length === 3 && parts[0].length === 2) {
+        // DD-MM-YYYY format
         isoDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+        console.log(`📅 Date converted: ${payload.assessment_date} → ${isoDate}`);
       }
     }
 
     let tableName;
-    let insertData = {
-      learner_id: Number(payload.learner_id),
-      batch_no: payload.batch_no,
-      assessment_date: isoDate,
-      out_off: Number(payload.out_off),
-      points: Number(payload.points),
-      percentage: payload.percentage ? Number(payload.percentage) : null,
-    };
+    let insertData = {};
 
+    // Build data based on assessment type
     switch (assessmentType) {
-      case "intermediate-assessment":
-        tableName = "intermediate_assessment_scores";
-        insertData.week_no = payload.week_no ? Number(payload.week_no) : null;
-        insertData.assessment_name = payload.assessment_name || null;
-        break;
-
       case "weekly-assessment":
         tableName = "weekly_assessment_scores";
         if (!payload.week_no) {
-          return res.status(400).json({ error: "week_no is required for weekly assessment" });
+          return res.status(400).json({ error: "week_no is required for weekly-assessment" });
         }
-        insertData.week_no = Number(payload.week_no);
+        insertData = {
+          learner_id: parseInt(payload.learner_id),
+          batch_no: payload.batch_no,
+          week_no: parseInt(payload.week_no),
+          assessment_date: isoDate,
+          out_off: parseInt(payload.out_off),
+          points: parseFloat(payload.points),
+          percentage: payload.percentage ? parseFloat(payload.percentage) : null
+        };
         break;
 
       case "weekly-quiz":
         tableName = "weekly_assessment_scores";
         if (!payload.week_no) {
-          return res.status(400).json({ error: "week_no is required for weekly quiz" });
+          return res.status(400).json({ error: "week_no is required for weekly-quiz" });
         }
-        insertData.week_no = Number(payload.week_no);
+        insertData = {
+          learner_id: parseInt(payload.learner_id),
+          batch_no: payload.batch_no,
+          week_no: parseInt(payload.week_no),
+          assessment_date: isoDate,
+          out_off: parseInt(payload.out_off),
+          points: parseFloat(payload.points),
+          percentage: payload.percentage ? parseFloat(payload.percentage) : null
+        };
+        break;
+
+      case "intermediate-assessment":
+        tableName = "intermediate_assessment_scores";
+        if (!payload.week_no) {
+          return res.status(400).json({ error: "week_no is required for intermediate-assessment" });
+        }
+        if (!payload.assessment_name) {
+          return res.status(400).json({ error: "assessment_name is required for intermediate-assessment" });
+        }
+        insertData = {
+          learner_id: parseInt(payload.learner_id),
+          batch_no: payload.batch_no,
+          week_no: parseInt(payload.week_no),
+          assessment_date: isoDate,
+          assessment_name: payload.assessment_name,
+          out_off: parseInt(payload.out_off),
+          points: parseFloat(payload.points),
+          percentage: payload.percentage ? parseFloat(payload.percentage) : null
+        };
         break;
 
       case "module-level-assessment":
         tableName = "module_level_assessment_scores";
-        insertData.module_no = payload.module_no ? Number(payload.module_no) : null;
-        insertData.assessment_name = payload.assessment_name || null;
+        if (!payload.module_no) {
+          return res.status(400).json({ error: "module_no is required for module-level-assessment" });
+        }
+        if (!payload.assessment_name) {
+          return res.status(400).json({ error: "assessment_name is required for module-level-assessment" });
+        }
+        insertData = {
+          learner_id: parseInt(payload.learner_id),
+          batch_no: payload.batch_no,
+          module_no: parseInt(payload.module_no),
+          assessment_date: isoDate,
+          assessment_name: payload.assessment_name,
+          out_off: parseInt(payload.out_off),
+          points: parseFloat(payload.points),
+          percentage: payload.percentage ? parseFloat(payload.percentage) : null
+        };
         break;
 
       default:
-        return res.status(400).json({ error: "Invalid assessment type" });
+        return res.status(400).json({ error: `Invalid assessment type: ${assessmentType}` });
     }
 
-    console.log(`📤 FINAL INSERT → ${tableName}`, JSON.stringify(insertData, null, 2));
+    console.log(`📤 Inserting into table: ${tableName}`);
+    console.log(`📤 Insert data:`, JSON.stringify(insertData, null, 2));
 
-    const { error } = await supabase
+    // Insert into Supabase
+    const { data, error } = await supabase
       .from(tableName)
       .insert(insertData);
 
     if (error) {
       console.error("❌ SUPABASE ERROR:", error);
-      return res.status(500).json({ error: error.message });
+      console.error("❌ Error details:", JSON.stringify(error, null, 2));
+      return res.status(500).json({ 
+        error: error.message || "Database error",
+        details: error.details || "No additional details"
+      });
     }
 
-    res.json({ success: true });
+    console.log("✅ SUCCESS! Data inserted");
+    res.json({ success: true, message: "Marks saved successfully" });
+
   } catch (err) {
     console.error("🚨 SERVER CRASH:", err);
-    res.status(500).json({ error: "Internal server error" });
+    console.error("🚨 Stack trace:", err.stack);
+    res.status(500).json({ 
+      error: "Internal server error",
+      message: err.message 
+    });
   }
 });
 

@@ -55,8 +55,6 @@ function MarkSheet() {
   }, []);
 
   const parseAssessmentDate = (dateStr) => {
-    console.log("🔍 Parsing date:", dateStr);
-    
     if (!dateStr || typeof dateStr !== 'string') return null;
 
     let day, month, year;
@@ -74,15 +72,11 @@ function MarkSheet() {
         month = parseInt(yyyymmddMatch[2], 10);
         day = parseInt(yyyymmddMatch[3], 10);
       } else {
-        console.log("❌ No date pattern matched");
         return null;
       }
     }
 
-    console.log("Parsed components:", { day, month, year });
-
     if (day < 1 || day > 31 || month < 1 || month > 12 || year < 1900 || year > 2100) {
-      console.log("❌ Invalid date components");
       return null;
     }
 
@@ -92,21 +86,16 @@ function MarkSheet() {
         date.getDate() !== day || 
         date.getMonth() !== month - 1 || 
         date.getFullYear() !== year) {
-      console.log("❌ Invalid date");
       return null;
     }
 
-    console.log("✅ Valid parsed date:", date.toISOString().split('T')[0]);
     return date;
   };
 
   const checkMarkEntryWindow = (assessmentDateStr) => {
-    console.log("🧮 Checking window for assessment date:", assessmentDateStr);
-    
     const assessmentDate = parseAssessmentDate(assessmentDateStr);
     
     if (!assessmentDate) {
-      console.log("❌ Cannot parse assessment date");
       setWindowStatus("invalid");
       setIsWindowOpen(false);
       setWindowCloseDate("Invalid date format");
@@ -118,15 +107,9 @@ function MarkSheet() {
       const typeConfig = ASSESSMENT_TYPES.find(t => t.key === assessmentType);
       const daysWindow = typeConfig?.daysWindow || 7;
 
-      console.log("Assessment date:", assessmentDate.toLocaleDateString('en-GB'));
-      console.log("Days window:", daysWindow);
-      console.log("Current time:", now.toLocaleString('en-GB'));
-
       const closeDate = new Date(assessmentDate);
       closeDate.setDate(assessmentDate.getDate() + daysWindow);
       closeDate.setHours(23, 59, 59, 999);
-
-      console.log("Calculated close date:", closeDate.toLocaleString('en-GB'));
 
       const isOpen = now <= closeDate;
       
@@ -136,19 +119,12 @@ function MarkSheet() {
         year: 'numeric'
       }) + `, ${closeDate.getHours().toString().padStart(2, '0')}:${closeDate.getMinutes().toString().padStart(2, '0')}`;
 
-      console.log("Final window status:", { 
-        now: now.toLocaleDateString('en-GB'), 
-        closeDate: closeDate.toLocaleDateString('en-GB'), 
-        isOpen 
-      });
-
       setWindowStatus("valid");
       setIsWindowOpen(isOpen);
       setWindowCloseDate(closeDateFormatted);
       
       return { isOpen, closeDate: closeDateFormatted };
     } catch (error) {
-      console.error("❌ Window check error:", error);
       setWindowStatus("error");
       return { isOpen: false, closeDate: "Error calculating window" };
     }
@@ -257,33 +233,34 @@ function MarkSheet() {
 
     setMessage("⏳ Saving...");
     let anySaved = false;
+    let errorMsg = "";
 
     try {
       for (let learner of learners) {
         if (!marks[learner.id]?.points) continue;
 
-        // ✅ FIXED: Base payload with ALL common fields
+        // Build payload based on assessment type
         const payload = {
           learner_id: learner.id,
           batch_no: batchNo,
           assessment_date: selectedDate,
-          week_no: selectedWeekNo || null,  // ✅ ALWAYS send week_no
           out_off: outOff,
           points: marks[learner.id].points,
           percentage: marks[learner.id].percentage || null,
         };
 
-        // ✅ Add assessment_name for intermediate and module-level
-        if (assessmentType === "intermediate-assessment" || assessmentType === "module-level-assessment") {
-          payload.assessment_name = selectedTopic || null;
+        // Add type-specific fields
+        if (assessmentType === "weekly-assessment" || assessmentType === "weekly-quiz") {
+          payload.week_no = selectedWeekNo;
+        } else if (assessmentType === "intermediate-assessment") {
+          payload.week_no = selectedWeekNo;
+          payload.assessment_name = selectedTopic;
+        } else if (assessmentType === "module-level-assessment") {
+          payload.module_no = selectedWeekNo;
+          payload.assessment_name = selectedTopic;
         }
 
-        // ✅ Add module_no for module-level assessment
-        if (assessmentType === "module-level-assessment") {
-          payload.module_no = selectedWeekNo || null;
-        }
-
-        console.log("📤 Sending payload:", JSON.stringify(payload, null, 2));
+        console.log("📤 Payload for", learner.name, ":", JSON.stringify(payload, null, 2));
 
         const res = await fetch(`${API_BASE}/api/marks/${assessmentType}`, {
           method: "POST",
@@ -294,26 +271,35 @@ function MarkSheet() {
           body: JSON.stringify(payload)
         });
 
+        const responseText = await res.text();
+        console.log("📥 Response:", responseText);
+
         if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err.error || `HTTP ${res.status}`);
+          let err;
+          try {
+            err = JSON.parse(responseText);
+          } catch {
+            err = { error: responseText || `HTTP ${res.status}` };
+          }
+          errorMsg = err.error || err.message || `HTTP ${res.status}`;
+          throw new Error(errorMsg);
         }
 
         anySaved = true;
       }
 
       if (anySaved) {
-        setMessage("✅ Marks SAVED!");
+        setMessage("✅ Marks SAVED successfully!");
         setMarks({});
       } else {
-        setMessage("⚠️ Enter marks first.");
+        setMessage("⚠️ No marks entered to save.");
       }
     } catch (err) {
-      console.error("🚨 ERROR:", err);
-      setMessage(`❌ ${err.message}`);
+      console.error("🚨 SAVE ERROR:", err);
+      setMessage(`❌ Error: ${err.message}`);
     }
 
-    setTimeout(() => setMessage(""), 4000);
+    setTimeout(() => setMessage(""), 5000);
   };
 
   const currentType = ASSESSMENT_TYPES.find(at => at.key === assessmentType);
