@@ -824,14 +824,25 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
       return res.status(400).json({ error: "points is required" });
     }
 
-    // Convert DD-MM-YYYY to YYYY-MM-DD
+    // Convert date to YYYY-MM-DD (handles DD-MM-YYYY, DD/MM/YYYY, or YYYY-MM-DD)
     let isoDate = payload.assessment_date;
-    if (payload.assessment_date && payload.assessment_date.includes("-")) {
-      const parts = payload.assessment_date.split("-");
-      if (parts.length === 3 && parts[0].length === 2) {
-        // DD-MM-YYYY format
-        isoDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
-        console.log(`📅 Date converted: ${payload.assessment_date} → ${isoDate}`);
+    if (payload.assessment_date) {
+      const parts = payload.assessment_date.split(/[-\/]/); // Split on - or /
+      if (parts.length === 3) {
+        const [first, second, third] = parts.map(p => parseInt(p, 10));
+        if (first >= 1 && first <= 31 && second >= 1 && second <= 12 && third >= 1900 && third <= 2100) {
+          // Assume DD-MM-YYYY or DD/MM/YYYY
+          isoDate = `${third}-${second.toString().padStart(2, '0')}-${first.toString().padStart(2, '0')}`;
+          console.log(`📅 Date converted: ${payload.assessment_date} → ${isoDate}`);
+        } else if (first >= 1900 && first <= 2100 && second >= 1 && second <= 12 && third >= 1 && third <= 31) {
+          // Already YYYY-MM-DD
+          isoDate = payload.assessment_date;
+          console.log(`📅 Date already in YYYY-MM-DD: ${isoDate}`);
+        } else {
+          return res.status(400).json({ error: "Invalid date format. Expected DD-MM-YYYY, DD/MM/YYYY, or YYYY-MM-DD." });
+        }
+      } else {
+        return res.status(400).json({ error: "Invalid date format. Expected DD-MM-YYYY, DD/MM/YYYY, or YYYY-MM-DD." });
       }
     }
 
