@@ -54,32 +54,39 @@ const router = express.Router();
 const FRONTEND_URL = "https://engg-automation-r1ke.onrender.com";
 const LOCAL_URL = "http://localhost:3000";
 
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow requests with no origin (mobile apps, Postman)
+    if (!origin) return callback(null, true);
+    
+    const allowedOrigins = [FRONTEND_URL, LOCAL_URL];
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    } else {
+      console.log(`🚫 CORS blocked origin: ${origin}`);
+      return callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: [
+    'Origin', 
+    'X-Requested-With', 
+    'Content-Type', 
+    'Accept', 
+    'Authorization',
+    'Cache-Control'
+  ],
+  optionsSuccessStatus: 200
+};
+
 // =====================================================
 // ✅ FIXED CORS — ONLY THIS IS ENOUGH (Render Friendly)
 // =====================================================
-app.use(
-  cors({
-    origin: [FRONTEND_URL, LOCAL_URL],
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: [
-      "Origin",
-      "X-Requested-With",
-      "Content-Type",
-      "Accept",
-      "Authorization",
-      "Cache-Control",
-    ],
-  })
-);
+app.use(cors(corsOptions));
 
 // 🔥 GLOBAL OPTIONS HANDLER - BEFORE ALL ROUTES
-app.options("*", (req, res) => {
-  res.header('Access-Control-Allow-Origin', 'https://engg-automation-r1ke.onrender.com');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cache-Control, Accept');
-  res.status(200).end();
-});
+app.options('*', cors(corsOptions));
 
 // Mount routers
 app.use('/api/marks', marksWindowsRouter);
