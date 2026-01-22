@@ -96,8 +96,19 @@ function MarkSheet() {
       `${API_BASE}/api/assessment-dates?batch_no=${batchNo}&type=${assessmentType}`
     )
       .then(res => res.json())
-      .then(data => setPeriods(Array.isArray(data) ? data : []))
-      .catch(() => setPeriods([]));
+      .then(resData => {
+        // ✅ HANDLE ALL POSSIBLE SHAPES
+        const rows = Array.isArray(resData)
+          ? resData
+          : Array.isArray(resData?.data)
+          ? resData.data
+          : [];
+
+        setPeriods(rows);
+      })
+      .catch(() => {
+        setPeriods([]);
+      });
   }, [batchNo, assessmentType]);
 
   /* ---------------- WINDOW CHECK ---------------- */
@@ -214,20 +225,24 @@ function MarkSheet() {
             <InputLabel>Assessment Date</InputLabel>
             <Select
               value={selectedDate}
-              onChange={e => {
-                const val = e.target.value;
-                setSelectedDate(val);
-                const row = periods.find(p => p.date === val);
+              onChange={(e) => {
+                const date = e.target.value;
+                setSelectedDate(date);
+
+                const row = periods.find(p => p.date === date);
                 setTopicName(row?.topic_name || "");
                 setSelectedWeekNo(row?.week_no || "");
               }}
             >
-              {Array.isArray(periods) &&
-                periods.map(p => (
-                  <MenuItem key={p.date} value={p.date}>
-                    {p.date}
-                  </MenuItem>
-                ))}
+              {periods.length === 0 && (
+                <MenuItem disabled>No assessment dates</MenuItem>
+              )}
+
+              {periods.map((p) => (
+                <MenuItem key={p.date} value={p.date}>
+                  {p.date}
+                </MenuItem>
+              ))}
             </Select>
           </FormControl>
 
