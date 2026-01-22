@@ -798,84 +798,77 @@ app.get("/api/marks/window-status", async (req, res) => {
 
 // 2) POST /api/marks/:assessmentType
 app.post('/api/marks/:assessmentType', async (req, res) => {
-  res.header('Access-Control-Allow-Origin', 'https://engg-automation-r1ke.onrender.com');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  
-  if (req.method === 'OPTIONS') return res.status(200).end();
-
   try {
     const { assessmentType } = req.params;
     const payload = req.body;
 
     console.log(`📝 [${assessmentType}] Payload:`, payload);
 
-    // ✅ MINIMAL VALIDATION - ONLY COMMON FIELDS
-    if (!payload.learner_id ||
+    // ✅ COMMON VALIDATION
+    if (
+      !payload.learner_id ||
       !payload.batch_no ||
       !payload.assessment_date ||
       payload.points === undefined
     ) {
-      return res.status(400).json({ 
-        error: `Missing COMMON fields for ${assessmentType}`,
-        received: payload 
+      return res.status(400).json({
+        error: "Missing required fields",
+        received: payload
       });
     }
 
-    let tableName, insertData = {
-      learner_id: parseInt(payload.learner_id),
+    let tableName = "";
+    let insertData = {
+      learner_id: Number(payload.learner_id),
       batch_no: payload.batch_no,
-      points: parseFloat(payload.points),
-      percentage: payload.percentage ? parseFloat(payload.percentage) : null,
-      assessment_date: payload.assessment_date
+      assessment_date: payload.assessment_date,
+      points: Number(payload.points),
+      percentage: payload.percentage ? Number(payload.percentage) : null
     };
 
-    // ✅ TYPE-SPECIFIC FIELDS ONLY WHEN PROVIDED
+    // ✅ STRICT PER-TYPE MAPPING
     switch (assessmentType) {
-      case 'weekly-assessment':
-        tableName = 'weekly_assessment_scores';
-        if (payload.week_no) insertData.week_no = payload.week_no;
-        if (payload.out_off) insertData.out_off = parseFloat(payload.out_off);
+      case "weekly-assessment":
+        tableName = "weekly_assessment_scores";
+        insertData.week_no = Number(payload.week_no);
+        insertData.out_off = Number(payload.out_off);
         break;
 
-      case 'intermediate-assessment':
-        tableName = 'intermediate_assessment_scores';
-        if (payload.assessment_name) insertData.assessment_name = payload.assessment_name;
+      case "weekly-quiz":
+        tableName = "weekly_assessment_scores";
+        insertData.week_no = Number(payload.week_no);
+        insertData.out_off = Number(payload.out_off || 10);
         break;
 
-      case 'module-level-assessment':
-        tableName = 'module_level_assessment_scores';
-        if (payload.assessment_name) insertData.assessment_name = payload.assessment_name;
-        if (payload.module_no) insertData.module_no = payload.module_no;
+      case "intermediate-assessment":
+        tableName = "intermediate_assessment_scores";
+        // 🚨 DO NOT SEND EXTRA FIELDS
         break;
 
-      case 'weekly-quiz':
-        tableName = 'weekly_assessment_scores';
-        if (payload.week_no) insertData.week_no = payload.week_no;
-        if (payload.out_off) insertData.out_off = parseFloat(payload.out_off) || 10;
+      case "module-level-assessment":
+        tableName = "module_level_assessment_scores";
+        insertData.module_no = Number(payload.module_no);
         break;
 
       default:
-        return res.status(400).json({ error: 'Invalid assessment type' });
+        return res.status(400).json({ error: "Invalid assessment type" });
     }
 
-    console.log(`📤 SAVE → ${tableName}:`, insertData);
+    console.log(`📤 INSERT → ${tableName}`, insertData);
 
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from(tableName)
-      .upsert(insertData);
+      .insert(insertData);   // ⬅️ INSERT (not upsert)
 
     if (error) {
-      console.error('❌ ERROR:', error);
+      console.error("❌ Supabase error:", error);
       return res.status(500).json({ error: error.message });
     }
 
-    console.log(`✅ SAVED to ${tableName}`);
-    res.json({ success: true, table: tableName });
-
-  } catch (error) {
-    console.error('🚨 CRASH:', error);
-    res.status(500).json({ error: 'Server error' });
+    res.json({ success: true });
+  } catch (err) {
+    console.error("🚨 SERVER CRASH:", err);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
