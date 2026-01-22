@@ -148,8 +148,20 @@ function MarkSheet() {
     if (!dateStr) return null;
     const parts = dateStr.split(/[-\/]/);
     if (parts.length === 3) {
-      const [d, m, y] = parts.map(Number);
-      return new Date(y, m - 1, d);
+      const [first, second, third] = parts.map(Number);
+      let y, m, d;
+      if (first > 31) { // Likely YYYY-MM-DD
+        y = first;
+        m = second;
+        d = third;
+      } else { // Likely DD-MM-YYYY or DD/MM/YYYY
+        d = first;
+        m = second;
+        y = third;
+      }
+      if (y >= 1900 && y <= 2100 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+        return new Date(y, m - 1, d);
+      }
     }
     return null;
   };
@@ -163,10 +175,11 @@ function MarkSheet() {
       return;
     }
     const closeDate = new Date(assessmentDate);
-    closeDate.setDate(assessmentDate.getDate() + 3); // 3 days for weekly-assessment
+    closeDate.setDate(assessmentDate.getDate() + 3);
+    closeDate.setHours(23, 59, 59, 999); // Close at end of day
     const isOpen = currentDate <= closeDate;
     setIsWindowOpen(isOpen);
-    setWindowCloseDate(closeDate.toLocaleDateString('en-GB'));
+    setWindowCloseDate(closeDate.toLocaleDateString('en-GB')); // DD/MM/YYYY
     setWindowStatus("valid");
   };
 
