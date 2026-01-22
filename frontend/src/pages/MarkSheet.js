@@ -79,13 +79,26 @@ function MarkSheet() {
 
   /* ---------------- FETCH LEARNERS ---------------- */
   useEffect(() => {
-    if (!batchNo || !assessmentType) return;
+    if (!batchNo || !assessmentType) {
+      setPeriods([]);
+      setAssessmentDate("");
+      return;
+    }
 
     fetch(
       `${API_BASE}/api/assessment-dates?batch_no=${batchNo}&type=${assessmentType}`
     )
       .then(res => res.json())
-      .then(data => setPeriods(data || []));
+      .then(data => {
+        if (Array.isArray(data)) {
+          setPeriods(data);
+        } else {
+          setPeriods([]); // 👈 SAFETY
+        }
+      })
+      .catch(() => {
+        setPeriods([]); // 👈 SAFETY
+      });
   }, [batchNo, assessmentType]);
 
   /* ---------------- FETCH PERIODS (DISTINCT) ---------------- */
@@ -250,12 +263,9 @@ function MarkSheet() {
           <FormControl sx={{ minWidth: 220 }}>
             <InputLabel>Week / Date</InputLabel>
             <Select value={periodValue} onChange={handlePeriodSelect}>
-              {periods.map((p) => (
-                <MenuItem
-                  key={`${p.week_no}-${p.date}`}
-                  value={`${p.week_no}::${p.date}`}
-                >
-                  Week {p.week_no} ({p.date})
+              {Array.isArray(periods) && periods.map(p => (
+                <MenuItem key={p.date} value={p.date}>
+                  {p.date}
                 </MenuItem>
               ))}
             </Select>

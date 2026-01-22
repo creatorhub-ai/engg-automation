@@ -3280,28 +3280,38 @@ app.get("/api/topic", async (req, res) => {
 
 //get the assessment dates
 app.get("/api/assessment-dates", async (req, res) => {
-  const { batch_no, type } = req.query;
+  try {
+    const { batch_no, type } = req.query;
 
-  const textMap = {
-    weekly: "Weekly Assessment",
-    intermediate: "Intermediate Assessment",
-    module: "Module Level Assessment",
-  };
+    if (!batch_no || !type) {
+      return res.json([]); // ALWAYS array
+    }
 
-  const searchText = textMap[type];
+    const textMap = {
+      weekly: "Weekly Assessment",
+      intermediate: "Intermediate Assessment",
+      module: "Module Level Assessment",
+    };
 
-  const { data, error } = await supabase
-    .from("course_planner_data")
-    .select("date, week_no, module_no")
-    .eq("batch_no", batch_no)
-    .ilike("topic_name", `${searchText}%`)
-    .order("date");
+    const searchText = textMap[type];
 
-  if (error) {
-    return res.status(500).json({ error: error.message });
+    const { data, error } = await supabase
+      .from("course_planner_data")
+      .select("date, week_no, module_no")
+      .eq("batch_no", batch_no)
+      .ilike("topic_name", `${searchText}%`)
+      .order("date", { ascending: true });
+
+    if (error) {
+      console.error("assessment-dates error:", error.message);
+      return res.json([]); // 👈 NEVER fail
+    }
+
+    res.json(Array.isArray(data) ? data : []);
+  } catch (err) {
+    console.error("assessment-dates crash:", err.message);
+    res.json([]); // 👈 ABSOLUTE SAFETY
   }
-
-  res.json(data);
 });
 
 // Add or update Weekly Assessment Score
