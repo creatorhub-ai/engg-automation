@@ -15,57 +15,60 @@ import {
   TableCell,
   TableBody,
   Alert,
-  Fade,
   Chip,
   CircularProgress,
 } from "@mui/material";
 
-const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
+const API_BASE =
+  process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 
 function MarkSheet() {
   const [batchNo, setBatchNo] = useState("");
   const [availableBatches, setAvailableBatches] = useState([]);
   const [loadingBatches, setLoadingBatches] = useState(true);
+
+  const [assessmentType, setAssessmentType] = useState("weekly");
+
   const [learners, setLearners] = useState([]);
   const [loadingLearners, setLoadingLearners] = useState(false);
+
   const [marks, setMarks] = useState({});
   const [outOff, setOutOff] = useState("");
+
   const [periods, setPeriods] = useState([]);
   const [loadingPeriods, setLoadingPeriods] = useState(false);
   const [periodValue, setPeriodValue] = useState("");
   const [selectedWeekNo, setSelectedWeekNo] = useState("");
   const [selectedDate, setSelectedDate] = useState("");
+
+  const [topicMap, setTopicMap] = useState({});
+
   const [message, setMessage] = useState("");
+
   const [isWindowOpen, setIsWindowOpen] = useState(true);
   const [windowCloseDate, setWindowCloseDate] = useState("");
-  const [windowStatus, setWindowStatus] = useState("valid");
+
   const [currentDate, setCurrentDate] = useState(new Date());
 
+  /* ---------------- CLOCK ---------------- */
   useEffect(() => {
-    const interval = setInterval(() => {
-      setCurrentDate(new Date());
-    }, 1000);
+    const interval = setInterval(() => setCurrentDate(new Date()), 1000);
     return () => clearInterval(interval);
   }, []);
 
-  // Fetch available batches on load
+  /* ---------------- FETCH BATCHES ---------------- */
   useEffect(() => {
     const fetchBatches = async () => {
       try {
-        console.log("Fetching batches...");
         const res = await fetch(`${API_BASE}/api/batches`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        console.log("Raw data from API:", data);
-        // Extract batch_no if objects, or use as strings if already strings
-        const distinctBatches = Array.isArray(data)
-          ? [...new Set(data.map(item => (typeof item === 'string' ? item : item?.batch_no)).filter(Boolean))]
-          : [];
-        setAvailableBatches(distinctBatches);
-        console.log("Processed batches:", distinctBatches);
-      } catch (err) {
-        console.error("Failed to load batches:", err);
-        setMessage("❌ Failed to load batches. Check console.");
+        const distinct = [
+          ...new Set(
+            data.map((b) => (typeof b === "string" ? b : b.batch_no)).filter(Boolean)
+          ),
+        ];
+        setAvailableBatches(distinct);
+      } catch {
         setAvailableBatches([]);
       } finally {
         setLoadingBatches(false);
@@ -74,26 +77,20 @@ function MarkSheet() {
     fetchBatches();
   }, []);
 
-  // Fetch learners when batchNo changes
+  /* ---------------- FETCH LEARNERS ---------------- */
   useEffect(() => {
-    if (!batchNo) {
-      setLearners([]);
-      return;
-    }
+    if (!batchNo) return setLearners([]);
+
     const fetchLearners = async () => {
       setLoadingLearners(true);
       try {
-        console.log("Fetching learners for batch:", batchNo);
-        const res = await fetch(`${API_BASE}/apigetlearners?batchno=${encodeURIComponent(batchNo)}`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const res = await fetch(
+          `${API_BASE}/apigetlearners?batchno=${batchNo}`
+        );
         const data = await res.json();
-        const learnersClean = (Array.isArray(data) ? data : []).filter(l => l && l.id).map(l => ({ ...l, id: l.id }));
-        setLearners(learnersClean);
-        console.log("Learners loaded:", learnersClean);
-      } catch (err) {
-        console.error("Failed to load learners:", err);
+        setLearners(data || []);
+      } catch {
         setLearners([]);
-        setMessage("❌ Failed to load learners. Check console.");
       } finally {
         setLoadingLearners(false);
       }
@@ -101,116 +98,102 @@ function MarkSheet() {
     fetchLearners();
   }, [batchNo]);
 
-  // Fetch periods for weekly-assessment
+  /* ---------------- FETCH PERIODS (DISTINCT) ---------------- */
   useEffect(() => {
-    if (!batchNo) {
-      setPeriods([]);
-      return;
-    }
+    if (!batchNo) return setPeriods([]);
+
     const fetchPeriods = async () => {
       setLoadingPeriods(true);
       try {
-        console.log("Fetching periods for batch:", batchNo);
-        const res = await fetch(`${API_BASE}/apiperiods/${encodeURIComponent(batchNo)}/weekly-assessment`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const res = await fetch(
+          `${API_BASE}/apiperiods/${batchNo}/weekly-assessment`
+        );
         const data = await res.json();
-        setPeriods(Array.isArray(data) ? data : []);
-        console.log("Periods loaded:", data);
-      } catch (err) {
-        console.error("Failed to load periods:", err);
+
+        const unique = {};
+        (data || []).forEach((p) => {
+          unique[`${p.week_no}-${p.date}`] = p;
+        });
+
+        setPeriods(Object.values(unique));
+      } catch {
         setPeriods([]);
-        setMessage("❌ Failed to load periods. Check console.");
       } finally {
         setLoadingPeriods(false);
       }
     };
+
     fetchPeriods();
     setPeriodValue("");
     setSelectedWeekNo("");
     setSelectedDate("");
-    setIsWindowOpen(true);
-    setWindowCloseDate("");
-    setWindowStatus("valid");
+    setTopicMap({});
   }, [batchNo]);
 
-  // Check window when date changes
+  /* ---------------- WINDOW CHECK ---------------- */
   useEffect(() => {
-    if (selectedDate) {
-      checkMarkEntryWindow(selectedDate);
-    } else {
-      setIsWindowOpen(true);
-      setWindowCloseDate("");
-      setWindowStatus("valid");
-    }
-  }, [selectedDate, currentDate]);
+    if (!selectedDate) return;
 
-  const parseAssessmentDate = (dateStr) => {
-    if (!dateStr) return null;
-    const parts = dateStr.split(/[-\/]/);
-    if (parts.length === 3) {
-      const [first, second, third] = parts.map(Number);
-      let y, m, d;
-      if (first > 31) { // Likely YYYY-MM-DD
-        y = first;
-        m = second;
-        d = third;
-      } else { // Likely DD-MM-YYYY or DD/MM/YYYY
-        d = first;
-        m = second;
-        y = third;
-      }
-      if (y >= 1900 && y <= 2100 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
-        return new Date(y, m - 1, d);
-      }
-    }
-    return null;
-  };
+    const d = new Date(selectedDate);
+    const close = new Date(d);
+    const days = assessmentType === "weekly" ? 3 : 4;
+    close.setDate(d.getDate() + days);
+    close.setHours(23, 59, 59, 999);
 
-  const checkMarkEntryWindow = (assessmentDateStr) => {
-    const assessmentDate = parseAssessmentDate(assessmentDateStr);
-    if (!assessmentDate) {
-      setWindowStatus("invalid");
-      setIsWindowOpen(false);
-      setWindowCloseDate("Invalid date");
-      return;
-    }
-    const closeDate = new Date(assessmentDate);
-    closeDate.setDate(assessmentDate.getDate() + 3);
-    closeDate.setHours(23, 59, 59, 999); // Close at end of day
-    const isOpen = currentDate <= closeDate;
-    setIsWindowOpen(isOpen);
-    setWindowCloseDate(closeDate.toLocaleDateString('en-GB')); // DD/MM/YYYY
-    setWindowStatus("valid");
-  };
+    setIsWindowOpen(currentDate <= close);
+    setWindowCloseDate(close.toLocaleDateString("en-GB"));
+  }, [selectedDate, assessmentType, currentDate]);
 
-  const handlePeriodSelect = (e) => {
-    setPeriodValue(e.target.value);
-    const [w, d] = e.target.value.split("::");
+  /* ---------------- HANDLERS ---------------- */
+  const handlePeriodSelect = async (e) => {
+    const value = e.target.value;
+    setPeriodValue(value);
+
+    const [w, d] = value.split("::");
     setSelectedWeekNo(w);
-    setSelectedDate(d || "");
+    setSelectedDate(d);
+
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/topic?batch_no=${batchNo}&date=${d}`
+      );
+      const data = await res.json();
+      setTopicMap(data || {});
+    } catch {
+      setTopicMap({});
+    }
   };
 
   const handleMarksInput = (learnerId, value) => {
     if (!isWindowOpen) return;
-    let val = value.replace(/[^0-9.]/g, "");
-    let percentage = outOff ? Math.round((parseFloat(val) / parseFloat(outOff)) * 100) : "";
-    setMarks(prev => ({
+
+    const points = value.replace(/[^0-9.]/g, "");
+    const percentage = outOff
+      ? Math.round((points / outOff) * 100)
+      : "";
+
+    setMarks((prev) => ({
       ...prev,
-      [learnerId]: { points: val, percentage },
+      [learnerId]: { points, percentage },
     }));
   };
 
+  /* ---------------- SAVE ---------------- */
   const handleSave = async () => {
-    if (!selectedDate || !outOff || !isWindowOpen) {
-      setMessage("⚠️ Check inputs or window.");
-      setTimeout(() => setMessage(""), 3000);
-      return;
-    }
+    if (!selectedDate || !outOff || !isWindowOpen) return;
 
-    setMessage("⏳ Saving...");
+    const endpointMap = {
+      weekly: "/api/marks/weekly-assessment",
+      intermediate: "/api/marks/intermediate-assessment",
+      module: "/api/marks/module-level-assessment",
+    };
+
+    const endpoint = endpointMap[assessmentType];
+
     try {
-      for (let learner of learners) {
+      for (const learner of learners) {
         if (!marks[learner.id]?.points) continue;
+
         const payload = {
           learner_id: learner.id,
           batch_no: batchNo,
@@ -221,34 +204,23 @@ function MarkSheet() {
           week_no: selectedWeekNo,
         };
 
-        console.log("Saving for learner:", learner.name, payload);
-        const res = await fetch(`${API_BASE}/api/marks/weekly-assessment`, {
+        await fetch(`${API_BASE}${endpoint}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
+          body: JSON.stringify(payload),
         });
-
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || "Save failed");
-        }
       }
-      setMessage("✅ Marks saved!");
+
+      setMessage("✅ Marks saved successfully");
       setMarks({});
     } catch (err) {
-      console.error("Save error:", err);
-      setMessage(`❌ Error: ${err.message}`);
+      setMessage("❌ Failed to save marks");
     }
-    setTimeout(() => setMessage(""), 5000);
+
+    setTimeout(() => setMessage(""), 4000);
   };
 
-  const formatCurrentDate = () => {
-    return currentDate.toLocaleDateString('en-GB', {
-      day: '2-digit', month: '2-digit', year: 'numeric',
-      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
-    });
-  };
-
+  /* ---------------- UI ---------------- */
   if (loadingBatches) {
     return (
       <Box sx={{ display: "flex", justifyContent: "center", mt: 5 }}>
@@ -260,90 +232,109 @@ function MarkSheet() {
 
   return (
     <Box sx={{ maxWidth: 1200, mx: "auto", my: 3 }}>
-      <Paper elevation={6} sx={{ p: 4, borderRadius: 3 }}>
-        <Typography variant="h4" color="primary" gutterBottom>
-          Weekly Assessment Marks Entry
+      <Paper sx={{ p: 4 }}>
+        <Typography variant="h4" gutterBottom>
+          Assessment Marks Entry
         </Typography>
-        <Box sx={{ textAlign: "right", mb: 3 }}>
-          <Typography variant="h6">Current Date & Time: {formatCurrentDate()}</Typography>
-        </Box>
 
-        <Box sx={{ display: "flex", gap: 3, mb: 2, flexWrap: "wrap", alignItems: "end" }}>
-          <FormControl sx={{ minWidth: 180 }}>
-            <InputLabel>Batch No</InputLabel>
-            <Select value={batchNo} onChange={(e) => setBatchNo(e.target.value)} size="small">
-              <MenuItem value="">Select Batch</MenuItem>
-              {availableBatches.map(batch => (
-                <MenuItem key={batch} value={batch}>{batch}</MenuItem>
+        <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap", mb: 2 }}>
+          <FormControl sx={{ minWidth: 200 }}>
+            <InputLabel>Assessment Type</InputLabel>
+            <Select
+              value={assessmentType}
+              onChange={(e) => setAssessmentType(e.target.value)}
+            >
+              <MenuItem value="weekly">Weekly</MenuItem>
+              <MenuItem value="intermediate">Intermediate</MenuItem>
+              <MenuItem value="module">Module Level</MenuItem>
+            </Select>
+          </FormControl>
+
+          <FormControl sx={{ minWidth: 160 }}>
+            <InputLabel>Batch</InputLabel>
+            <Select value={batchNo} onChange={(e) => setBatchNo(e.target.value)}>
+              {availableBatches.map((b) => (
+                <MenuItem key={b} value={b}>
+                  {b}
+                </MenuItem>
               ))}
             </Select>
           </FormControl>
 
-          <FormControl sx={{ minWidth: 200 }}>
-            <InputLabel>Week No</InputLabel>
-            <Select value={periodValue} onChange={handlePeriodSelect} size="small" disabled={loadingPeriods}>
-              <MenuItem value="">Select Week</MenuItem>
-              {periods.map(p => (
-                <MenuItem key={`${p.week_no}::${p.date}`} value={`${p.week_no}::${p.date}`}>
+          <FormControl sx={{ minWidth: 220 }}>
+            <InputLabel>Week / Date</InputLabel>
+            <Select value={periodValue} onChange={handlePeriodSelect}>
+              {periods.map((p) => (
+                <MenuItem
+                  key={`${p.week_no}-${p.date}`}
+                  value={`${p.week_no}::${p.date}`}
+                >
                   Week {p.week_no} ({p.date})
                 </MenuItem>
               ))}
             </Select>
-            {loadingPeriods && <CircularProgress size={20} sx={{ ml: 1 }} />}
           </FormControl>
 
-          <FormControl sx={{ minWidth: 160 }}>
-            <TextField label="Out Off (Marks)" value={outOff} onChange={(e) => setOutOff(e.target.value.replace(/[^0-9]/g, ""))} size="small" />
-          </FormControl>
+          <TextField
+            label="Out Of"
+            value={outOff}
+            onChange={(e) => setOutOff(e.target.value.replace(/\D/g, ""))}
+          />
 
           {selectedDate && (
-            <Chip label={isWindowOpen ? `Open until ${windowCloseDate}` : `Closed (${windowCloseDate})`} color={isWindowOpen ? "success" : "error"} />
+            <Chip
+              label={
+                isWindowOpen
+                  ? `Open till ${windowCloseDate}`
+                  : `Closed (${windowCloseDate})`
+              }
+              color={isWindowOpen ? "success" : "error"}
+            />
           )}
         </Box>
 
-        {loadingLearners ? (
-          <Box sx={{ display: "flex", justifyContent: "center", my: 3 }}>
-            <CircularProgress />
-            <Typography sx={{ ml: 2 }}>Loading learners...</Typography>
-          </Box>
-        ) : (
-          <Table sx={{ minWidth: 800, mb: 3 }}>
-            <TableHead>
-              <TableRow>
-                <TableCell>Name</TableCell>
-                <TableCell>Email</TableCell>
-                <TableCell>Marks</TableCell>
-                <TableCell>%</TableCell>
+        <Table>
+          <TableHead>
+            <TableRow>
+              <TableCell>Name</TableCell>
+              <TableCell>Email</TableCell>
+              <TableCell>Topic</TableCell>
+              <TableCell>Marks</TableCell>
+              <TableCell>%</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {learners.map((l) => (
+              <TableRow key={l.id}>
+                <TableCell>{l.name}</TableCell>
+                <TableCell>{l.email}</TableCell>
+                <TableCell>{topicMap?.topic_name || "-"}</TableCell>
+                <TableCell>
+                  <TextField
+                    size="small"
+                    value={marks[l.id]?.points || ""}
+                    disabled={!isWindowOpen}
+                    onChange={(e) =>
+                      handleMarksInput(l.id, e.target.value)
+                    }
+                  />
+                </TableCell>
+                <TableCell>{marks[l.id]?.percentage || ""}</TableCell>
               </TableRow>
-            </TableHead>
-            <TableBody>
-              {learners.length > 0 ? learners.map(learner => (
-                <TableRow key={learner.id}>
-                  <TableCell>{learner.name}</TableCell>
-                  <TableCell>{learner.email}</TableCell>
-                  <TableCell>
-                    <TextField value={marks[learner.id]?.points || ""} onChange={(e) => handleMarksInput(learner.id, e.target.value)} size="small" disabled={!isWindowOpen} />
-                  </TableCell>
-                  <TableCell>{marks[learner.id]?.percentage || ""}</TableCell>
-                </TableRow>
-              )) : (
-                <TableRow>
-                  <TableCell colSpan={4} align="center">No learners found. Select a batch.</TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        )}
+            ))}
+          </TableBody>
+        </Table>
 
-        <Button variant="contained" onClick={handleSave} disabled={!isWindowOpen || !selectedWeekNo || !outOff || loadingLearners}>
+        <Button
+          variant="contained"
+          sx={{ mt: 2 }}
+          disabled={!isWindowOpen}
+          onClick={handleSave}
+        >
           Save Marks
         </Button>
 
-        {message && (
-          <Alert severity={message.startsWith("✅") ? "success" : "error"} sx={{ mt: 2 }}>
-            {message}
-          </Alert>
-        )}
+        {message && <Alert sx={{ mt: 2 }}>{message}</Alert>}
       </Paper>
     </Box>
   );

@@ -160,6 +160,19 @@ const MOCK_INTERVIEW_REMINDER_SEND_TIME = "17:05"; // HH:mm
 const TRAINER_SOFT_SKILLS_REMINDER_TIME = "17:08"; // HH:mm
 const LEARNER_SOFT_SKILLS_REMINDER_TIME = "17:10"; // HH:mm
 
+const getPlannerByBatchAndDate = async (batch_no, date) => {
+  const { data, error } = await supabase
+    .from("course_planner_data")
+    .select("id, topic_name, module_name")
+    .eq("batch_no", batch_no)
+    .eq("date", date)
+    .limit(1);
+
+  if (error || !data || data.length === 0) return null;
+  return data[0];
+};
+
+
 app.use(bodyParser.json());
 
 function authMiddleware(req, res, next) {
@@ -3257,87 +3270,125 @@ app.post("/api/marks/weekly-assessment", async (req, res) => {
       percentage
     } = req.body;
 
-    // ---------- BASIC VALIDATION ----------
-    if (
-      !learner_id ||
-      !batch_no ||
-      week_no === undefined ||
-      !assessment_date ||
-      out_off === undefined ||
-      points === undefined
-    ) {
-      return res.status(400).json({
-        error: "Missing required fields",
-        payload: req.body
-      });
+    const planner = await getPlannerByBatchAndDate(batch_no, assessment_date);
+    if (!planner) {
+      return res.status(409).json({ error: "Planner not found" });
     }
 
-    const cleanWeekNo = Number(week_no);
-    const cleanDate = assessment_date.includes("T")
-      ? assessment_date.split("T")[0]
-      : assessment_date;
-
-    // ---------- FETCH COURSE PLANNER ----------
-    const { data: planners, error: plannerError } = await supabase
-      .from("course_planner_data")
-      .select("id")
-      .eq("batch_no", batch_no)
-      .eq("week_no", cleanWeekNo)
-      .limit(1);
-
-    if (plannerError) {
-      return res.status(500).json({
-        error: "Failed to fetch course planner",
-        details: plannerError
-      });
-    }
-
-    if (!planners || planners.length === 0) {
-      return res.status(409).json({
-        error: "Course planner not found for batch/week",
-        batch_no,
-        week_no: cleanWeekNo
-      });
-    }
-
-    const course_planner_id = planners[0].id;
-
-    // ---------- UPSERT MARKS ----------
-    const { error: upsertError } = await supabase
+    const { error } = await supabase
       .from("weekly_assessment_scores")
       .upsert(
         {
           learner_id,
-          course_planner_id,
+          course_planner_id: planner.id,
           batch_no,
-          week_no: cleanWeekNo,
-          assessment_date: cleanDate,
+          week_no,
+          assessment_date,
           out_off,
           points,
-          percentage
+          percentage,
+          marked_at: new Date()
         },
         {
           onConflict: "learner_id,course_planner_id,week_no,assessment_date"
         }
       );
 
-    if (upsertError) {
-      return res.status(500).json({
-        error: "Failed to save marks",
-        details: upsertError
-      });
-    }
-
-    return res.status(200).json({
-      success: true,
-      message: "Weekly assessment saved successfully"
-    });
+    if (error) throw error;
+    res.json({ success: true });
 
   } catch (err) {
-    return res.status(500).json({
-      error: "Unexpected server error",
-      details: err.message
-    });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+//save the intermediate assessment marks
+app.post("/api/marks/intermediate-assessment", async (req, res) => {
+  try {
+    const {
+      learner_id,
+      batch_no,
+      week_no,
+      assessment_date,
+      assessment_name,
+      out_off,
+      points,
+      percentage
+    } = req.body;
+
+    const planner = await getPlannerByBatchAndDate(batch_no, assessment_date);
+    if (!planner) return res.status(409).json({ error: "Planner not found" });
+
+    const { error } = await supabase
+      .from("intermediate_assessment_scores")
+      .upsert(
+        {
+          learner_id,
+          course_planner_id: planner.id,
+          batch_no,
+          week_no,
+          assessment_date,
+          assessment_name,
+          out_off,
+          points,
+          percentage,
+          marked_at: new Date()
+        },
+        {
+          onConflict: "learner_id,course_planner_id,week_no,assessment_date"
+        }
+      );
+
+    if (error) throw error;
+    res.json({ success: true });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+//save the module level assessment marks
+app.post("/api/marks/module-level-assessment", async (req, res) => {
+  try {
+    const {
+      learner_id,
+      batch_no,
+      module_no,
+      assessment_date,
+      assessment_name,
+      out_off,
+      points,
+      percentage
+    } = req.body;
+
+    const planner = await getPlannerByBatchAndDate(batch_no, assessment_date);
+    if (!planner) return res.status(409).json({ error: "Planner not found" });
+
+    const { error } = await supabase
+      .from("module_level_assessment_scores")
+      .upsert(
+        {
+          learner_id,
+          course_planner_id: planner.id,
+          batch_no,
+          module_no,
+          assessment_date,
+          assessment_name,
+          out_off,
+          points,
+          percentage,
+          marked_at: new Date()
+        },
+        {
+          onConflict: "learner_id,course_planner_id,module_no,assessment_date"
+        }
+      );
+
+    if (error) throw error;
+    res.json({ success: true });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
