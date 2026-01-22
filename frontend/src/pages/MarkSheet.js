@@ -20,7 +20,8 @@ import {
 } from "@mui/material";
 
 const API_BASE =
-  process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
+  process.env.REACT_APP_API_URL ||
+  "https://engg-automation.onrender.com";
 
 function MarkSheet() {
   const [batchNo, setBatchNo] = useState("");
@@ -32,56 +33,62 @@ function MarkSheet() {
   const [learners, setLearners] = useState([]);
   const [loadingLearners, setLoadingLearners] = useState(false);
 
+  const [periods, setPeriods] = useState([]);
+  const [selectedDate, setSelectedDate] = useState("");
+  const [selectedWeekNo, setSelectedWeekNo] = useState("");
+  const [topicName, setTopicName] = useState("");
+
   const [marks, setMarks] = useState({});
   const [outOff, setOutOff] = useState("");
-
-  const [periods, setPeriods] = useState([]);
-  const [loadingPeriods, setLoadingPeriods] = useState(false);
-  const [periodValue, setPeriodValue] = useState("");
-  const [selectedWeekNo, setSelectedWeekNo] = useState("");
-  const [selectedDate, setSelectedDate] = useState("");
-
-  const [topicMap, setTopicMap] = useState({});
-
-  const [message, setMessage] = useState("");
 
   const [isWindowOpen, setIsWindowOpen] = useState(true);
   const [windowCloseDate, setWindowCloseDate] = useState("");
 
+  const [message, setMessage] = useState("");
   const [currentDate, setCurrentDate] = useState(new Date());
 
   /* ---------------- CLOCK ---------------- */
   useEffect(() => {
-    const interval = setInterval(() => setCurrentDate(new Date()), 1000);
-    return () => clearInterval(interval);
+    const i = setInterval(() => setCurrentDate(new Date()), 1000);
+    return () => clearInterval(i);
   }, []);
 
   /* ---------------- FETCH BATCHES ---------------- */
   useEffect(() => {
-    const fetchBatches = async () => {
-      try {
-        const res = await fetch(`${API_BASE}/api/batches`);
-        const data = await res.json();
-        const distinct = [
-          ...new Set(
-            data.map((b) => (typeof b === "string" ? b : b.batch_no)).filter(Boolean)
-          ),
-        ];
-        setAvailableBatches(distinct);
-      } catch {
-        setAvailableBatches([]);
-      } finally {
-        setLoadingBatches(false);
-      }
-    };
-    fetchBatches();
+    fetch(`${API_BASE}/api/batches`)
+      .then(res => res.json())
+      .then(data => {
+        const batches = Array.isArray(data)
+          ? [...new Set(data.map(b => (typeof b === "string" ? b : b.batch_no)))]
+          : [];
+        setAvailableBatches(batches);
+      })
+      .catch(() => setAvailableBatches([]))
+      .finally(() => setLoadingBatches(false));
   }, []);
 
   /* ---------------- FETCH LEARNERS ---------------- */
   useEffect(() => {
+    if (!batchNo) {
+      setLearners([]);
+      return;
+    }
+
+    setLoadingLearners(true);
+    fetch(`${API_BASE}/apigetlearners?batchno=${batchNo}`)
+      .then(res => res.json())
+      .then(data => setLearners(Array.isArray(data) ? data : []))
+      .catch(() => setLearners([]))
+      .finally(() => setLoadingLearners(false));
+  }, [batchNo]);
+
+  /* ---------------- FETCH ASSESSMENT DATES ---------------- */
+  useEffect(() => {
     if (!batchNo || !assessmentType) {
       setPeriods([]);
-      setAssessmentDate("");
+      setSelectedDate("");
+      setTopicName("");
+      setSelectedWeekNo("");
       return;
     }
 
@@ -89,49 +96,9 @@ function MarkSheet() {
       `${API_BASE}/api/assessment-dates?batch_no=${batchNo}&type=${assessmentType}`
     )
       .then(res => res.json())
-      .then(data => {
-        if (Array.isArray(data)) {
-          setPeriods(data);
-        } else {
-          setPeriods([]); // 👈 SAFETY
-        }
-      })
-      .catch(() => {
-        setPeriods([]); // 👈 SAFETY
-      });
+      .then(data => setPeriods(Array.isArray(data) ? data : []))
+      .catch(() => setPeriods([]));
   }, [batchNo, assessmentType]);
-
-  /* ---------------- FETCH PERIODS (DISTINCT) ---------------- */
-  useEffect(() => {
-    if (!batchNo) return setPeriods([]);
-
-    const fetchPeriods = async () => {
-      setLoadingPeriods(true);
-      try {
-        const res = await fetch(
-          `${API_BASE}/apiperiods/${batchNo}/weekly-assessment`
-        );
-        const data = await res.json();
-
-        const unique = {};
-        (data || []).forEach((p) => {
-          unique[`${p.week_no}-${p.date}`] = p;
-        });
-
-        setPeriods(Object.values(unique));
-      } catch {
-        setPeriods([]);
-      } finally {
-        setLoadingPeriods(false);
-      }
-    };
-
-    fetchPeriods();
-    setPeriodValue("");
-    setSelectedWeekNo("");
-    setSelectedDate("");
-    setTopicMap({});
-  }, [batchNo]);
 
   /* ---------------- WINDOW CHECK ---------------- */
   useEffect(() => {
@@ -139,39 +106,23 @@ function MarkSheet() {
 
     const d = new Date(selectedDate);
     const close = new Date(d);
-    const days = assessmentType === "weekly" ? 3 : 4;
-    close.setDate(d.getDate() + days);
+    const extraDays = assessmentType === "weekly" ? 3 : 4;
+    close.setDate(d.getDate() + extraDays);
     close.setHours(23, 59, 59, 999);
 
     setIsWindowOpen(currentDate <= close);
     setWindowCloseDate(close.toLocaleDateString("en-GB"));
   }, [selectedDate, assessmentType, currentDate]);
 
-  /* ---------------- HANDLERS ---------------- */
-  const handlePeriodSelect = async (date) => {
-    setAssessmentDate(date);
-
-    const res = await fetch(
-      `${API_BASE}/api/topic?batch_no=${batchNo}&date=${date}`
-    );
-
-    if (res.ok) {
-      const data = await res.json();
-      setTopicMap(data);
-    } else {
-      setTopicMap(null);
-    }
-  };
-
+  /* ---------------- MARK INPUT ---------------- */
   const handleMarksInput = (learnerId, value) => {
     if (!isWindowOpen) return;
 
-    const points = value.replace(/[^0-9.]/g, "");
-    const percentage = outOff
-      ? Math.round((points / outOff) * 100)
-      : "";
+    const points = value.replace(/\D/g, "");
+    const percentage =
+      outOff && points ? Math.round((points / outOff) * 100) : "";
 
-    setMarks((prev) => ({
+    setMarks(prev => ({
       ...prev,
       [learnerId]: { points, percentage },
     }));
@@ -179,7 +130,10 @@ function MarkSheet() {
 
   /* ---------------- SAVE ---------------- */
   const handleSave = async () => {
-    if (!selectedDate || !outOff || !isWindowOpen) return;
+    if (!selectedDate || !outOff || !isWindowOpen) {
+      setMessage("⚠️ Missing required fields");
+      return;
+    }
 
     const endpointMap = {
       weekly: "/api/marks/weekly-assessment",
@@ -187,32 +141,30 @@ function MarkSheet() {
       module: "/api/marks/module-level-assessment",
     };
 
-    const endpoint = endpointMap[assessmentType];
-
     try {
-      for (const learner of learners) {
-        if (!marks[learner.id]?.points) continue;
+      for (const l of learners) {
+        if (!marks[l.id]?.points) continue;
 
-        const payload = {
-          learner_id: learner.id,
-          batch_no: batchNo,
-          assessment_date: selectedDate,
-          out_off: outOff,
-          points: marks[learner.id].points,
-          percentage: marks[learner.id].percentage,
-          week_no: selectedWeekNo,
-        };
-
-        await fetch(`${API_BASE}${endpoint}`, {
+        await fetch(`${API_BASE}${endpointMap[assessmentType]}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
+          body: JSON.stringify({
+            learner_id: l.id,
+            batch_no: batchNo,
+            assessment_date: selectedDate,
+            assessment_type: assessmentType,
+            topic_name: topicName,
+            out_off: outOff,
+            points: marks[l.id].points,
+            percentage: marks[l.id].percentage,
+            week_no: selectedWeekNo || null,
+          }),
         });
       }
 
       setMessage("✅ Marks saved successfully");
       setMarks({});
-    } catch (err) {
+    } catch {
       setMessage("❌ Failed to save marks");
     }
 
@@ -224,7 +176,7 @@ function MarkSheet() {
     return (
       <Box sx={{ display: "flex", justifyContent: "center", mt: 5 }}>
         <CircularProgress />
-        <Typography sx={{ ml: 2 }}>Loading batches...</Typography>
+        <Typography sx={{ ml: 2 }}>Loading batches…</Typography>
       </Box>
     );
   }
@@ -241,7 +193,7 @@ function MarkSheet() {
             <InputLabel>Assessment Type</InputLabel>
             <Select
               value={assessmentType}
-              onChange={(e) => setAssessmentType(e.target.value)}
+              onChange={e => setAssessmentType(e.target.value)}
             >
               <MenuItem value="weekly">Weekly</MenuItem>
               <MenuItem value="intermediate">Intermediate</MenuItem>
@@ -251,30 +203,38 @@ function MarkSheet() {
 
           <FormControl sx={{ minWidth: 160 }}>
             <InputLabel>Batch</InputLabel>
-            <Select value={batchNo} onChange={(e) => setBatchNo(e.target.value)}>
-              {availableBatches.map((b) => (
-                <MenuItem key={b} value={b}>
-                  {b}
-                </MenuItem>
+            <Select value={batchNo} onChange={e => setBatchNo(e.target.value)}>
+              {availableBatches.map(b => (
+                <MenuItem key={b} value={b}>{b}</MenuItem>
               ))}
             </Select>
           </FormControl>
 
           <FormControl sx={{ minWidth: 220 }}>
-            <InputLabel>Week / Date</InputLabel>
-            <Select value={periodValue} onChange={handlePeriodSelect}>
-              {Array.isArray(periods) && periods.map(p => (
-                <MenuItem key={p.date} value={p.date}>
-                  {p.date}
-                </MenuItem>
-              ))}
+            <InputLabel>Assessment Date</InputLabel>
+            <Select
+              value={selectedDate}
+              onChange={e => {
+                const val = e.target.value;
+                setSelectedDate(val);
+                const row = periods.find(p => p.date === val);
+                setTopicName(row?.topic_name || "");
+                setSelectedWeekNo(row?.week_no || "");
+              }}
+            >
+              {Array.isArray(periods) &&
+                periods.map(p => (
+                  <MenuItem key={p.date} value={p.date}>
+                    {p.date}
+                  </MenuItem>
+                ))}
             </Select>
           </FormControl>
 
           <TextField
             label="Out Of"
             value={outOff}
-            onChange={(e) => setOutOff(e.target.value.replace(/\D/g, ""))}
+            onChange={e => setOutOff(e.target.value.replace(/\D/g, ""))}
           />
 
           {selectedDate && (
@@ -289,41 +249,43 @@ function MarkSheet() {
           )}
         </Box>
 
-        <Table>
-          <TableHead>
-            <TableRow>
-              <TableCell>Name</TableCell>
-              <TableCell>Email</TableCell>
-              <TableCell>Topic</TableCell>
-              <TableCell>Marks</TableCell>
-              <TableCell>%</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {learners.map((l) => (
-              <TableRow key={l.id}>
-                <TableCell>{l.name}</TableCell>
-                <TableCell>{l.email}</TableCell>
-                <TableCell>{topicMap?.topic_name || "-"}</TableCell>
-                <TableCell>
-                  <TextField
-                    size="small"
-                    value={marks[l.id]?.points || ""}
-                    disabled={!isWindowOpen}
-                    onChange={(e) =>
-                      handleMarksInput(l.id, e.target.value)
-                    }
-                  />
-                </TableCell>
-                <TableCell>{marks[l.id]?.percentage || ""}</TableCell>
+        {loadingLearners ? (
+          <CircularProgress />
+        ) : (
+          <Table>
+            <TableHead>
+              <TableRow>
+                <TableCell>Name</TableCell>
+                <TableCell>Topic</TableCell>
+                <TableCell>Marks</TableCell>
+                <TableCell>%</TableCell>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+            </TableHead>
+            <TableBody>
+              {learners.map(l => (
+                <TableRow key={l.id}>
+                  <TableCell>{l.name}</TableCell>
+                  <TableCell>{topicName || "-"}</TableCell>
+                  <TableCell>
+                    <TextField
+                      size="small"
+                      value={marks[l.id]?.points || ""}
+                      disabled={!isWindowOpen}
+                      onChange={e =>
+                        handleMarksInput(l.id, e.target.value)
+                      }
+                    />
+                  </TableCell>
+                  <TableCell>{marks[l.id]?.percentage || ""}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
 
         <Button
-          variant="contained"
           sx={{ mt: 2 }}
+          variant="contained"
           disabled={!isWindowOpen}
           onClick={handleSave}
         >
