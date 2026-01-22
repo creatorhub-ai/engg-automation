@@ -848,13 +848,11 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
 
     let tableName;
     let insertData = {};
-    let onConflictColumns;
 
     // Build data based on assessment type
     switch (assessmentType) {
       case "weekly-assessment":
         tableName = "weekly_assessment_scores";
-        onConflictColumns = 'learner_id,batch_no,week_no,assessment_date';
         if (!payload.week_no) {
           return res.status(400).json({ error: "week_no is required for weekly-assessment" });
         }
@@ -871,7 +869,6 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
 
       case "weekly-quiz":
         tableName = "weekly_assessment_scores";
-        onConflictColumns = 'learner_id,batch_no,week_no,assessment_date';
         if (!payload.week_no) {
           return res.status(400).json({ error: "week_no is required for weekly-quiz" });
         }
@@ -888,7 +885,6 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
 
       case "intermediate-assessment":
         tableName = "intermediate_assessment_scores";
-        onConflictColumns = 'learner_id,batch_no,week_no,assessment_date';
         if (!payload.week_no) {
           return res.status(400).json({ error: "week_no is required for intermediate-assessment" });
         }
@@ -909,7 +905,6 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
 
       case "module-level-assessment":
         tableName = "module_level_assessment_scores";
-        onConflictColumns = 'learner_id,batch_no,module_no,assessment_date';
         if (!payload.module_no) {
           return res.status(400).json({ error: "module_no is required for module-level-assessment" });
         }
@@ -932,24 +927,58 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
         return res.status(400).json({ error: `Invalid assessment type: ${assessmentType}` });
     }
 
-    console.log(`📤 Upserting into table: ${tableName} with onConflict: ${onConflictColumns}`);
-    console.log(`📤 Upsert data:`, JSON.stringify(insertData, null, 2));
+    console.log(`📤 Inserting into table: ${tableName}`);
+    console.log(`📤 Insert data:`, JSON.stringify(insertData, null, 2));
 
-    // Upsert into Supabase (updates if conflict, inserts if not)
-    const { data, error } = await supabase
+    // Attempt insert into Supabase
+    let { data, error } = await supabase
       .from(tableName)
-      .upsert(insertData, { onConflict: onConflictColumns });
+      .insert(insertData);
 
     if (error) {
-      console.error("❌ SUPABASE UPSERT ERROR:", error);
+      console.error("❌ SUPABASE INSERT ERROR:", error);
       console.error("❌ Error details:", JSON.stringify(error, null, 2));
-      return res.status(500).json({ 
-        error: error.message || "Database upsert error",
-        details: error.details || "No additional details"
-      });
+      
+      // Check if it's a duplicate key error (adjust based on your DB's error message)
+      if (error.message && error.message.includes('duplicate key')) {
+        console.log("🔄 Duplicate detected, attempting update...");
+        // Attempt update instead
+        const updateData = { ...insertData };
+        delete updateData.learner_id; // Remove keys not to update
+        delete updateData.batch_no;
+        delete updateData.week_no;
+        delete updateData.assessment_date; // Adjust based on your unique key
+        if (assessmentType === "module-level-assessment") {
+          delete updateData.module_no;
+        }
+        
+        const { data: updateDataResult, error: updateError } = await supabase
+          .from(tableName)
+          .update(updateData)
+          .eq('learner_id', insertData.learner_id)
+          .eq('batch_no', insertData.batch_no)
+          .eq(assessmentType === "module-level-assessment" ? 'module_no' : 'week_no', insertData[assessmentType === "module-level-assessment" ? 'module_no' : 'week_no'])
+          .eq('assessment_date', insertData.assessment_date);
+        
+        if (updateError) {
+          console.error("❌ SUPABASE UPDATE ERROR:", updateError);
+          return res.status(500).json({ 
+            error: updateError.message || "Database update error",
+            details: updateError.details || "No additional details"
+          });
+        }
+        console.log("✅ SUCCESS! Data updated");
+        return res.json({ success: true, message: "Marks updated successfully" });
+      } else {
+        // Not a duplicate, return the error
+        return res.status(500).json({ 
+          error: error.message || "Database insert error",
+          details: error.details || "No additional details"
+        });
+      }
     }
 
-    console.log("✅ SUCCESS! Data upserted");
+    console.log("✅ SUCCESS! Data inserted");
     res.json({ success: true, message: "Marks saved successfully" });
 
   } catch (err) {
