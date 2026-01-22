@@ -259,50 +259,64 @@ function MarkSheet() {
     }
 
     if (!isWindowOpen || windowStatus !== "valid") {
-      setMessage("❌ Mark entry window CLOSED. Cannot save marks.");
+      setMessage("❌ Mark entry window CLOSED.");
       setTimeout(() => setMessage(""), 5000);
       return;
     }
 
-    const endpoint = `${API_BASE}/api/marks/${assessmentType}`;
+    setMessage("⏳ Saving marks...");
     let anySaved = false;
 
     try {
+      // BULK SAVE - One call per learner
       for (let learner of learners) {
         if (!marks[learner.id]?.points) continue;
         
         const payload = {
           learner_id: learner.id,
           batch_no: batchNo,
-          week_no: selectedWeekNo,
           assessment_date: selectedDate,
-          out_off: outOff,
           points: marks[learner.id].points,
           percentage: marks[learner.id].percentage || null,
+          // Conditional fields
+          ...(assessmentType === 'weekly-assessment' && { week_no: selectedWeekNo, out_off: outOff }),
+          ...(assessmentType === 'intermediate-assessment' && { assessment_name: selectedTopic }),
+          ...(assessmentType === 'module-level-assessment' && { 
+            assessment_name: selectedTopic, 
+            module_no: selectedWeekNo // Use week_no as module_no
+          }),
         };
 
-        const res = await fetch(endpoint, {
+        console.log(`📤 Saving:`, payload);
+
+        const res = await fetch(`${API_BASE}/api/marks/${assessmentType}`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { 
+            "Content-Type": "application/json",
+            'Accept': 'application/json'
+          },
           body: JSON.stringify(payload),
         });
 
         if (!res.ok) {
           const errData = await res.json().catch(() => ({}));
+          console.error('Save failed:', errData);
           throw new Error(errData.error || `HTTP ${res.status}`);
         }
+        
         anySaved = true;
+        await new Promise(r => setTimeout(r, 100)); // Prevent rate limiting
       }
 
       if (anySaved) {
         setMessage("✅ Marks saved successfully!");
         setMarks({});
       } else {
-        setMessage("⚠️ Please enter points for at least one learner.");
+        setMessage("⚠️ No marks entered.");
       }
     } catch (err) {
-      console.error("Save error:", err);
-      setMessage(`❌ Error: ${err.message}`);
+      console.error("🚨 Save error:", err);
+      setMessage(`❌ ${err.message}`);
     }
 
     setTimeout(() => setMessage(""), 4000);

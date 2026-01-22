@@ -58,31 +58,17 @@ const LOCAL_URL = "http://localhost:3000";
 // =====================================================
 // ✅ FIXED CORS — ONLY THIS IS ENOUGH (Render Friendly)
 // =====================================================
-app.use(cors({
-  origin: ['https://engg-automation-r1ke.onrender.com', 'http://localhost:3000'],
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  optionsSuccessStatus: 200
-}));
-
-
-// Mount routers
-app.use('/api/marks', marksWindowsRouter);
-app.use('/api/marks', marksSaveRouter);
-app.use("/api/attendance", attendanceRoutes);
-
-// =====================================================
-// ✅ Handle Preflight Requests (OPTIONS)
-// =====================================================
-app.options("*", (req, res) => {
-  res.header("Access-Control-Allow-Origin", FRONTEND_URL);
-  res.header(
-    "Access-Control-Allow-Headers",
-    "Origin, X-Requested-With, Content-Type, Accept, Authorization"
-  );
-  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  return res.sendStatus(200);
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', 'https://engg-automation-r1ke.onrender.com');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Vary', 'Origin');
+  
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
+  }
+  next();
 });
 
 // =====================================================
@@ -90,6 +76,11 @@ app.options("*", (req, res) => {
 // =====================================================
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
+
+// Mount routers
+app.use('/api/marks', marksWindowsRouter);
+app.use('/api/marks', marksSaveRouter);
+app.use("/api/attendance", attendanceRoutes);
 
 // =====================================================
 // Multer File Upload Config
@@ -807,138 +798,101 @@ app.get("/api/marks/window-status", async (req, res) => {
 
 // 2) POST /api/marks/:assessmentType
 app.post('/api/marks/:assessmentType', async (req, res) => {
+  // 🔥 CORS HEADERS FIRST - BEFORE ANY LOGIC
+  res.header('Access-Control-Allow-Origin', 'https://engg-automation-r1ke.onrender.com');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.header('Vary', 'Origin');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
   try {
     const { assessmentType } = req.params;
     const payload = req.body;
 
-    console.log(`📝 Saving ${assessmentType} marks:`, {
-      learner_id: payload.learner_id,
-      batch_no: payload.batch_no,
-      assessment_date: payload.assessment_date
-    });
+    console.log(`📝 SAVE MARKS [${assessmentType}]:`, payload);
 
-    // Validate required fields
-    if (!payload.learner_id || !payload.batch_no || !payload.assessment_date || !payload.points) {
-      return res.status(400).json({ error: 'Missing required fields' });
+    // VALIDATE INPUT
+    const required = ['learner_id', 'batch_no', 'assessment_date', 'points'];
+    const missing = required.filter(field => !payload[field]);
+    if (missing.length > 0) {
+      return res.status(400).json({ error: `Missing fields: ${missing.join(', ')}` });
     }
 
-    let tableName;
-    let columns;
-    let placeholders;
-    let values;
+    let tableName, insertData = {
+      learner_id: parseInt(payload.learner_id),
+      batch_no: payload.batch_no,
+      points: parseFloat(payload.points),
+      assessment_date: payload.assessment_date,
+      percentage: payload.percentage ? parseFloat(payload.percentage) : null
+    };
 
-    // Route to correct table based on assessmentType
+    // TABLE ROUTING
     switch (assessmentType) {
       case 'weekly-assessment':
-        // weekly_assessment_scores: id, learner_id, batch_no, week_no, points, percentage, assessment_date, out_off
         if (!payload.week_no || !payload.out_off) {
-          return res.status(400).json({ error: 'week_no and out_off required for weekly assessment' });
+          return res.status(400).json({ error: 'week_no and out_off required' });
         }
-        
         tableName = 'weekly_assessment_scores';
-        columns = ['learner_id', 'batch_no', 'week_no', 'points', 'percentage', 'assessment_date', 'out_off'];
-        placeholders = ['?', '?', '?', '?', '?', '?', '?'];
-        values = [
-          payload.learner_id,
-          payload.batch_no,
-          payload.week_no,
-          payload.points,
-          payload.percentage || null,
-          payload.assessment_date,
-          payload.out_off
-        ];
+        insertData.week_no = payload.week_no;
+        insertData.out_off = parseFloat(payload.out_off);
         break;
 
       case 'intermediate-assessment':
-        // intermediate_assessment_scores: id, learner_id, batch_no, assessment_name, points, percentage, assessment_date
-        if (!payload.assessment_name) {
-          payload.assessment_name = 'Intermediate Assessment';
-        }
-        
         tableName = 'intermediate_assessment_scores';
-        columns = ['learner_id', 'batch_no', 'assessment_name', 'points', 'percentage', 'assessment_date'];
-        placeholders = ['?', '?', '?', '?', '?', '?'];
-        values = [
-          payload.learner_id,
-          payload.batch_no,
-          payload.assessment_name,
-          payload.points,
-          payload.percentage || null,
-          payload.assessment_date
-        ];
+        insertData.assessment_name = 'Intermediate Assessment';
         break;
 
       case 'module-level-assessment':
-        // module_level_assessment_scores: id, learner_id, batch_no, assessment_name, points, percentage, assessment_date, module_no
-        if (!payload.assessment_name || !payload.module_no) {
-          return res.status(400).json({ error: 'assessment_name and module_no required for module assessment' });
+        if (!payload.module_no) {
+          return res.status(400).json({ error: 'module_no required' });
         }
-        
         tableName = 'module_level_assessment_scores';
-        columns = ['learner_id', 'batch_no', 'assessment_name', 'points', 'percentage', 'assessment_date', 'module_no'];
-        placeholders = ['?', '?', '?', '?', '?', '?', '?'];
-        values = [
-          payload.learner_id,
-          payload.batch_no,
-          payload.assessment_name,
-          payload.points,
-          payload.percentage || null,
-          payload.assessment_date,
-          payload.module_no
-        ];
+        insertData.assessment_name = 'Module Level Assessment';
+        insertData.module_no = payload.module_no;
         break;
 
       case 'weekly-quiz':
-        // Reuse weekly_assessment_scores table for quizzes
         tableName = 'weekly_assessment_scores';
-        columns = ['learner_id', 'batch_no', 'week_no', 'points', 'percentage', 'assessment_date', 'out_off'];
-        placeholders = ['?', '?', '?', '?', '?', '?', '?'];
-        values = [
-          payload.learner_id,
-          payload.batch_no,
-          payload.week_no || 'Quiz',
-          payload.points,
-          payload.percentage || null,
-          payload.assessment_date,
-          payload.out_off || 10
-        ];
+        insertData.week_no = payload.week_no || 'Quiz';
+        insertData.out_off = parseFloat(payload.out_off) || 10;
         break;
 
       default:
         return res.status(400).json({ error: 'Invalid assessment type' });
     }
 
-    // UPSERT (INSERT or UPDATE) logic
-    const upsertQuery = `
-      INSERT INTO ${tableName} (${columns.join(', ')}) 
-      VALUES (${placeholders.join(', ')})
-      ON DUPLICATE KEY UPDATE
-        points = VALUES(points),
-        percentage = VALUES(percentage),
-        assessment_date = VALUES(assessment_date),
-        out_off = VALUES(out_off),
-        updated_at = CURRENT_TIMESTAMP
-    `;
+    console.log(`📤 UPSERT → ${tableName}:`, insertData);
 
-    const [result] = await pool.execute(upsertQuery, values);
+    // SAFE SUPABASE UPSERT
+    const { data, error } = await supabase
+      .from(tableName)
+      .upsert(insertData)
+      .select()
+      .single();
 
-    console.log(`✅ Saved to ${tableName}:`, {
-      affectedRows: result.affectedRows,
-      insertId: result.insertId
-    });
+    if (error) {
+      console.error(`❌ ${tableName} ERROR:`, error);
+      return res.status(500).json({ 
+        error: 'Database error', 
+        table: tableName,
+        details: error.message 
+      });
+    }
 
+    console.log(`✅ SAVED: ${tableName} → ID: ${data?.id}`);
+    
     res.json({ 
       success: true, 
       table: tableName,
-      affectedRows: result.affectedRows 
+      id: data?.id 
     });
 
   } catch (error) {
-    console.error('Save marks error:', error);
-    res.status(500).json({ 
-      error: 'Failed to save marks',
-      details: error.message 
-    });
+    console.error('🚨 CRASH ERROR:', error);
+    res.status(500).json({ error: 'Server crash', details: error.message });
   }
 });
 
