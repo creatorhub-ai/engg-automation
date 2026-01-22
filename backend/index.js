@@ -3267,118 +3267,75 @@ app.get('/apiperiods/:batchNo/:assessmentType', async (req, res) => {
   try {
     const { batchNo, assessmentType } = req.params;
 
-    let query;
-    let params = [batchNo];
+    console.log(`🔍 Loading periods: batchNo=${batchNo}, type=${assessmentType}`);
 
-    // Map frontend assessmentType to backend logic
+    if (!batchNo || !assessmentType) {
+      return res.status(400).json({ error: 'batchNo and assessmentType required' });
+    }
+
+    let queryFilter = '';
+    let filterValue = '';
+
+    // Map assessment types to course_planner_data topic filters
     switch (assessmentType) {
       case 'weekly-assessment':
-        query = `
-          SELECT DISTINCT 
-            week_no,
-            date as assessment_date,
-            topic_name
-          FROM course_planner_data 
-          WHERE batch_no = ?
-          AND topic_name LIKE '%Weekly Assessment%'
-          ORDER BY week_no, date
-        `;
+        queryFilter = "topic_name.ilike.%Weekly%";
         break;
-
       case 'intermediate-assessment':
-        query = `
-          SELECT DISTINCT 
-            week_no,
-            date as assessment_date,
-            topic_name
-          FROM course_planner_data 
-          WHERE batch_no = ?
-          AND topic_name LIKE '%Intermediate%'
-          ORDER BY week_no, date
-        `;
+        queryFilter = "topic_name.ilike.%Intermediate%";
         break;
-
       case 'module-level-assessment':
-        query = `
-          SELECT DISTINCT 
-            week_no,
-            date as assessment_date,
-            topic_name
-          FROM course_planner_data 
-          WHERE batch_no = ?
-          AND topic_name LIKE '%Module Level%'
-          ORDER BY week_no, date
-        `;
+        queryFilter = "topic_name.ilike.%Module Level%";
         break;
-
       case 'weekly-quiz':
-        query = `
-          SELECT DISTINCT 
-            week_no,
-            date as assessment_date,
-            topic_name
-          FROM course_planner_data 
-          WHERE batch_no = ?
-          AND topic_name LIKE '%Quiz%'
-          ORDER BY week_no, date
-        `;
+        queryFilter = "topic_name.ilike.%Quiz%";
         break;
-
       default:
         return res.status(400).json({ error: 'Invalid assessment type' });
     }
 
-    const [rows] = await pool.execute(query, params);
-    res.json(rows);
-  } catch (error) {
-    console.error('Get periods error:', error);
-    res.status(500).json({ error: 'Failed to fetch periods' });
-  }
-});
+    console.log(`📊 Supabase query filter: ${queryFilter}`);
 
-// Generalized endpoint for all assessment types
-app.get('/apiperiods/:batchno/:type', async (req, res) => {
-  try {
-    const batch_no = req.params.batchno;
-    const type = req.params.type;
-
-    let topicLike = '';
-    if (type === 'weekly-assessment') {
-      topicLike = '%Weekly Assessment%';
-    } else if (type === 'intermediate-assessment') {
-      topicLike = '%Intermediate Assessment%';
-    } else if (type === 'module-level-assessment') {
-      topicLike = '%Module Level Assessment%';
-    } else if (type === 'weekly-quiz') {
-      topicLike = '%Weekly Quiz%';
-    } else {
-      return res.json([]);
-    }
-
-    // Select week_no, date, and topic_name
+    // SUPABASE QUERY - Get distinct assessment periods
     const { data, error } = await supabase
-      .from('course_planner_data')
-      .select('week_no, date, topic_name')
-      .eq('batch_no', batch_no)
-      .ilike('topic_name', topicLike)
+      .from('course_planner_data') // Your actual table name
+      .select(`
+        week_no,
+        date,
+        topic_name,
+        batch_no
+      `)
+      .eq('batch_no', batchNo)
+      .or(queryFilter)
       .order('week_no', { ascending: true })
       .order('date', { ascending: true });
 
-    if (error) throw error;
-
-    // Deduplicate by week_no, keeping first topic/date for each week_no
-    const seen = new Set();
-    const filtered = [];
-    for (const row of data) {
-      if (row.week_no && !seen.has(row.week_no)) {
-        seen.add(row.week_no);
-        filtered.push(row);
-      }
+    if (error) {
+      console.error('❌ Supabase error:', error);
+      return res.status(500).json({ 
+        error: 'Database query failed', 
+        details: error.message 
+      });
     }
-    res.json(filtered);
+
+    // Format for frontend: "week_no::date::topic_name"
+    const periods = (data || [])
+      .filter(row => row.week_no && row.date && row.topic_name) // Must have all fields
+      .map(row => ({
+        week_no: row.week_no,
+        date: row.date,
+        topic_name: row.topic_name
+      }));
+
+    console.log(`✅ Found ${periods.length} periods for ${batchNo}/${assessmentType}`);
+    res.json(periods);
+
   } catch (error) {
-    console.error('Failed to fetch periods:', error);
-    res.status(500).json({ message: 'Failed to fetch periods', error: error.message || error });
+    console.error('🚨 /apiperiods ERROR:', error);
+    res.status(500).json({ 
+      error: 'Server error', 
+      details: error.message 
+    });
   }
 });
 
