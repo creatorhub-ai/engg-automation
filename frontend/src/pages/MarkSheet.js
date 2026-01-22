@@ -253,7 +253,7 @@ function MarkSheet() {
 
   const handleSave = async () => {
     if (!selectedWeekNo || !outOff) {
-      setMessage("⚠️ Select week and out-off before saving.");
+      setMessage("⚠️ Select period and out-off before saving.");
       setTimeout(() => setMessage(""), 3000);
       return;
     }
@@ -264,55 +264,61 @@ function MarkSheet() {
       return;
     }
 
-    setMessage("⏳ Saving marks...");
+    setMessage("⏳ Saving...");
     let anySaved = false;
 
     try {
-      // BULK SAVE - One call per learner
       for (let learner of learners) {
         if (!marks[learner.id]?.points) continue;
         
+        // ✅ CORRECT PAYLOAD PER ASSESSMENT TYPE
         const payload = {
           learner_id: learner.id,
           batch_no: batchNo,
           assessment_date: selectedDate,
           points: marks[learner.id].points,
           percentage: marks[learner.id].percentage || null,
-          // Conditional fields
-          ...(assessmentType === 'weekly-assessment' && { week_no: selectedWeekNo, out_off: outOff }),
-          ...(assessmentType === 'intermediate-assessment' && { assessment_name: selectedTopic }),
-          ...(assessmentType === 'module-level-assessment' && { 
-            assessment_name: selectedTopic, 
-            module_no: selectedWeekNo // Use week_no as module_no
-          }),
         };
 
-        console.log(`📤 Saving:`, payload);
+        // ADD TYPE-SPECIFIC FIELDS
+        if (assessmentType === 'weekly-assessment' || assessmentType === 'weekly-quiz') {
+          payload.week_no = selectedWeekNo;
+          payload.out_off = outOff;
+        }
+        
+        if (assessmentType === 'intermediate-assessment') {
+          payload.assessment_name = selectedTopic || 'Intermediate Assessment';
+        }
+        
+        if (assessmentType === 'module-level-assessment') {
+          payload.assessment_name = selectedTopic || 'Module Level Assessment';
+          payload.module_no = selectedWeekNo;
+        }
+
+        console.log(`📤 Payload:`, payload);
 
         const res = await fetch(`${API_BASE}/api/marks/${assessmentType}`, {
           method: "POST",
           headers: { 
             "Content-Type": "application/json",
-            'Accept': 'application/json'
+            "Accept": "application/json"
           },
           body: JSON.stringify(payload),
         });
 
         if (!res.ok) {
           const errData = await res.json().catch(() => ({}));
-          console.error('Save failed:', errData);
           throw new Error(errData.error || `HTTP ${res.status}`);
         }
         
         anySaved = true;
-        await new Promise(r => setTimeout(r, 100)); // Prevent rate limiting
       }
 
       if (anySaved) {
         setMessage("✅ Marks saved successfully!");
         setMarks({});
       } else {
-        setMessage("⚠️ No marks entered.");
+        setMessage("⚠️ Enter marks for at least one learner.");
       }
     } catch (err) {
       console.error("🚨 Save error:", err);

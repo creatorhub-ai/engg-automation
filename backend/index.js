@@ -798,27 +798,24 @@ app.get("/api/marks/window-status", async (req, res) => {
 
 // 2) POST /api/marks/:assessmentType
 app.post('/api/marks/:assessmentType', async (req, res) => {
-  // 🔥 CORS HEADERS FIRST - BEFORE ANY LOGIC
+  // CORS Headers FIRST
   res.header('Access-Control-Allow-Origin', 'https://engg-automation-r1ke.onrender.com');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  res.header('Vary', 'Origin');
-
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
+  
+  if (req.method === 'OPTIONS') return res.status(200).end();
 
   try {
     const { assessmentType } = req.params;
     const payload = req.body;
 
-    console.log(`📝 SAVE MARKS [${assessmentType}]:`, payload);
+    console.log(`📝 SAVE [${assessmentType}]:`, payload);
 
-    // VALIDATE INPUT
-    const required = ['learner_id', 'batch_no', 'assessment_date', 'points'];
-    const missing = required.filter(field => !payload[field]);
-    if (missing.length > 0) {
-      return res.status(400).json({ error: `Missing fields: ${missing.join(', ')}` });
+    // COMMON REQUIRED FIELDS
+    if (!payload.learner_id || !payload.batch_no || !payload.assessment_date || !payload.points) {
+      return res.status(400).json({ 
+        error: 'Missing required: learner_id, batch_no, assessment_date, points' 
+      });
     }
 
     let tableName, insertData = {
@@ -829,7 +826,7 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
       percentage: payload.percentage ? parseFloat(payload.percentage) : null
     };
 
-    // TABLE ROUTING
+    // TYPE-SPECIFIC LOGIC
     switch (assessmentType) {
       case 'weekly-assessment':
         if (!payload.week_no || !payload.out_off) {
@@ -842,7 +839,7 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
 
       case 'intermediate-assessment':
         tableName = 'intermediate_assessment_scores';
-        insertData.assessment_name = 'Intermediate Assessment';
+        insertData.assessment_name = payload.assessment_name || 'Intermediate Assessment';
         break;
 
       case 'module-level-assessment':
@@ -850,7 +847,7 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
           return res.status(400).json({ error: 'module_no required' });
         }
         tableName = 'module_level_assessment_scores';
-        insertData.assessment_name = 'Module Level Assessment';
+        insertData.assessment_name = payload.assessment_name || 'Module Level Assessment';
         insertData.module_no = payload.module_no;
         break;
 
@@ -864,35 +861,25 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
         return res.status(400).json({ error: 'Invalid assessment type' });
     }
 
-    console.log(`📤 UPSERT → ${tableName}:`, insertData);
+    console.log(`📤 Insert → ${tableName}:`, insertData);
 
-    // SAFE SUPABASE UPSERT
+    // SUPABASE INSERT/UPDATE
     const { data, error } = await supabase
       .from(tableName)
       .upsert(insertData)
       .select()
-      .single();
+      .maybeSingle(); // Use maybeSingle for new records
 
     if (error) {
-      console.error(`❌ ${tableName} ERROR:`, error);
-      return res.status(500).json({ 
-        error: 'Database error', 
-        table: tableName,
-        details: error.message 
-      });
+      console.error('❌ DB Error:', error);
+      return res.status(500).json({ error: error.message });
     }
 
-    console.log(`✅ SAVED: ${tableName} → ID: ${data?.id}`);
+    res.json({ success: true, table: tableName, rows: data?.length || 1 });
     
-    res.json({ 
-      success: true, 
-      table: tableName,
-      id: data?.id 
-    });
-
   } catch (error) {
-    console.error('🚨 CRASH ERROR:', error);
-    res.status(500).json({ error: 'Server crash', details: error.message });
+    console.error('🚨 ERROR:', error);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
