@@ -824,6 +824,23 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
       return res.status(400).json({ error: "points is required" });
     }
 
+    // Fetch course_planner_id from course_planner_data based on batch_no
+    const { data: courseData, error: courseError } = await supabase
+      .from('course_planner_data')
+      .select('id')
+      .eq('batch_no', payload.batch_no)
+      .order('id', { ascending: true })  // Pick the smallest id if multiple
+      .limit(1)
+      .single();
+
+    if (courseError || !courseData) {
+      console.error("❌ COURSE PLANNER FETCH ERROR:", courseError);
+      return res.status(400).json({ error: `Invalid batch_no: ${payload.batch_no}. No matching record in course_planner_data.` });
+    }
+
+    const coursePlannerId = courseData.id;
+    console.log(`📋 Fetched course_planner_id: ${coursePlannerId} for batch_no: ${payload.batch_no}`);
+
     // Convert date to YYYY-MM-DD (handles DD-MM-YYYY, DD/MM/YYYY, or YYYY-MM-DD)
     let isoDate = payload.assessment_date;
     if (payload.assessment_date) {
@@ -858,7 +875,8 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
         }
         insertData = {
           learner_id: parseInt(payload.learner_id),
-          batch_no: payload.batch_no,
+          course_planner_id: coursePlannerId,
+          batch_no: payload.batch_no,  // Keep for reference
           week_no: parseInt(payload.week_no),
           assessment_date: isoDate,
           out_off: parseInt(payload.out_off),
@@ -874,7 +892,8 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
         }
         insertData = {
           learner_id: parseInt(payload.learner_id),
-          batch_no: payload.batch_no,
+          course_planner_id: coursePlannerId,
+          batch_no: payload.batch_no,  // Keep for reference
           week_no: parseInt(payload.week_no),
           assessment_date: isoDate,
           out_off: parseInt(payload.out_off),
@@ -893,7 +912,8 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
         }
         insertData = {
           learner_id: parseInt(payload.learner_id),
-          batch_no: payload.batch_no,
+          course_planner_id: coursePlannerId,
+          batch_no: payload.batch_no,  // Keep for reference
           week_no: parseInt(payload.week_no),
           assessment_date: isoDate,
           assessment_name: payload.assessment_name,
@@ -913,7 +933,8 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
         }
         insertData = {
           learner_id: parseInt(payload.learner_id),
-          batch_no: payload.batch_no,
+          course_planner_id: coursePlannerId,
+          batch_no: payload.batch_no,  // Keep for reference
           module_no: parseInt(payload.module_no),
           assessment_date: isoDate,
           assessment_name: payload.assessment_name,
@@ -939,13 +960,13 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
       console.error("❌ SUPABASE INSERT ERROR:", error);
       console.error("❌ Error details:", JSON.stringify(error, null, 2));
       
-      // Check if it's a duplicate key error (adjust based on your DB's error message)
+      // Check if it's a duplicate key error
       if (error.message && error.message.includes('duplicate key')) {
         console.log("🔄 Duplicate detected, attempting update...");
         // Attempt update instead
         const updateData = { ...insertData };
         delete updateData.learner_id; // Remove keys not to update
-        delete updateData.batch_no;
+        delete updateData.course_planner_id;
         delete updateData.week_no;
         delete updateData.assessment_date; // Adjust based on your unique key
         if (assessmentType === "module-level-assessment") {
@@ -956,7 +977,7 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
           .from(tableName)
           .update(updateData)
           .eq('learner_id', insertData.learner_id)
-          .eq('batch_no', insertData.batch_no)
+          .eq('course_planner_id', insertData.course_planner_id)
           .eq(assessmentType === "module-level-assessment" ? 'module_no' : 'week_no', insertData[assessmentType === "module-level-assessment" ? 'module_no' : 'week_no'])
           .eq('assessment_date', insertData.assessment_date);
         
