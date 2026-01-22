@@ -823,62 +823,136 @@ app.get("/api/marks/window-status", async (req, res) => {
 app.post('/api/marks/:assessmentType', async (req, res) => {
   try {
     const { assessmentType } = req.params;
-    const { learner_id, batch_no, week_no, assessment_date, out_off, points, percentage } = req.body;
+    const payload = req.body;
 
-    // CORS headers for direct response
-    res.header('Access-Control-Allow-Origin', 'https://engg-automation-r1ke.onrender.com');
-    res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type');
+    console.log(`📝 Saving ${assessmentType} marks:`, {
+      learner_id: payload.learner_id,
+      batch_no: payload.batch_no,
+      assessment_date: payload.assessment_date
+    });
 
-    if (!learner_id || !batch_no || !week_no || !assessment_date || !out_off) {
+    // Validate required fields
+    if (!payload.learner_id || !payload.batch_no || !payload.assessment_date || !payload.points) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    // CRITICAL: Window validation FIRST
-    const windowCheck = validateMarkEntryWindow(assessment_date, assessmentType);
-    if (!windowCheck.valid) {
-      console.log(`🚫 BLOCKED: ${windowCheck.error}`);
-      return res.status(403).json({ error: windowCheck.error });
+    let tableName;
+    let columns;
+    let placeholders;
+    let values;
+
+    // Route to correct table based on assessmentType
+    switch (assessmentType) {
+      case 'weekly-assessment':
+        // weekly_assessment_scores: id, learner_id, batch_no, week_no, points, percentage, assessment_date, out_off
+        if (!payload.week_no || !payload.out_off) {
+          return res.status(400).json({ error: 'week_no and out_off required for weekly assessment' });
+        }
+        
+        tableName = 'weekly_assessment_scores';
+        columns = ['learner_id', 'batch_no', 'week_no', 'points', 'percentage', 'assessment_date', 'out_off'];
+        placeholders = ['?', '?', '?', '?', '?', '?', '?'];
+        values = [
+          payload.learner_id,
+          payload.batch_no,
+          payload.week_no,
+          payload.points,
+          payload.percentage || null,
+          payload.assessment_date,
+          payload.out_off
+        ];
+        break;
+
+      case 'intermediate-assessment':
+        // intermediate_assessment_scores: id, learner_id, batch_no, assessment_name, points, percentage, assessment_date
+        if (!payload.assessment_name) {
+          payload.assessment_name = 'Intermediate Assessment';
+        }
+        
+        tableName = 'intermediate_assessment_scores';
+        columns = ['learner_id', 'batch_no', 'assessment_name', 'points', 'percentage', 'assessment_date'];
+        placeholders = ['?', '?', '?', '?', '?', '?'];
+        values = [
+          payload.learner_id,
+          payload.batch_no,
+          payload.assessment_name,
+          payload.points,
+          payload.percentage || null,
+          payload.assessment_date
+        ];
+        break;
+
+      case 'module-level-assessment':
+        // module_level_assessment_scores: id, learner_id, batch_no, assessment_name, points, percentage, assessment_date, module_no
+        if (!payload.assessment_name || !payload.module_no) {
+          return res.status(400).json({ error: 'assessment_name and module_no required for module assessment' });
+        }
+        
+        tableName = 'module_level_assessment_scores';
+        columns = ['learner_id', 'batch_no', 'assessment_name', 'points', 'percentage', 'assessment_date', 'module_no'];
+        placeholders = ['?', '?', '?', '?', '?', '?', '?'];
+        values = [
+          payload.learner_id,
+          payload.batch_no,
+          payload.assessment_name,
+          payload.points,
+          payload.percentage || null,
+          payload.assessment_date,
+          payload.module_no
+        ];
+        break;
+
+      case 'weekly-quiz':
+        // Reuse weekly_assessment_scores table for quizzes
+        tableName = 'weekly_assessment_scores';
+        columns = ['learner_id', 'batch_no', 'week_no', 'points', 'percentage', 'assessment_date', 'out_off'];
+        placeholders = ['?', '?', '?', '?', '?', '?', '?'];
+        values = [
+          payload.learner_id,
+          payload.batch_no,
+          payload.week_no || 'Quiz',
+          payload.points,
+          payload.percentage || null,
+          payload.assessment_date,
+          payload.out_off || 10
+        ];
+        break;
+
+      default:
+        return res.status(400).json({ error: 'Invalid assessment type' });
     }
 
-    // Table mapping
-    const tableMap = {
-      'weekly-assessment': 'weeklyassessmentmarks',
-      'intermediate-assessment': 'intermediateassessmentmarks',
-      'module-level-assessment': 'modulelevelassessmentmarks',
-      'weekly-quiz': 'weeklyquizmarks'
-    };
+    // UPSERT (INSERT or UPDATE) logic
+    const upsertQuery = `
+      INSERT INTO ${tableName} (${columns.join(', ')}) 
+      VALUES (${placeholders.join(', ')})
+      ON DUPLICATE KEY UPDATE
+        points = VALUES(points),
+        percentage = VALUES(percentage),
+        assessment_date = VALUES(assessment_date),
+        out_off = VALUES(out_off),
+        updated_at = CURRENT_TIMESTAMP
+    `;
 
-    const tableName = tableMap[assessmentType];
-    if (!tableName) {
-      return res.status(400).json({ error: 'Invalid assessment type' });
-    }
+    const [result] = await pool.execute(upsertQuery, values);
 
-    // Save to database
-    const upsertData = {
-      learner_id: Number(learner_id),
-      batch_no,
-      week_no: Number(week_no),
-      assessment_date,
-      out_off: Number(out_off),
-      points: points ? Number(points) : null,
-      percentage: percentage ? Number(percentage) : null
-    };
+    console.log(`✅ Saved to ${tableName}:`, {
+      affectedRows: result.affectedRows,
+      insertId: result.insertId
+    });
 
-    const { error } = await supabase
-      .from(tableName)
-      .upsert(upsertData, { onConflict: 'learner_id,batch_no,week_no' });
+    res.json({ 
+      success: true, 
+      table: tableName,
+      affectedRows: result.affectedRows 
+    });
 
-    if (error) {
-      console.error('Database error:', error);
-      return res.status(500).json({ error: 'Failed to save marks' });
-    }
-
-    console.log(`✅ SAVED: ${learner_id} | ${batch_no} | ${assessment_date}`);
-    res.json({ success: true });
-  } catch (err) {
-    console.error('Marks endpoint error:', err);
-    res.status(500).json({ error: 'Server error' });
+  } catch (error) {
+    console.error('Save marks error:', error);
+    res.status(500).json({ 
+      error: 'Failed to save marks',
+      details: error.message 
+    });
   }
 });
 
@@ -3154,15 +3228,111 @@ app.get('/api/batch-owner/:batch_no', async (req, res) => {
 //=== Fetch the Learners ===
 app.get('/apigetlearners', async (req, res) => {
   try {
-    const batch_no = req.query.batchno;
+    const { batchno } = req.query;
+    
+    if (!batchno) {
+      return res.status(400).json({ error: 'Batch number required' });
+    }
+
+    console.log(`🔍 Fetching learners for batch: ${batchno}`);
+
     const { data, error } = await supabase
-      .from('learners_data') // use your actual table name
-      .select('id, name, email, batch_no, status') // <--- MUST include 'id'
-      .eq('batch_no', batch_no);
-    if (error) throw error;
-    res.json(data);
+      .from('learners_data') // Your actual table name
+      .select('id, name, email, batch_no, status')
+      .eq('batch_no', batchno)
+      .order('name', { ascending: true });
+
+    if (error) {
+      console.error('Supabase error:', error);
+      return res.status(500).json({ 
+        error: 'Failed to fetch learners', 
+        details: error.message 
+      });
+    }
+
+    console.log(`✅ Found ${data?.length || 0} learners for ${batchno}`);
+    res.json(data || []);
+
   } catch (error) {
-    res.status(500).json({ message: 'Failed to fetch learners', error: error.message || error });
+    console.error('Get learners error:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch learners',
+      details: error.message 
+    });
+  }
+});
+
+// MARKSHEET - Get Periods for Assessment Type
+app.get('/apiperiods/:batchNo/:assessmentType', async (req, res) => {
+  try {
+    const { batchNo, assessmentType } = req.params;
+
+    let query;
+    let params = [batchNo];
+
+    // Map frontend assessmentType to backend logic
+    switch (assessmentType) {
+      case 'weekly-assessment':
+        query = `
+          SELECT DISTINCT 
+            week_no,
+            date as assessment_date,
+            topic_name
+          FROM course_planner_data 
+          WHERE batch_no = ?
+          AND topic_name LIKE '%Weekly Assessment%'
+          ORDER BY week_no, date
+        `;
+        break;
+
+      case 'intermediate-assessment':
+        query = `
+          SELECT DISTINCT 
+            week_no,
+            date as assessment_date,
+            topic_name
+          FROM course_planner_data 
+          WHERE batch_no = ?
+          AND topic_name LIKE '%Intermediate%'
+          ORDER BY week_no, date
+        `;
+        break;
+
+      case 'module-level-assessment':
+        query = `
+          SELECT DISTINCT 
+            week_no,
+            date as assessment_date,
+            topic_name
+          FROM course_planner_data 
+          WHERE batch_no = ?
+          AND topic_name LIKE '%Module Level%'
+          ORDER BY week_no, date
+        `;
+        break;
+
+      case 'weekly-quiz':
+        query = `
+          SELECT DISTINCT 
+            week_no,
+            date as assessment_date,
+            topic_name
+          FROM course_planner_data 
+          WHERE batch_no = ?
+          AND topic_name LIKE '%Quiz%'
+          ORDER BY week_no, date
+        `;
+        break;
+
+      default:
+        return res.status(400).json({ error: 'Invalid assessment type' });
+    }
+
+    const [rows] = await pool.execute(query, params);
+    res.json(rows);
+  } catch (error) {
+    console.error('Get periods error:', error);
+    res.status(500).json({ error: 'Failed to fetch periods' });
   }
 });
 
