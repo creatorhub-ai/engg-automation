@@ -281,21 +281,24 @@ function MarkSheet() {
           learner_id: learner.id,
           batch_no: batchNo,
           assessment_date: selectedDate,
-          week_no: selectedWeekNo || null,   // ✅ ALWAYS SEND
-          out_off: outOff,                   // ✅ ALWAYS SEND
+          out_off: outOff,
           points: marks[learner.id].points,
           percentage: marks[learner.id].percentage || null,
-
-          // type-specific
-          ...(assessmentType !== "weekly-assessment" &&
-            assessmentType !== "weekly-quiz" && {
-              assessment_name: selectedTopic
-            }),
-
-          ...(assessmentType === "module-level-assessment" && {
-            module_no: selectedWeekNo
-          })
         };
+
+        // Add type-specific fields
+        if (assessmentType === "weekly-assessment" || assessmentType === "weekly-quiz") {
+          payload.week_no = selectedWeekNo || null;
+        }
+
+        if (assessmentType === "intermediate-assessment") {
+          payload.assessment_name = selectedTopic || null;
+        }
+
+        if (assessmentType === "module-level-assessment") {
+          payload.module_no = selectedWeekNo || null;
+          payload.assessment_name = selectedTopic || null;
+        }
 
         console.log("📤 Sending payload:", payload);
 

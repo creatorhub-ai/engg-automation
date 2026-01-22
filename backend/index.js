@@ -801,7 +801,6 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
   try {
     const { assessmentType } = req.params;
     const payload = req.body;
-
     console.log("📝 RAW Payload:", payload);
 
     // 🔴 FIX: Convert DD-MM-YYYY → YYYY-MM-DD
@@ -817,31 +816,32 @@ app.post('/api/marks/:assessmentType', async (req, res) => {
     let insertData = {
       learner_id: Number(payload.learner_id),
       batch_no: payload.batch_no,
-      assessment_date: isoDate,   // ✅ FIXED
+      assessment_date: isoDate,
       points: Number(payload.points),
       percentage: payload.percentage ? Number(payload.percentage) : null,
+      out_off: Number(payload.out_off), // ✅ ALWAYS include out_off
     };
 
     switch (assessmentType) {
       case "intermediate-assessment":
         tableName = "intermediate_assessment_scores";
+        insertData.assessment_name = payload.assessment_name || null; // ✅ FIX
         break;
 
       case "weekly-assessment":
         tableName = "weekly_assessment_scores";
         insertData.week_no = Number(payload.week_no);
-        insertData.out_off = Number(payload.out_off);
         break;
 
       case "weekly-quiz":
         tableName = "weekly_assessment_scores";
         insertData.week_no = Number(payload.week_no);
-        insertData.out_off = Number(payload.out_off || 10);
         break;
 
       case "module-level-assessment":
         tableName = "module_level_assessment_scores";
-        insertData.module_no = Number(payload.module_no);
+        insertData.module_no = Number(payload.module_no); // ✅ FIX
+        insertData.assessment_name = payload.assessment_name || null; // ✅ FIX
         break;
 
       default:
