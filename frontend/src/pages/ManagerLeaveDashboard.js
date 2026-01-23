@@ -14,8 +14,6 @@ import {
   InputLabel,
   Select,
   MenuItem,
-  Button,
-  Alert,
 } from "@mui/material";
 import { blue, deepPurple, green, red } from "@mui/material/colors";
 import ArrowBackIosNewIcon from "@mui/icons-material/ArrowBackIosNew";
@@ -24,218 +22,170 @@ import ArrowForwardIosIcon from "@mui/icons-material/ArrowForwardIos";
 const API_BASE =
   process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 
+/* ---------- HELPERS ---------- */
 function formatDate(d) {
-  const year = d.getFullYear();
-  const month = `${d.getMonth() + 1}`.padStart(2, "0");
-  const day = `${d.getDate()}`.padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return d.toISOString().split("T")[0];
 }
 
 function hashString(str) {
   let hash = 0;
-  for (let i = 0; i < str.length; i += 1) {
+  for (let i = 0; i < str.length; i++) {
     hash = (hash << 5) - hash + str.charCodeAt(i);
     hash |= 0;
   }
   return Math.abs(hash);
 }
 
-function ManagerLeaveDashboard({ user, token }) {
+/* ---------- COMPONENT ---------- */
+function ManagerLeaveDashboard({ token }) {
   const [requests, setRequests] = useState([]);
   const [holidays, setHolidays] = useState([]);
   const [trainers, setTrainers] = useState([]);
-  const [selectedTrainerEmail, setSelectedTrainerEmail] = useState("all");
+  const [selectedTrainer, setSelectedTrainer] = useState("all");
 
   const [viewType, setViewType] = useState("month");
-  const [cursor, setCursor] = useState(() => {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    return d;
-  });
+  const [cursor, setCursor] = useState(new Date());
 
-  const trainerHueMapRef = useRef({});
+  const trainerHueMap = useRef({});
 
-  const [holidayFile, setHolidayFile] = useState(null);
-  const [uploadStatus, setUploadStatus] = useState(null);
+  const authHeaders = token
+    ? { Authorization: `Bearer ${token}` }
+    : {};
 
-  const authHeaders = useMemo(
-    () => (token ? { Authorization: `Bearer ${token}` } : {}),
-    [token]
-  );
-
-  const getTrainerHue = (key) => {
-    const k = String(key || "").trim().toLowerCase() || "trainer";
-    const map = trainerHueMapRef.current;
-    if (map[k] == null) {
-      map[k] = hashString(k) % 360;
+  /* ---------- COLORS ---------- */
+  const getTrainerColor = (email) => {
+    const key = email?.toLowerCase() || "trainer";
+    if (!trainerHueMap.current[key]) {
+      trainerHueMap.current[key] = hashString(key) % 360;
     }
-    return map[k];
-  };
-
-  const getTrainerChipStyle = (trainerKey) => {
-    const hue = getTrainerHue(trainerKey);
+    const hue = trainerHueMap.current[key];
     return {
       bg: `hsl(${hue}, 75%, 88%)`,
-      border: `hsl(${hue}, 70%, 75%)`,
+      border: `hsl(${hue}, 70%, 70%)`,
       text: `hsl(${hue}, 55%, 25%)`,
     };
   };
 
-  async function loadAllData(year) {
-    try {
-      const [unavailRes, holRes, trainersRes] = await Promise.all([
-        axios.get(`${API_BASE}/api/unavailability-requests`, {
-          headers: authHeaders,
-        }),
-        axios.get(`${API_BASE}/api/holidays`, {
-          headers: authHeaders,
-          params: { year },
-        }),
-        axios.get(`${API_BASE}/api/trainers`, {
-          headers: authHeaders,
-        }),
-      ]);
-
-      setRequests(Array.isArray(unavailRes.data) ? unavailRes.data : []);
-      setHolidays(Array.isArray(holRes.data) ? holRes.data : []);
-      setTrainers(Array.isArray(trainersRes.data) ? trainersRes.data : []);
-    } catch {
-      setRequests([]);
-      setHolidays([]);
-      setTrainers([]);
-    }
-  }
-
+  /* ---------- LOAD DATA ---------- */
   useEffect(() => {
-    loadAllData(cursor.getFullYear());
-  }, [authHeaders, cursor]);
+    (async () => {
+      try {
+        const [l, h, t] = await Promise.all([
+          axios.get(`${API_BASE}/api/unavailability-requests`, {
+            headers: authHeaders,
+          }),
+          axios.get(`${API_BASE}/api/holidays`, {
+            headers: authHeaders,
+            params: { year: cursor.getFullYear() },
+          }),
+          axios.get(`${API_BASE}/api/trainers`, {
+            headers: authHeaders,
+          }),
+        ]);
+        setRequests(l.data || []);
+        setHolidays(h.data || []);
+        setTrainers(t.data || []);
+      } catch {
+        setRequests([]);
+        setHolidays([]);
+        setTrainers([]);
+      }
+    })();
+  }, [cursor, token]);
 
-  // ✅ FINAL dayEventsMap (email + module_name based)
+  /* ---------- BUILD EVENTS MAP ---------- */
   const dayEventsMap = useMemo(() => {
     const map = {};
 
-    const filteredRequests =
-      selectedTrainerEmail === "all"
+    const filtered =
+      selectedTrainer === "all"
         ? requests
         : requests.filter(
             (r) =>
-              String(r.trainer_email || "").toLowerCase() ===
-              String(selectedTrainerEmail).toLowerCase()
+              r.trainer_email?.toLowerCase() ===
+              selectedTrainer.toLowerCase()
           );
 
-    filteredRequests.forEach((req) => {
-      const start = new Date(req.start_date);
-      const end = new Date(req.end_date || req.start_date);
+    filtered.forEach((r) => {
+      const start = new Date(r.start_date);
+      const end = new Date(r.end_date || r.start_date);
 
       const modules =
-        (req.module_name || "")
-          .split(",")
-          .map((m) => m.trim())
-          .filter(Boolean);
+        r.module_name?.split(",").map((m) => m.trim()) || [];
 
-      const cursorDate = new Date(start);
-      while (cursorDate <= end) {
-        const key = formatDate(cursorDate);
+      const d = new Date(start);
+      while (d <= end) {
+        const key = formatDate(d);
         if (!map[key]) map[key] = [];
 
         map[key].push({
-          id: `leave-${req.id}-${key}`,
-          trainer_name: req.trainer_name,
-          trainer_key: req.trainer_email?.toLowerCase(),
-          domain: req.domain,
+          id: `${r.id}-${key}`,
+          trainer: r.trainer_name,
+          email: r.trainer_email,
+          domain: r.domain,
           modules,
-          category: "trainer",
+          type: "leave",
         });
 
-        cursorDate.setDate(cursorDate.getDate() + 1);
+        d.setDate(d.getDate() + 1);
       }
     });
 
     holidays.forEach((h) => {
       const key = h.holiday_date;
       if (!map[key]) map[key] = [];
-
-      const lower = (h.type || "").toLowerCase();
-      const category = lower.includes("restricted")
-        ? "optionalHoliday"
-        : "holiday";
-
       map[key].push({
-        id: `holiday-${key}`,
-        trainer_name: "",
-        trainer_key: "",
-        domain: "",
-        modules: [],
-        reason: h.name,
-        category,
+        id: `h-${key}`,
+        name: h.name,
+        type: h.type?.toLowerCase().includes("restricted")
+          ? "optional"
+          : "holiday",
       });
     });
 
     return map;
-  }, [requests, holidays, selectedTrainerEmail]);
+  }, [requests, holidays, selectedTrainer]);
 
-  const goPrev = () => {
-    setCursor((prev) => {
-      const d = new Date(prev);
-      if (viewType === "month") d.setMonth(d.getMonth() - 1);
-      else if (viewType === "week") d.setDate(d.getDate() - 7);
-      else d.setDate(d.getDate() - 1);
-      return d;
-    });
-  };
-
-  const goNext = () => {
-    setCursor((prev) => {
-      const d = new Date(prev);
-      if (viewType === "month") d.setMonth(d.getMonth() + 1);
-      else if (viewType === "week") d.setDate(d.getDate() + 7);
-      else d.setDate(d.getDate() + 1);
-      return d;
-    });
-  };
-
-  const handleViewChange = (_, next) => next && setViewType(next);
-
-  const renderDayCellEvents = (dateObj) => {
-    const key = formatDate(dateObj);
-    const events = dayEventsMap[key] || [];
+  /* ---------- DAY CELL ---------- */
+  const renderDayEvents = (date) => {
+    const events = dayEventsMap[formatDate(date)] || [];
 
     return (
       <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
-        {events.map((ev) => {
-          let bg, color, border = "transparent";
+        {events.map((e) => {
+          let bg, color, border;
 
-          if (ev.category === "holiday") {
+          if (e.type === "holiday") {
             bg = green[200];
             color = green[900];
-          } else if (ev.category === "optionalHoliday") {
+          } else if (e.type === "optional") {
             bg = red[200];
             color = red[900];
           } else {
-            const style = getTrainerChipStyle(ev.trainer_key);
-            bg = style.bg;
-            color = style.text;
-            border = style.border;
+            const c = getTrainerColor(e.email);
+            bg = c.bg;
+            color = c.text;
+            border = c.border;
           }
 
           const tooltip =
-            ev.category === "trainer"
-              ? `${ev.trainer_name} (${ev.domain || ""})${
-                  ev.modules.length
-                    ? `\n📚 Modules: ${ev.modules.join(", ")}`
+            e.type === "leave"
+              ? `${e.trainer} (${e.domain || ""})${
+                  e.modules.length
+                    ? `\n📚 ${e.modules.join(", ")}`
                     : ""
                 }`
-              : ev.reason || "Holiday";
+              : e.name;
 
           return (
-            <Tooltip key={ev.id} title={tooltip} arrow>
+            <Tooltip key={e.id} title={tooltip} arrow>
               <Chip
                 size="small"
-                label={ev.trainer_name || ev.reason || "Holiday"}
+                label={e.trainer || e.name}
                 sx={{
                   bgcolor: bg,
                   color,
-                  border: `1px solid ${border}`,
+                  border: border ? `1px solid ${border}` : "none",
                   fontSize: 11,
                   height: 22,
                 }}
@@ -247,81 +197,103 @@ function ManagerLeaveDashboard({ user, token }) {
     );
   };
 
-  /* -------- RENDERERS (UNCHANGED STRUCTURE) -------- */
-
-  const year = cursor.getFullYear();
-  const monthIndex = cursor.getMonth();
-  const monthLabel = cursor.toLocaleString("default", {
-    month: "long",
-    year: "numeric",
-  });
-
+  /* ---------- MONTH VIEW ---------- */
   const renderMonthView = () => {
-    const first = new Date(year, monthIndex, 1);
-    const last = new Date(year, monthIndex + 1, 0);
-    const startWeekday = first.getDay();
+    const year = cursor.getFullYear();
+    const month = cursor.getMonth();
+    const first = new Date(year, month, 1);
+    const startDay = first.getDay();
+    let day = 1 - startDay;
 
-    const weeks = [];
-    let day = 1 - startWeekday;
-
-    while (day <= last.getDate()) {
-      const week = [];
-      for (let i = 0; i < 7; i++) {
-        const d = new Date(year, monthIndex, day);
-        d.setHours(0, 0, 0, 0);
-        week.push(d);
-        day++;
-      }
-      weeks.push(week);
+    const cells = [];
+    for (let i = 0; i < 42; i++) {
+      const d = new Date(year, month, day++);
+      cells.push(d);
     }
 
     return (
-      <>
-        <Box sx={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", mb: 1 }}>
-          {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d) => (
-            <Box key={d} sx={{ textAlign: "center", fontWeight: "bold" }}>{d}</Box>
-          ))}
-        </Box>
+      <Box sx={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 0.5 }}>
+        {cells.map((d, i) => {
+          const key = formatDate(d);
+          const hasEvent = dayEventsMap[key]?.length;
 
-        <Box sx={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 0.5 }}>
-          {weeks.flat().map((d, i) => (
-            <Box key={i} sx={{ minHeight: 90, border: "1px solid #ddd", p: 0.5 }}>
-              <Typography variant="caption" sx={{ fontWeight: "bold", textAlign: "right" }}>
+          return (
+            <Box
+              key={i}
+              sx={{
+                minHeight: 90,
+                p: 0.5,
+                border: "1px solid #ddd",
+                bgcolor: hasEvent ? deepPurple[50] : "#fff",
+                opacity: d.getMonth() === month ? 1 : 0.4,
+              }}
+            >
+              <Typography
+                variant="caption"
+                sx={{ fontWeight: "bold", textAlign: "right" }}
+              >
                 {d.getDate()}
               </Typography>
-              {renderDayCellEvents(d)}
+              {renderDayEvents(d)}
             </Box>
-          ))}
-        </Box>
-      </>
+          );
+        })}
+      </Box>
     );
   };
 
+  /* ---------- NAV ---------- */
+  const move = (dir) => {
+    const d = new Date(cursor);
+    if (viewType === "month") d.setMonth(d.getMonth() + dir);
+    else d.setDate(d.getDate() + dir);
+    setCursor(d);
+  };
+
+  /* ---------- RENDER ---------- */
   return (
     <Paper sx={{ p: 3 }}>
-      <Typography variant="h6" fontWeight="bold" mb={2}>
-        Trainer Leave Calendar
-      </Typography>
+      <Box sx={{ display: "flex", justifyContent: "space-between", mb: 2 }}>
+        <Typography variant="h6" fontWeight="bold">
+          Trainer Leave Calendar
+        </Typography>
 
-      <Box sx={{ display: "flex", gap: 2, mb: 2 }}>
-        <ToggleButtonGroup size="small" value={viewType} exclusive onChange={handleViewChange}>
+        <ToggleButtonGroup
+          size="small"
+          value={viewType}
+          exclusive
+          onChange={(_, v) => v && setViewType(v)}
+        >
           <ToggleButton value="day">Day</ToggleButton>
           <ToggleButton value="week">Week</ToggleButton>
           <ToggleButton value="month">Month</ToggleButton>
         </ToggleButtonGroup>
+      </Box>
 
-        <IconButton onClick={goPrev}><ArrowBackIosNewIcon fontSize="small" /></IconButton>
-        <Typography>{monthLabel}</Typography>
-        <IconButton onClick={goNext}><ArrowForwardIosIcon fontSize="small" /></IconButton>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 2, mb: 2 }}>
+        <IconButton onClick={() => move(-1)}>
+          <ArrowBackIosNewIcon fontSize="small" />
+        </IconButton>
+
+        <Typography>
+          {cursor.toLocaleDateString("default", {
+            month: "long",
+            year: "numeric",
+          })}
+        </Typography>
+
+        <IconButton onClick={() => move(1)}>
+          <ArrowForwardIosIcon fontSize="small" />
+        </IconButton>
 
         <FormControl size="small" sx={{ minWidth: 220 }}>
           <InputLabel>Trainer</InputLabel>
           <Select
             label="Trainer"
-            value={selectedTrainerEmail}
-            onChange={(e) => setSelectedTrainerEmail(e.target.value)}
+            value={selectedTrainer}
+            onChange={(e) => setSelectedTrainer(e.target.value)}
           >
-            <MenuItem value="all"><em>All Trainers</em></MenuItem>
+            <MenuItem value="all">All Trainers</MenuItem>
             {trainers.map((t) => (
               <MenuItem key={t.email} value={t.email}>
                 {t.name || t.trainer_name} ({t.email})
@@ -331,7 +303,7 @@ function ManagerLeaveDashboard({ user, token }) {
         </FormControl>
       </Box>
 
-      {viewType === "month" && renderMonthView()}
+      {renderMonthView()}
     </Paper>
   );
 }
