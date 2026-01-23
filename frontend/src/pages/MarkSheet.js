@@ -200,30 +200,65 @@ function MarkSheet() {
       return;
     }
 
+    const endpointMap = {
+      weekly: "/api/marks/weekly-assessment",
+      intermediate: "/api/marks/intermediate-assessment",
+      module: "/api/marks/module-level-assessment",
+    };
+
     try {
+      let saved = false;
+
       for (const l of learners) {
         if (!marks[l.id]?.points) continue;
 
-        await fetch(`${API_BASE}/api/marks/${assessmentType}`, {
+        const payload = {
+          learner_id: l.id,
+          batch_no: batchNo,
+          assessment_date: selectedDate,
+          assessment_name:
+            assessmentType === "weekly"
+              ? "Weekly Assessment"
+              : assessmentType === "intermediate"
+              ? "Intermediate Assessment"
+              : "Module Level Assessment",
+          out_off: Number(outOff),
+          points: Number(marks[l.id].points),
+          percentage: marks[l.id].percentage || null,
+        };
+
+        // ⬇️ REQUIRED FIELDS
+        if (assessmentType === "weekly" || assessmentType === "intermediate") {
+          payload.week_no = selectedWeekNo;
+        }
+
+        if (assessmentType === "module") {
+          payload.module_no = selectedWeekNo; // or module_no source
+        }
+
+        const res = await fetch(`${API_BASE}${endpointMap[assessmentType]}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            learner_id: l.id,
-            batch_no: batchNo,
-            assessment_date: selectedDate,
-            assessment_name: topicName,
-            out_off: outOff,
-            points: marks[l.id].points,
-            percentage: marks[l.id].percentage,
-            week_no: selectedWeekNo,
-          }),
+          body: JSON.stringify(payload),
         });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || "Save failed");
+        }
+
+        saved = true;
       }
 
-      setMessage("✅ Marks saved successfully");
-      setMarks({});
-    } catch {
-      setMessage("❌ Failed to save marks");
+      if (saved) {
+        setMessage("✅ Marks saved successfully");
+        setMarks({});
+      } else {
+        setMessage("⚠️ No marks entered");
+      }
+    } catch (err) {
+      console.error("Save error:", err);
+      setMessage(`❌ ${err.message}`);
     }
 
     setTimeout(() => setMessage(""), 4000);

@@ -3373,7 +3373,11 @@ app.post("/api/marks/intermediate-assessment", async (req, res) => {
       percentage
     } = req.body;
 
-    const { data: planner } = await supabase
+    if (!week_no) {
+      return res.status(400).json({ error: "week_no is required" });
+    }
+
+    const { data: planner, error: plannerError } = await supabase
       .from("course_planner_data")
       .select("id")
       .eq("batch_no", batch_no)
@@ -3381,7 +3385,7 @@ app.post("/api/marks/intermediate-assessment", async (req, res) => {
       .limit(1)
       .single();
 
-    if (!planner) {
+    if (plannerError || !planner) {
       return res.status(409).json({ error: "Planner not found" });
     }
 
@@ -3401,17 +3405,21 @@ app.post("/api/marks/intermediate-assessment", async (req, res) => {
           marked_at: new Date()
         },
         {
-          onConflict: "learner_id,course_planner_id,assessment_date"
+          // ✅ MUST MATCH TABLE PRIMARY KEY
+          onConflict: "learner_id,course_planner_id,week_no,assessment_date"
         }
       );
 
     if (error) throw error;
+
     res.json({ success: true });
 
   } catch (err) {
+    console.error("Intermediate save error:", err);
     res.status(500).json({ error: err.message });
   }
 });
+
 
 //save the module level assessment marks
 app.post("/api/marks/module-level-assessment", async (req, res) => {
@@ -3427,7 +3435,11 @@ app.post("/api/marks/module-level-assessment", async (req, res) => {
       percentage
     } = req.body;
 
-    const { data: planner } = await supabase
+    if (!module_no) {
+      return res.status(400).json({ error: "module_no is required" });
+    }
+
+    const { data: planner, error: plannerError } = await supabase
       .from("course_planner_data")
       .select("id")
       .eq("batch_no", batch_no)
@@ -3435,7 +3447,7 @@ app.post("/api/marks/module-level-assessment", async (req, res) => {
       .limit(1)
       .single();
 
-    if (!planner) {
+    if (plannerError || !planner) {
       return res.status(409).json({ error: "Planner not found" });
     }
 
@@ -3455,14 +3467,17 @@ app.post("/api/marks/module-level-assessment", async (req, res) => {
           marked_at: new Date()
         },
         {
-          onConflict: "learner_id,course_planner_id,assessment_date"
+          // ✅ MUST MATCH TABLE PRIMARY KEY
+          onConflict: "learner_id,course_planner_id,module_no,assessment_date"
         }
       );
 
     if (error) throw error;
+
     res.json({ success: true });
 
   } catch (err) {
+    console.error("Module save error:", err);
     res.status(500).json({ error: err.message });
   }
 });
