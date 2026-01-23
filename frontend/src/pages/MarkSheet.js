@@ -28,6 +28,25 @@ const ASSESSMENT_TYPES = [
   { key: "module-level-assessment", label: "Module Level Assessment", days: 5 },
 ];
 
+/* 🔧 SAFE DATE PARSER */
+const parseAssessmentDate = (dateStr) => {
+  if (!dateStr) return null;
+
+  // YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    const [y, m, d] = dateStr.split("-").map(Number);
+    return new Date(y, m - 1, d);
+  }
+
+  // DD-MM-YYYY or DD/MM/YYYY
+  if (/^\d{2}[-/]\d{2}[-/]\d{4}$/.test(dateStr)) {
+    const [d, m, y] = dateStr.split(/[-/]/).map(Number);
+    return new Date(y, m - 1, d);
+  }
+
+  return null;
+};
+
 function MarkSheet() {
   const [batchNo, setBatchNo] = useState("");
   const [assessmentType, setAssessmentType] = useState("weekly-assessment");
@@ -88,25 +107,27 @@ function MarkSheet() {
       .finally(() => setLoadingLearners(false));
   }, [batchNo]);
 
-  /* ---------------- LOAD ASSESSMENT DATES (FIXED) ---------------- */
+  /* ---------------- LOAD PERIODS (DEDUPED) ---------------- */
   useEffect(() => {
     if (!batchNo || !assessmentType) {
       setPeriods([]);
       setPeriodValue("");
-      setSelectedDate("");
-      setSelectedWeekNo("");
-      setTopicName("");
       return;
     }
 
-    fetch(
-      `${API_BASE}/apiperiods/${encodeURIComponent(batchNo)}/${encodeURIComponent(
-        assessmentType
-      )}`
-    )
+    fetch(`${API_BASE}/apiperiods/${batchNo}/${assessmentType}`)
       .then(res => res.json())
       .then(data => {
-        setPeriods(Array.isArray(data) ? data : []);
+        if (!Array.isArray(data)) return setPeriods([]);
+
+        // 🔥 DEDUPE by week_no + date
+        const unique = Array.from(
+          new Map(
+            data.map(p => [`${p.week_no}-${p.date}`, p])
+          ).values()
+        );
+
+        setPeriods(unique);
       })
       .catch(() => setPeriods([]));
 
@@ -116,22 +137,36 @@ function MarkSheet() {
     setTopicName("");
   }, [batchNo, assessmentType]);
 
-  /* ---------------- WINDOW CHECK ---------------- */
+  /* ---------------- WINDOW CHECK (FIXED) ---------------- */
   useEffect(() => {
     if (!selectedDate) return;
 
     const typeCfg = ASSESSMENT_TYPES.find(t => t.key === assessmentType);
     const days = typeCfg?.days || 3;
 
-    const [d, m, y] = selectedDate.split(/[-/]/).map(Number);
-    const assessmentDate = new Date(y, m - 1, d);
+    const assessmentDate = parseAssessmentDate(selectedDate);
+    if (!assessmentDate) {
+      setIsWindowOpen(false);
+      setWindowCloseDate("Invalid date");
+      return;
+    }
 
     const close = new Date(assessmentDate);
     close.setDate(assessmentDate.getDate() + days);
     close.setHours(23, 59, 59, 999);
 
     setIsWindowOpen(currentDate <= close);
-    setWindowCloseDate(close.toLocaleDateString("en-GB"));
+
+    setWindowCloseDate(
+      close.toLocaleString("en-GB", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      })
+    );
   }, [selectedDate, assessmentType, currentDate]);
 
   /* ---------------- HANDLERS ---------------- */
@@ -176,7 +211,7 @@ function MarkSheet() {
             learner_id: l.id,
             batch_no: batchNo,
             assessment_date: selectedDate,
-            topic_name: topicName,
+            assessment_name: topicName,
             out_off: outOff,
             points: marks[l.id].points,
             percentage: marks[l.id].percentage,
@@ -235,16 +270,16 @@ function MarkSheet() {
             </Select>
           </FormControl>
 
-          <FormControl sx={{ minWidth: 260 }}>
+          <FormControl sx={{ minWidth: 280 }}>
             <InputLabel>Assessment Date</InputLabel>
             <Select value={periodValue} onChange={handlePeriodSelect}>
               <MenuItem value="">Select date</MenuItem>
               {periods.map(p => (
                 <MenuItem
-                  key={`${p.week_no}::${p.date}`}
+                  key={`${p.week_no}-${p.date}`}
                   value={`${p.week_no}::${p.date}::${p.topic_name}`}
                 >
-                  {p.week_no} ({p.date})
+                  Week {p.week_no} ({p.date})
                 </MenuItem>
               ))}
             </Select>
