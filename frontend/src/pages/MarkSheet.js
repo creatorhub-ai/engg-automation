@@ -20,22 +20,28 @@ import {
 } from "@mui/material";
 
 const API_BASE =
-  process.env.REACT_APP_API_URL ||
-  "https://engg-automation.onrender.com";
+  process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
+
+const ASSESSMENT_TYPES = [
+  { key: "weekly-assessment", label: "Weekly Assessment", days: 3 },
+  { key: "intermediate-assessment", label: "Intermediate Assessment", days: 5 },
+  { key: "module-level-assessment", label: "Module Level Assessment", days: 5 },
+];
 
 function MarkSheet() {
   const [batchNo, setBatchNo] = useState("");
+  const [assessmentType, setAssessmentType] = useState("weekly-assessment");
+
   const [availableBatches, setAvailableBatches] = useState([]);
   const [loadingBatches, setLoadingBatches] = useState(true);
-
-  const [assessmentType, setAssessmentType] = useState("weekly");
 
   const [learners, setLearners] = useState([]);
   const [loadingLearners, setLoadingLearners] = useState(false);
 
   const [periods, setPeriods] = useState([]);
-  const [selectedDate, setSelectedDate] = useState("");
+  const [periodValue, setPeriodValue] = useState("");
   const [selectedWeekNo, setSelectedWeekNo] = useState("");
+  const [selectedDate, setSelectedDate] = useState("");
   const [topicName, setTopicName] = useState("");
 
   const [marks, setMarks] = useState({});
@@ -53,7 +59,7 @@ function MarkSheet() {
     return () => clearInterval(i);
   }, []);
 
-  /* ---------------- FETCH BATCHES ---------------- */
+  /* ---------------- BATCHES ---------------- */
   useEffect(() => {
     fetch(`${API_BASE}/api/batches`)
       .then(res => res.json())
@@ -67,7 +73,7 @@ function MarkSheet() {
       .finally(() => setLoadingBatches(false));
   }, []);
 
-  /* ---------------- FETCH LEARNERS ---------------- */
+  /* ---------------- LEARNERS ---------------- */
   useEffect(() => {
     if (!batchNo) {
       setLearners([]);
@@ -82,51 +88,64 @@ function MarkSheet() {
       .finally(() => setLoadingLearners(false));
   }, [batchNo]);
 
-  /* ---------------- FETCH ASSESSMENT DATES ---------------- */
+  /* ---------------- LOAD ASSESSMENT DATES (FIXED) ---------------- */
   useEffect(() => {
     if (!batchNo || !assessmentType) {
       setPeriods([]);
+      setPeriodValue("");
       setSelectedDate("");
-      setTopicName("");
       setSelectedWeekNo("");
+      setTopicName("");
       return;
     }
 
     fetch(
-      `${API_BASE}/api/assessment-dates?batch_no=${batchNo}&type=${assessmentType}`
+      `${API_BASE}/apiperiods/${encodeURIComponent(batchNo)}/${encodeURIComponent(
+        assessmentType
+      )}`
     )
       .then(res => res.json())
-      .then(resData => {
-        // ✅ HANDLE ALL POSSIBLE SHAPES
-        const rows = Array.isArray(resData)
-          ? resData
-          : Array.isArray(resData?.data)
-          ? resData.data
-          : [];
-
-        setPeriods(rows);
+      .then(data => {
+        setPeriods(Array.isArray(data) ? data : []);
       })
-      .catch(() => {
-        setPeriods([]);
-      });
+      .catch(() => setPeriods([]));
+
+    setPeriodValue("");
+    setSelectedDate("");
+    setSelectedWeekNo("");
+    setTopicName("");
   }, [batchNo, assessmentType]);
 
   /* ---------------- WINDOW CHECK ---------------- */
   useEffect(() => {
     if (!selectedDate) return;
 
-    const d = new Date(selectedDate);
-    const close = new Date(d);
-    const extraDays = assessmentType === "weekly" ? 3 : 4;
-    close.setDate(d.getDate() + extraDays);
+    const typeCfg = ASSESSMENT_TYPES.find(t => t.key === assessmentType);
+    const days = typeCfg?.days || 3;
+
+    const [d, m, y] = selectedDate.split(/[-/]/).map(Number);
+    const assessmentDate = new Date(y, m - 1, d);
+
+    const close = new Date(assessmentDate);
+    close.setDate(assessmentDate.getDate() + days);
     close.setHours(23, 59, 59, 999);
 
     setIsWindowOpen(currentDate <= close);
     setWindowCloseDate(close.toLocaleDateString("en-GB"));
   }, [selectedDate, assessmentType, currentDate]);
 
-  /* ---------------- MARK INPUT ---------------- */
-  const handleMarksInput = (learnerId, value) => {
+  /* ---------------- HANDLERS ---------------- */
+  const handlePeriodSelect = (e) => {
+    const val = e.target.value;
+    setPeriodValue(val);
+
+    const [week, date, topic] = val.split("::");
+    setSelectedWeekNo(week);
+    setSelectedDate(date);
+    setTopicName(topic);
+  };
+
+  const handleMarksInput = (id, value) => {
     if (!isWindowOpen) return;
 
     const points = value.replace(/\D/g, "");
@@ -135,7 +154,7 @@ function MarkSheet() {
 
     setMarks(prev => ({
       ...prev,
-      [learnerId]: { points, percentage },
+      [id]: { points, percentage },
     }));
   };
 
@@ -146,29 +165,22 @@ function MarkSheet() {
       return;
     }
 
-    const endpointMap = {
-      weekly: "/api/marks/weekly-assessment",
-      intermediate: "/api/marks/intermediate-assessment",
-      module: "/api/marks/module-level-assessment",
-    };
-
     try {
       for (const l of learners) {
         if (!marks[l.id]?.points) continue;
 
-        await fetch(`${API_BASE}${endpointMap[assessmentType]}`, {
+        await fetch(`${API_BASE}/api/marks/${assessmentType}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             learner_id: l.id,
             batch_no: batchNo,
             assessment_date: selectedDate,
-            assessment_type: assessmentType,
             topic_name: topicName,
             out_off: outOff,
             points: marks[l.id].points,
             percentage: marks[l.id].percentage,
-            week_no: selectedWeekNo || null,
+            week_no: selectedWeekNo,
           }),
         });
       }
@@ -200,15 +212,17 @@ function MarkSheet() {
         </Typography>
 
         <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap", mb: 2 }}>
-          <FormControl sx={{ minWidth: 200 }}>
+          <FormControl sx={{ minWidth: 220 }}>
             <InputLabel>Assessment Type</InputLabel>
             <Select
               value={assessmentType}
               onChange={e => setAssessmentType(e.target.value)}
             >
-              <MenuItem value="weekly">Weekly</MenuItem>
-              <MenuItem value="intermediate">Intermediate</MenuItem>
-              <MenuItem value="module">Module Level</MenuItem>
+              {ASSESSMENT_TYPES.map(t => (
+                <MenuItem key={t.key} value={t.key}>
+                  {t.label}
+                </MenuItem>
+              ))}
             </Select>
           </FormControl>
 
@@ -221,26 +235,16 @@ function MarkSheet() {
             </Select>
           </FormControl>
 
-          <FormControl sx={{ minWidth: 220 }}>
+          <FormControl sx={{ minWidth: 260 }}>
             <InputLabel>Assessment Date</InputLabel>
-            <Select
-              value={selectedDate}
-              onChange={(e) => {
-                const date = e.target.value;
-                setSelectedDate(date);
-
-                const row = periods.find(p => p.date === date);
-                setTopicName(row?.topic_name || "");
-                setSelectedWeekNo(row?.week_no || "");
-              }}
-            >
-              {periods.length === 0 && (
-                <MenuItem disabled>No assessment dates</MenuItem>
-              )}
-
-              {periods.map((p) => (
-                <MenuItem key={p.date} value={p.date}>
-                  {p.date}
+            <Select value={periodValue} onChange={handlePeriodSelect}>
+              <MenuItem value="">Select date</MenuItem>
+              {periods.map(p => (
+                <MenuItem
+                  key={`${p.week_no}::${p.date}`}
+                  value={`${p.week_no}::${p.date}::${p.topic_name}`}
+                >
+                  {p.week_no} ({p.date})
                 </MenuItem>
               ))}
             </Select>
@@ -280,7 +284,7 @@ function MarkSheet() {
               {learners.map(l => (
                 <TableRow key={l.id}>
                   <TableCell>{l.name}</TableCell>
-                  <TableCell>{topicName || "-"}</TableCell>
+                  <TableCell>{topicName}</TableCell>
                   <TableCell>
                     <TextField
                       size="small"
@@ -298,12 +302,7 @@ function MarkSheet() {
           </Table>
         )}
 
-        <Button
-          sx={{ mt: 2 }}
-          variant="contained"
-          disabled={!isWindowOpen}
-          onClick={handleSave}
-        >
+        <Button sx={{ mt: 2 }} variant="contained" onClick={handleSave}>
           Save Marks
         </Button>
 
