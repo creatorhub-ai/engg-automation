@@ -206,6 +206,14 @@ function MarkSheet() {
       module: "/api/marks/module-level-assessment",
     };
 
+    const endpoint = endpointMap[assessmentType];
+
+    if (!endpoint) {
+      setMessage("❌ Invalid assessment type");
+      console.error("Invalid assessmentType:", assessmentType);
+      return;
+    }
+
     try {
       let saved = false;
 
@@ -236,7 +244,7 @@ function MarkSheet() {
           payload.module_no = selectedWeekNo; // or module_no source
         }
 
-        const res = await fetch(`${API_BASE}${endpointMap[assessmentType]}`, {
+        const res = await fetch(`${API_BASE}${endpoint}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
@@ -288,11 +296,9 @@ function MarkSheet() {
               value={assessmentType}
               onChange={e => setAssessmentType(e.target.value)}
             >
-              {ASSESSMENT_TYPES.map(t => (
-                <MenuItem key={t.key} value={t.key}>
-                  {t.label}
-                </MenuItem>
-              ))}
+              <MenuItem value="weekly">Weekly</MenuItem>
+              <MenuItem value="intermediate">Intermediate</MenuItem>
+              <MenuItem value="module">Module Level</MenuItem>
             </Select>
           </FormControl>
 
