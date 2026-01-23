@@ -1743,50 +1743,25 @@ app.get("/api/trainers", async (req, res) => {
 // ===============================
 app.get("/api/unavailability-requests", async (req, res) => {
   try {
-    // 1) Get all requests
-    const { data: reqs, error: reqErr } = await supabase
-      .from("trainer_unavailability")
-      .select("id, trainer_email, trainer_name, domain, start_date, end_date, reason, status, batch_nos, submitted_at")
-      .order("submitted_at", { ascending: false });
+    const result = await pool.query(`
+      SELECT
+        id,
+        trainer_email,
+        trainer_name,
+        domain,
+        start_date,
+        end_date,
+        reason,
+        status,
+        module_name
+      FROM trainer_unavailability
+      ORDER BY start_date
+    `);
 
-    if (reqErr) {
-      console.error("GET /api/unavailability-requests error:", reqErr);
-      return res.status(200).json([]); // avoid 404/500 in UI
-    }
-
-    // 2) Get trainers lookup for trainer_id enrichment
-    const { data: trainers, error: trErr } = await supabase
-      .from("internal_users")
-      .select("id, email")
-      .eq("role", "Trainer");
-
-    if (trErr) {
-      console.error("GET trainers lookup error:", trErr);
-      // still return requests without trainer_id
-    }
-
-    const emailToId = new Map((trainers || []).map((t) => [String(t.email || "").toLowerCase(), t.id]));
-
-    const out = (reqs || []).map((r) => {
-      const email = String(r.traineremail || "").toLowerCase();
-      return {
-        id: r.id,
-        trainer_id: emailToId.get(email) || null,
-        trainer_name: r.trainer_name || (r.traineremail ? r.traineremail.split("@")[0] : ""),
-        trainer_email: r.trainer_email || "",
-        domain: r.domain || "",
-        start_date: r.start_date,
-        end_date: r.end_date || r.start_date,
-        leave_type: r.reason || "", // your UI checks leave_type/reason keywords
-        reason: r.reason || "",
-        status: r.status || "Pending",
-      };
-    });
-
-    return res.status(200).json(out);
+    res.json(result.rows);
   } catch (err) {
-    console.error("GET /api/unavailability-requests crash:", err);
-    return res.status(200).json([]);
+    console.error("Error fetching leave requests:", err);
+    res.status(500).json({ error: "Failed to fetch leave requests" });
   }
 });
 
@@ -3193,67 +3168,76 @@ app.get('/apiperiods/:batchNo/:assessmentType', async (req, res) => {
   }
 });
 
-app.post('/api/trainer-leaves', async (req, res) => {
+app.post("/api/trainer-leaves", async (req, res) => {
+  const {
+    trainer_email,
+    trainer_name,
+    domain,
+    start_date,
+    end_date,
+    reason,
+    batch_nos,
+  } = req.body;
+
+  if (!trainer_email || !start_date || !end_date) {
+    return res.status(400).json({ error: "Missing required fields" });
+  }
+
   try {
-    console.log('🆕 Trainer Leave Request:', req.body);
-    
-    const { 
-      trainer_email, 
-      trainer_name, 
-      domain, 
-      start_date, 
-      end_date, 
-      reason, 
-      batch_nos 
-    } = req.body;
+    // 1️⃣ Fetch DISTINCT module names from course_planner_data
+    const moduleResult = await pool.query(
+      `
+      SELECT DISTINCT module_name
+      FROM course_planner_data
+      WHERE trainer_email = $1
+        AND date BETWEEN $2 AND $3
+        AND module_name IS NOT NULL
+      `,
+      [trainer_email, start_date, end_date]
+    );
 
-    // 🔥 VALIDATION
-    if (!trainer_email || !domain || !start_date || !end_date) {
-      return res.status(400).json({ 
-        error: 'Missing required fields: trainer_email, domain, start_date, end_date' 
-      });
-    }
+    // 2️⃣ Convert to comma-separated string
+    const moduleNames = moduleResult.rows
+      .map((r) => r.module_name)
+      .filter(Boolean);
 
-    // 🔥 SAVE TO trainer_unavailability table (same table as manager dashboard)
-    const { data, error } = await supabase
-      .from('trainer_unavailability')
-      .insert([{
+    const moduleNameStr = moduleNames.join(", ");
+
+    // 3️⃣ Insert leave record
+    await pool.query(
+      `
+      INSERT INTO trainer_unavailability
+      (
         trainer_email,
-        trainer_name: trainer_name || 'Unknown Trainer',
+        trainer_name,
         domain,
         start_date,
         end_date,
-        reason: reason || null,
-        batch_nos: batch_nos || null,
-        status: 'pending',  // Default: pending (for manager approval)
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      }])
-      .select('id, trainer_email, trainer_name, domain, start_date, end_date, status')
-      .single();
+        reason,
+        batch_nos,
+        module_name
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+      `,
+      [
+        trainer_email,
+        trainer_name,
+        domain,
+        start_date,
+        end_date,
+        reason,
+        batch_nos,
+        moduleNameStr,
+      ]
+    );
 
-    if (error) {
-      console.error('❌ Supabase Error:', error);
-      return res.status(500).json({ error: error.message });
-    }
-
-    console.log('✅ Leave saved:', data.id);
-    res.status(201).json({ 
-      success: true, 
-      message: 'Leave request submitted successfully!',
-      data: {
-        id: data.id,
-        trainer_email: data.trainer_email,
-        status: data.status
-      }
+    res.json({
+      success: true,
+      module_name: moduleNameStr,
     });
-
   } catch (err) {
-    console.error('💥 Trainer leaves API error:', err);
-    res.status(500).json({ 
-      error: 'Failed to create leave request',
-      details: err.message 
-    });
+    console.error("Error applying leave:", err);
+    res.status(500).json({ error: "Failed to apply leave" });
   }
 });
 

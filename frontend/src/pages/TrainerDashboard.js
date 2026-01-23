@@ -141,17 +141,15 @@ function TrainerUnavailabilityForm({ user, token }) {
     try {
       const batch_nos_str = selectedBatchNos.join(",");
       
-      const response = await axios.post(
-        `${API_BASE}/api/trainer-leaves`,
-        {
-          trainer_email: user?.email,
-          trainer_name: user?.name,
-          domain,
-          start_date: start,
-          end_date: end,
-          reason,
-          batch_nos: batch_nos_str,
-        },
+      await axios.post(`${API_BASE}/api/trainer-leaves`, {
+        trainer_email: user.email,
+        trainer_name: user.name,
+        domain,
+        start_date: start,
+        end_date: end,
+        reason,
+        batch_nos: batch_nos_str,
+      },
         { 
           headers: authHeaders,
           timeout: 10000,
