@@ -1553,23 +1553,22 @@ app.post("/api/save-classroom-matrix", async (req, res) => {
 
 // ✅ GET holidays for current year (no query param needed)
 app.get("/api/holidays", async (req, res) => {
-  const { year } = req.query;
-
   try {
+    const year = Number(req.query.year);
+
+    if (!year) {
+      return res.status(400).json({ message: "Year is required" });
+    }
+
     const result = await pool.query(
-      `
-      SELECT id, holiday_date, name, type
-      FROM holidays
-      WHERE EXTRACT(YEAR FROM holiday_date) = $1
-      ORDER BY holiday_date
-      `,
+      "SELECT * FROM holidays WHERE EXTRACT(YEAR FROM holiday_date) = $1",
       [year]
     );
 
     res.json(result.rows);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to fetch holidays" });
+    console.error("🔥 Holiday API error:", err);
+    res.status(500).json({ message: "Failed to fetch holidays" });
   }
 });
 
@@ -1624,13 +1623,6 @@ app.post("/api/holidays/upload", upload.single("file"), async (req, res) => {
   }
 });
 
-// Optional: keep backward compatibility with old route name if your backend had it
-app.post("/api/holidaysupload", upload.single("file"), async (req, res) => {
-  // forward to the new handler behavior by calling same logic:
-  req.url = "/api/holidays/upload";
-  return res.status(404).json({ error: "Use POST /api/holidays/upload" });
-});
-
 // Get trainers for dropdown
 app.get("/api/trainers", async (req, res) => {
   try {
@@ -1665,24 +1657,23 @@ app.get("/api/trainers", async (req, res) => {
 app.get("/api/unavailability-requests", async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT
-        id,
-        trainer_email,
-        trainer_name,
-        domain,
-        start_date,
-        end_date,
-        reason,
-        status,
-        module_name
-      FROM trainer_unavailability
-      ORDER BY start_date
+      SELECT 
+        u.id,
+        u.trainer_id,
+        t.trainer_name,
+        u.from_date,
+        u.to_date,
+        u.reason,
+        u.status
+      FROM trainer_unavailability u
+      JOIN trainers t ON t.trainer_id = u.trainer_id
+      ORDER BY u.from_date DESC
     `);
 
     res.json(result.rows);
   } catch (err) {
-    console.error("Error fetching leave requests:", err);
-    res.status(500).json({ error: "Failed to fetch leave requests" });
+    console.error("🔥 Unavailability API error:", err);
+    res.status(500).json({ message: "Failed to fetch unavailability requests" });
   }
 });
 
