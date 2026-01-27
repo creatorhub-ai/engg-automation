@@ -44,21 +44,21 @@ function ManagerLeaveDashboard({ user, token }) {
   const [requests, setRequests] = useState([]);
   const [holidays, setHolidays] = useState([]);
   const [trainers, setTrainers] = useState([]);
-  const [modules, setModules] = useState({}); // NEW: date -> modules cache
   const [selectedTrainerId, setSelectedTrainerId] = useState("all");
 
-  const [viewType, setViewType] = useState("month");
+  const [viewType, setViewType] = useState("month"); // 'month' | 'week' | 'day'
   const [cursor, setCursor] = useState(() => {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
     return d;
   });
 
+  // stores hue per trainer key so colors are stable across renders
   const trainerHueMapRef = useRef({});
 
   // Upload state
   const [holidayFile, setHolidayFile] = useState(null);
-  const [uploadStatus, setUploadStatus] = useState(null);
+  const [uploadStatus, setUploadStatus] = useState(null); // { type: 'success'|'error', msg: string }
 
   const authHeaders = useMemo(
     () => (token ? { Authorization: `Bearer ${token}` } : {}),
@@ -69,6 +69,7 @@ function ManagerLeaveDashboard({ user, token }) {
     const k = String(key || "").trim().toLowerCase() || "trainer";
     const map = trainerHueMapRef.current;
     if (map[k] == null) {
+      // 0..359
       map[k] = hashString(k) % 360;
     }
     return map[k];
@@ -76,38 +77,13 @@ function ManagerLeaveDashboard({ user, token }) {
 
   const getTrainerChipStyle = (trainerKey) => {
     const hue = getTrainerHue(trainerKey);
+
+    // Pastel background + readable text (same hue family)
     const bg = `hsl(${hue}, 75%, 88%)`;
     const border = `hsl(${hue}, 70%, 75%)`;
     const text = `hsl(${hue}, 55%, 25%)`;
+
     return { bg, border, text };
-  };
-
-  // NEW: Fetch modules for specific dates
-  const fetchModulesForDates = async (dates) => {
-    try {
-      const uniqueDates = [...new Set(dates.map(formatDate))];
-      const missingDates = uniqueDates.filter(
-        (date) => !modules[date]
-      );
-
-      if (missingDates.length === 0) return;
-
-      const res = await axios.get(`${API_BASE}/api/modules-by-date`, {
-        params: { dates: missingDates.join(',') },
-        headers: authHeaders,
-      });
-
-      const newModules = res.data.reduce((acc, row) => {
-        const date = formatDate(new Date(row.date));
-        if (!acc[date]) acc[date] = new Set();
-        acc[date].add(row.module_name);
-        return acc;
-      }, {});
-
-      setModules((prev) => ({ ...prev, ...newModules }));
-    } catch (err) {
-      console.error('Failed to fetch modules:', err);
-    }
   };
 
   async function loadAllData(year) {
@@ -139,29 +115,7 @@ function ManagerLeaveDashboard({ user, token }) {
     loadAllData(cursor.getFullYear());
   }, [authHeaders, cursor.getFullYear()]);
 
-  // NEW: Pre-fetch modules when trainer filter changes
-  useEffect(() => {
-    if (selectedTrainerId !== "all") {
-      const trainerRequests = requests.filter(
-        (r) => String(r.trainer_id) === String(selectedTrainerId)
-      );
-      const allDates = [];
-      trainerRequests.forEach((req) => {
-        const start = new Date(req.start_date);
-        const end = new Date(req.end_date || req.start_date);
-        const cursorDate = new Date(start);
-        while (cursorDate <= end) {
-          allDates.push(cursorDate);
-          cursorDate.setDate(cursorDate.getDate() + 1);
-        }
-      });
-      if (allDates.length > 0) {
-        fetchModulesForDates(allDates);
-      }
-    }
-  }, [selectedTrainerId, requests]);
-
-  // Merge leave + holidays + modules into dayEventsMap
+  // Merge leave + holidays into dayEventsMap, with name filter applied
   const dayEventsMap = useMemo(() => {
     const map = {};
 
@@ -192,15 +146,11 @@ function ManagerLeaveDashboard({ user, token }) {
           category = "holiday";
         }
 
+        // ✅ Use email as stable unique key if present; else fallback to name/id
         const trainerKey =
-          (req.trainer_email || req.traineremail || "")
-            .trim()
-            .toLowerCase() ||
+          (req.trainer_email || req.traineremail || "").trim().toLowerCase() ||
           (req.trainer_id != null ? `id:${req.trainer_id}` : "") ||
           (req.trainer_name || "").trim().toLowerCase();
-
-        // NEW: Get modules for this date
-        const dateModules = modules[key] || [];
 
         map[key].push({
           id: `leave-${req.id}-${key}`,
@@ -208,7 +158,6 @@ function ManagerLeaveDashboard({ user, token }) {
           trainer_key: trainerKey,
           domain: req.domain,
           reason: req.reason,
-          modules: dateModules, // NEW: modules for this date
           category,
         });
 
@@ -217,7 +166,7 @@ function ManagerLeaveDashboard({ user, token }) {
     });
 
     holidays.forEach((h) => {
-      const key = h.holiday_date;
+      const key = h.holiday_date; // yyyy-mm-dd
       if (!map[key]) map[key] = [];
       const lower = (h.type || "").toLowerCase();
       const category = lower.includes("restricted")
@@ -230,13 +179,12 @@ function ManagerLeaveDashboard({ user, token }) {
         trainer_key: "",
         domain: "",
         reason: h.name,
-        modules: modules[key] || [], // NEW: modules for holiday dates too
         category,
       });
     });
 
     return map;
-  }, [requests, holidays, selectedTrainerId, modules]);
+  }, [requests, holidays, selectedTrainerId]);
 
   const year = cursor.getFullYear();
   const monthIndex = cursor.getMonth();
@@ -281,6 +229,7 @@ function ManagerLeaveDashboard({ user, token }) {
     setViewType(next);
   };
 
+  // handle holiday file upload
   const handleHolidayFileChange = (e) => {
     const file = e.target.files?.[0];
     setHolidayFile(file || null);
@@ -312,6 +261,7 @@ function ManagerLeaveDashboard({ user, token }) {
         msg: "Holiday list uploaded and saved successfully.",
       });
 
+      // Reload holidays for current year so calendar updates
       await loadAllData(cursor.getFullYear());
     } catch (err) {
       setUploadStatus({
@@ -323,7 +273,6 @@ function ManagerLeaveDashboard({ user, token }) {
     }
   };
 
-  // UPDATED: Show modules instead of reason
   const renderDayCellEvents = (dateObj) => {
     const key = formatDate(dateObj);
     const events = dayEventsMap[key] || [];
@@ -342,12 +291,14 @@ function ManagerLeaveDashboard({ user, token }) {
             chipBg = red[200];
             chipColor = red[900];
           } else {
+            // ✅ Unique per trainer using HSL derived from trainer_key/email
             const style = getTrainerChipStyle(ev.trainer_key || ev.trainer_name);
             chipBg = style.bg;
             chipColor = style.text;
             chipBorder = style.border;
           }
 
+          // ✅ Show trainer name instead of "Trainer Leave"
           const label =
             ev.category === "trainer"
               ? (ev.trainer_name || "").trim() || "Trainer"
@@ -355,23 +306,12 @@ function ManagerLeaveDashboard({ user, token }) {
               ? ev.reason || "Holiday"
               : ev.reason || "Optional Holiday";
 
-          // UPDATED: NEW TOOLTIP - Shows modules instead of reason
-          const tooltipContent = ev.category === "trainer" 
-            ? `${ev.trainer_name || ""} (${ev.domain || ""})${
-                ev.modules.length > 0 
-                  ? `\n📚 Modules: ${Array.from(ev.modules).join(', ')}`
-                  : ''
-              }`
-            : `${ev.reason || ev.category}${
-                ev.modules.length > 0 
-                  ? `\n📚 Modules: ${Array.from(ev.modules).join(', ')}`
-                  : ''
-              }`;
-
           return (
             <Tooltip
               key={ev.id}
-              title={tooltipContent}
+              title={`${ev.trainer_name || ""} ${
+                ev.domain ? `(${ev.domain})` : ""
+              }${ev.reason ? ` - ${ev.reason}` : ""}`}
               arrow
             >
               <Chip
@@ -393,7 +333,6 @@ function ManagerLeaveDashboard({ user, token }) {
     );
   };
 
-  // Rest of render functions remain SAME
   const renderMonthView = () => {
     const firstDayOfMonth = new Date(year, monthIndex, 1);
     const lastDayOfMonth = new Date(year, monthIndex + 1, 0);
@@ -687,17 +626,18 @@ function ManagerLeaveDashboard({ user, token }) {
             </MenuItem>
             {trainers.map((t) => {
               const key =
-                t.email?.toLowerCase() || `id:${t.trainer_id || t.id}`;
+                t.email?.toLowerCase() || `id:${r.trainer_id || t.id}`;
               return (
                 <MenuItem key={key} value={key}>
                   {t.name || t.trainer_name} ({t.email})
                 </MenuItem>
               );
-            })}
+              })}
           </Select>
         </FormControl>
       </Box>
 
+      {/* Holiday file upload area */}
       <Box
         sx={{
           display: "flex",
@@ -732,6 +672,7 @@ function ManagerLeaveDashboard({ user, token }) {
         </Box>
       )}
 
+      {/* Legend */}
       <Box
         sx={{
           display: "flex",
