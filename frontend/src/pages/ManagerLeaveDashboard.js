@@ -44,6 +44,7 @@ function ManagerLeaveDashboard({ user, token }) {
   const [requests, setRequests] = useState([]);
   const [holidays, setHolidays] = useState([]);
   const [trainers, setTrainers] = useState([]);
+  const [modules, setModules] = useState({}); // NEW: date -> modules cache
   const [selectedTrainerId, setSelectedTrainerId] = useState("all");
 
   const [viewType, setViewType] = useState("month");
