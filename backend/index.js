@@ -1573,7 +1573,6 @@ app.get("/api/holidays", async (req, res) => {
   }
 });
 
-module.exports = app;
 
 // ✅ POST upload holidays (auto-detects current year)
 app.post("/api/holidays/upload", upload.single("file"), async (req, res) => {
