@@ -503,6 +503,16 @@ export async function getDistinctTrainersForBatch(batchNo) {
   return emails;
 }
 
+/* ---------------- HEALTH CHECK ---------------- */
+app.get("/api/health", async (req, res) => {
+  try {
+    await pool.query("SELECT 1");
+    res.json({ status: "OK" });
+  } catch (err) {
+    res.status(500).json({ status: "DB ERROR", error: err.message });
+  }
+});
+
 // Enhanced session-based attendance report API
 app.get('/api/session-attendance-report', async (req, res) => {
   try {
@@ -1561,14 +1571,45 @@ app.get("/api/holidays", async (req, res) => {
     }
 
     const result = await pool.query(
-      "SELECT * FROM holidays WHERE EXTRACT(YEAR FROM holiday_date) = $1",
+      `
+      SELECT id, holiday_date, name, type
+      FROM holidays
+      WHERE EXTRACT(YEAR FROM holiday_date) = $1
+      ORDER BY holiday_date
+      `,
       [year]
     );
 
     res.json(result.rows);
   } catch (err) {
-    console.error("🔥 Holiday API error:", err);
+    console.error("Holiday fetch error:", err);
     res.status(500).json({ message: "Failed to fetch holidays" });
+  }
+});
+
+/* ➤ Add a holiday */
+app.post("/api/holidays", async (req, res) => {
+  try {
+    const { holiday_date, name, type } = req.body;
+
+    if (!holiday_date || !name || !type) {
+      return res.status(400).json({ message: "Missing fields" });
+    }
+
+    const result = await pool.query(
+      `
+      INSERT INTO holidays (holiday_date, name, type)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (holiday_date) DO NOTHING
+      RETURNING *
+      `,
+      [holiday_date, name, type]
+    );
+
+    res.status(201).json(result.rows[0] || { message: "Already exists" });
+  } catch (err) {
+    console.error("Holiday insert error:", err);
+    res.status(500).json({ message: "Failed to save holiday" });
   }
 });
 
@@ -1657,23 +1698,69 @@ app.get("/api/trainers", async (req, res) => {
 app.get("/api/unavailability-requests", async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT 
-        u.id,
-        u.trainer_id,
-        t.trainer_name,
-        u.from_date,
-        u.to_date,
-        u.reason,
-        u.status
-      FROM trainer_unavailability u
-      JOIN trainers t ON t.trainer_id = u.trainer_id
-      ORDER BY u.from_date DESC
+      SELECT
+        id,
+        trainer_email,
+        trainer_name,
+        domain,
+        start_date,
+        end_date,
+        reason,
+        status,
+        batch_nos,
+        module_name
+      FROM trainer_unavailability
+      ORDER BY start_date DESC
     `);
 
     res.json(result.rows);
   } catch (err) {
-    console.error("🔥 Unavailability API error:", err);
-    res.status(500).json({ message: "Failed to fetch unavailability requests" });
+    console.error("Unavailability fetch error:", err);
+    res.status(500).json({ message: "Failed to fetch unavailability" });
+  }
+});
+
+/* ➤ Create unavailability request */
+app.post("/api/unavailability-requests", async (req, res) => {
+  try {
+    const {
+      trainer_email,
+      trainer_name,
+      domain,
+      start_date,
+      end_date,
+      reason,
+      batch_nos,
+      module_name,
+    } = req.body;
+
+    if (!trainer_email || !start_date || !end_date) {
+      return res.status(400).json({ message: "Missing required fields" });
+    }
+
+    const result = await pool.query(
+      `
+      INSERT INTO trainer_unavailability
+      (trainer_email, trainer_name, domain, start_date, end_date, reason, batch_nos, module_name)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+      RETURNING *
+      `,
+      [
+        trainer_email,
+        trainer_name,
+        domain,
+        start_date,
+        end_date,
+        reason,
+        batch_nos,
+        module_name,
+      ]
+    );
+
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error("Unavailability insert error:", err);
+    res.status(500).json({ message: "Failed to save unavailability" });
   }
 });
 
