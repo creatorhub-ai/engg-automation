@@ -1,5 +1,5 @@
 // ManagerLeaveDashboard.js
-import React, { useEffect, useMemo, useState, useRef } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import {
   Box,
@@ -10,10 +10,6 @@ import {
   Tooltip,
   ToggleButton,
   ToggleButtonGroup,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
   Button,
   Alert,
 } from "@mui/material";
@@ -24,71 +20,33 @@ import ArrowForwardIosIcon from "@mui/icons-material/ArrowForwardIos";
 const API_BASE =
   process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 
-function formatDate(d) {
-  const year = d.getFullYear();
-  const month = `${d.getMonth() + 1}`.padStart(2, "0");
-  const day = `${d.getDate()}`.padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
+/* ---------- Helpers ---------- */
+const formatDate = (d) => {
+  const y = d.getFullYear();
+  const m = `${d.getMonth() + 1}`.padStart(2, "0");
+  const da = `${d.getDate()}`.padStart(2, "0");
+  return `${y}-${m}-${da}`;
+};
 
-function hashString(str) {
-  let hash = 0;
-  for (let i = 0; i < str.length; i += 1) {
-    hash = (hash << 5) - hash + str.charCodeAt(i);
-    hash |= 0;
-  }
-  return Math.abs(hash);
-}
-
-function ManagerLeaveDashboard({ user, token }) {
+function ManagerLeaveDashboard({ token }) {
   const [requests, setRequests] = useState([]);
   const [holidays, setHolidays] = useState([]);
-  const [trainers, setTrainers] = useState([]);
-  const [selectedTrainerId, setSelectedTrainerId] = useState("all");
 
-  const [viewType, setViewType] = useState("month"); // 'month' | 'week' | 'day'
-  const [cursor, setCursor] = useState(() => {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    return d;
-  });
+  const [viewType, setViewType] = useState("month");
+  const [cursor, setCursor] = useState(new Date());
 
-  // stores hue per trainer key so colors are stable across renders
-  const trainerHueMapRef = useRef({});
-
-  // Upload state
   const [holidayFile, setHolidayFile] = useState(null);
-  const [uploadStatus, setUploadStatus] = useState(null); // { type: 'success'|'error', msg: string }
+  const [uploadStatus, setUploadStatus] = useState(null);
 
   const authHeaders = useMemo(
     () => (token ? { Authorization: `Bearer ${token}` } : {}),
     [token]
   );
 
-  const getTrainerHue = (key) => {
-    const k = String(key || "").trim().toLowerCase() || "trainer";
-    const map = trainerHueMapRef.current;
-    if (map[k] == null) {
-      // 0..359
-      map[k] = hashString(k) % 360;
-    }
-    return map[k];
-  };
-
-  const getTrainerChipStyle = (trainerKey) => {
-    const hue = getTrainerHue(trainerKey);
-
-    // Pastel background + readable text (same hue family)
-    const bg = `hsl(${hue}, 75%, 88%)`;
-    const border = `hsl(${hue}, 70%, 75%)`;
-    const text = `hsl(${hue}, 55%, 25%)`;
-
-    return { bg, border, text };
-  };
-
-  async function loadAllData(year) {
+  /* ---------- Load Data ---------- */
+  const loadAllData = async (year) => {
     try {
-      const [unavailRes, holRes, trainersRes] = await Promise.all([
+      const [leaveRes, holidayRes] = await Promise.all([
         axios.get(`${API_BASE}/api/unavailability-requests`, {
           headers: authHeaders,
         }),
@@ -96,154 +54,24 @@ function ManagerLeaveDashboard({ user, token }) {
           headers: authHeaders,
           params: { year },
         }),
-        axios.get(`${API_BASE}/api/trainers`, {
-          headers: authHeaders,
-        }),
       ]);
 
-      setRequests(Array.isArray(unavailRes.data) ? unavailRes.data : []);
-      setHolidays(Array.isArray(holRes.data) ? holRes.data : []);
-      setTrainers(Array.isArray(trainersRes.data) ? trainersRes.data : []);
-    } catch {
+      setRequests(leaveRes.data || []);
+      setHolidays(holidayRes.data || []);
+    } catch (err) {
+      console.error(err);
       setRequests([]);
       setHolidays([]);
-      setTrainers([]);
     }
-  }
+  };
 
   useEffect(() => {
     loadAllData(cursor.getFullYear());
-  }, [authHeaders, cursor.getFullYear()]);
+  }, [cursor]);
 
-  // Merge leave + holidays into dayEventsMap, with name filter applied
-  const dayEventsMap = useMemo(() => {
-    const map = {};
-
-    const filteredRequests =
-      selectedTrainerId === "all"
-        ? requests
-        : requests.filter(
-            (r) => String(r.trainer_id) === String(selectedTrainerId)
-          );
-
-    filteredRequests.forEach((req) => {
-      const start = new Date(req.start_date);
-      const end = new Date(req.end_date || req.start_date);
-
-      const leaveType =
-        (req.leave_type || "").toLowerCase() ||
-        (req.reason || "").toLowerCase();
-
-      const cursorDate = new Date(start);
-      while (cursorDate <= end) {
-        const key = formatDate(cursorDate);
-        if (!map[key]) map[key] = [];
-
-        let category = "trainer";
-        if (leaveType.includes("optional holiday")) {
-          category = "optionalHoliday";
-        } else if (leaveType.includes("holiday")) {
-          category = "holiday";
-        }
-
-        // ✅ Use email as stable unique key if present; else fallback to name/id
-        const trainerKey =
-          (req.trainer_email || req.traineremail || "").trim().toLowerCase() ||
-          (req.trainer_id != null ? `id:${req.trainer_id}` : "") ||
-          (req.trainer_name || "").trim().toLowerCase();
-
-        map[key].push({
-          id: `leave-${req.id}-${key}`,
-          trainer_name: req.trainer_name,
-          trainer_key: trainerKey,
-          domain: req.domain,
-          reason: req.reason,
-          category,
-        });
-
-        cursorDate.setDate(cursorDate.getDate() + 1);
-      }
-    });
-
-    holidays.forEach((h) => {
-      const key = h.holiday_date; // yyyy-mm-dd
-      if (!map[key]) map[key] = [];
-      const lower = (h.type || "").toLowerCase();
-      const category = lower.includes("restricted")
-        ? "optionalHoliday"
-        : "holiday";
-
-      map[key].push({
-        id: `holiday-${key}`,
-        trainer_name: "",
-        trainer_key: "",
-        domain: "",
-        reason: h.name,
-        category,
-      });
-    });
-
-    return map;
-  }, [requests, holidays, selectedTrainerId]);
-
-  const year = cursor.getFullYear();
-  const monthIndex = cursor.getMonth();
-
-  const monthLabel = cursor.toLocaleString("default", {
-    month: "long",
-    year: "numeric",
-  });
-
-  const goPrev = () => {
-    setCursor((prev) => {
-      const d = new Date(prev);
-      if (viewType === "month") {
-        d.setMonth(d.getMonth() - 1);
-        d.setDate(1);
-      } else if (viewType === "week") {
-        d.setDate(d.getDate() - 7);
-      } else {
-        d.setDate(d.getDate() - 1);
-      }
-      return d;
-    });
-  };
-
-  const goNext = () => {
-    setCursor((prev) => {
-      const d = new Date(prev);
-      if (viewType === "month") {
-        d.setMonth(d.getMonth() + 1);
-        d.setDate(1);
-      } else if (viewType === "week") {
-        d.setDate(d.getDate() + 7);
-      } else {
-        d.setDate(d.getDate() + 1);
-      }
-      return d;
-    });
-  };
-
-  const handleViewChange = (_, next) => {
-    if (!next) return;
-    setViewType(next);
-  };
-
-  // handle holiday file upload
-  const handleHolidayFileChange = (e) => {
-    const file = e.target.files?.[0];
-    setHolidayFile(file || null);
-    setUploadStatus(null);
-  };
-
-  const handleHolidayUpload = async () => {
-    if (!holidayFile) {
-      setUploadStatus({
-        type: "error",
-        msg: "Please select a holiday file to upload.",
-      });
-      return;
-    }
+  /* ---------- Upload Holiday File ---------- */
+  const handleUpload = async () => {
+    if (!holidayFile) return;
 
     try {
       const formData = new FormData();
@@ -258,72 +86,84 @@ function ManagerLeaveDashboard({ user, token }) {
 
       setUploadStatus({
         type: "success",
-        msg: "Holiday list uploaded and saved successfully.",
+        msg: "Holiday calendar uploaded successfully",
       });
 
-      // Reload holidays for current year so calendar updates
       await loadAllData(cursor.getFullYear());
     } catch (err) {
       setUploadStatus({
         type: "error",
         msg:
           err.response?.data?.error ||
-          "Failed to upload holiday list. Please check file format.",
+          "Failed to upload holiday calendar",
       });
     }
   };
 
-  const renderDayCellEvents = (dateObj) => {
-    const key = formatDate(dateObj);
+  /* ---------- Merge Events ---------- */
+  const dayEventsMap = useMemo(() => {
+    const map = {};
+
+    requests.forEach((r) => {
+      const start = new Date(r.start_date);
+      const end = new Date(r.end_date || r.start_date);
+      const d = new Date(start);
+
+      while (d <= end) {
+        const key = formatDate(d);
+        if (!map[key]) map[key] = [];
+
+        map[key].push({
+          id: `leave-${r.id}`,
+          label: r.trainer_name,
+          category: "trainer",
+        });
+
+        d.setDate(d.getDate() + 1);
+      }
+    });
+
+    holidays.forEach((h) => {
+      const key = h.holiday_date;
+      if (!map[key]) map[key] = [];
+
+      map[key].push({
+        id: `holiday-${h.id}`,
+        label: h.name,
+        category:
+          h.type.toLowerCase() === "restricted holiday"
+            ? "restricted"
+            : "holiday",
+      });
+    });
+
+    return map;
+  }, [requests, holidays]);
+
+  /* ---------- Calendar Rendering ---------- */
+  const renderEvents = (date) => {
+    const key = formatDate(date);
     const events = dayEventsMap[key] || [];
 
     return (
       <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
-        {events.map((ev) => {
-          let chipBg;
-          let chipColor;
-          let chipBorder = "transparent";
-
-          if (ev.category === "holiday") {
-            chipBg = green[200];
-            chipColor = green[900];
-          } else if (ev.category === "optionalHoliday") {
-            chipBg = red[200];
-            chipColor = red[900];
-          } else {
-            // ✅ Unique per trainer using HSL derived from trainer_key/email
-            const style = getTrainerChipStyle(ev.trainer_key || ev.trainer_name);
-            chipBg = style.bg;
-            chipColor = style.text;
-            chipBorder = style.border;
-          }
-
-          // ✅ Show trainer name instead of "Trainer Leave"
-          const label =
-            ev.category === "trainer"
-              ? (ev.trainer_name || "").trim() || "Trainer"
-              : ev.category === "holiday"
-              ? ev.reason || "Holiday"
-              : ev.reason || "Optional Holiday";
+        {events.map((e) => {
+          const isHoliday = e.category === "holiday";
+          const isRestricted = e.category === "restricted";
 
           return (
-            <Tooltip
-              key={ev.id}
-              title={`${ev.trainer_name || ""} ${
-                ev.domain ? `(${ev.domain})` : ""
-              }${ev.reason ? ` - ${ev.reason}` : ""}`}
-              arrow
-            >
+            <Tooltip key={e.id} title={e.label}>
               <Chip
                 size="small"
-                label={label}
+                label={e.label}
                 sx={{
-                  bgcolor: chipBg,
-                  color: chipColor,
-                  border: `1px solid ${chipBorder}`,
+                  bgcolor: isHoliday
+                    ? green[200]
+                    : isRestricted
+                    ? red[200]
+                    : deepPurple[200],
+                  color: "#000",
                   fontSize: 11,
-                  height: 22,
-                  maxWidth: "100%",
                 }}
               />
             </Tooltip>
@@ -333,395 +173,74 @@ function ManagerLeaveDashboard({ user, token }) {
     );
   };
 
+  /* ---------- Views ---------- */
   const renderMonthView = () => {
-    const firstDayOfMonth = new Date(year, monthIndex, 1);
-    const lastDayOfMonth = new Date(year, monthIndex + 1, 0);
-    const daysInMonth = lastDayOfMonth.getDate();
-    const startWeekday = firstDayOfMonth.getDay();
+    const y = cursor.getFullYear();
+    const m = cursor.getMonth();
+    const first = new Date(y, m, 1);
+    const last = new Date(y, m + 1, 0);
 
     const weeks = [];
-    let currentDay = 1 - startWeekday;
+    let day = 1 - first.getDay();
 
-    while (currentDay <= daysInMonth) {
+    while (day <= last.getDate()) {
       const week = [];
       for (let i = 0; i < 7; i++) {
-        const dateObj = new Date(year, monthIndex, currentDay);
-        dateObj.setHours(0, 0, 0, 0);
-        const isCurrentMonth = dateObj.getMonth() === monthIndex;
-        const key = formatDate(dateObj);
-        const events = dayEventsMap[key] || [];
-
-        let bgColor = "white";
-        let borderColor = "#e0e0e0";
-
-        const hasHoliday = events.some((e) => e.category === "holiday");
-        const hasOptional = events.some((e) => e.category === "optionalHoliday");
-        const hasTrainerLeave = events.some((e) => e.category === "trainer");
-
-        if (hasHoliday) {
-          bgColor = green[50];
-          borderColor = green[200];
-        } else if (hasOptional) {
-          bgColor = red[50];
-          borderColor = red[200];
-        } else if (hasTrainerLeave) {
-          bgColor = deepPurple[50];
-          borderColor = deepPurple[200];
-        }
-
-        week.push({
-          dateObj,
-          displayDay: dateObj.getDate(),
-          isCurrentMonth,
-          bgColor,
-          borderColor,
-        });
-        currentDay++;
+        const d = new Date(y, m, day);
+        week.push(d);
+        day++;
       }
       weeks.push(week);
     }
 
     return (
-      <>
-        <Box
-          sx={{
-            display: "grid",
-            gridTemplateColumns: "repeat(7, 1fr)",
-            borderBottom: "1px solid #e0e0e0",
-            pb: 1,
-            mb: 1,
-          }}
-        >
-          {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
-            <Box
-              key={d}
-              sx={{
-                textAlign: "center",
-                fontWeight: "bold",
-                color: blue[800],
-                fontSize: 13,
-              }}
-            >
-              {d}
-            </Box>
-          ))}
-        </Box>
-
-        <Box
-          sx={{
-            display: "grid",
-            gridTemplateColumns: "repeat(7, 1fr)",
-            gap: 0.5,
-          }}
-        >
-          {weeks.map((week, wi) =>
-            week.map((day, di) => (
-              <Box
-                key={`${wi}-${di}`}
-                sx={{
-                  minHeight: 90,
-                  borderRadius: 1,
-                  border: `1px solid ${day.borderColor}`,
-                  bgcolor: day.isCurrentMonth ? day.bgColor : "#fafafa",
-                  opacity: day.isCurrentMonth ? 1 : 0.5,
-                  p: 0.5,
-                  display: "flex",
-                  flexDirection: "column",
-                }}
-              >
-                <Typography
-                  variant="caption"
-                  sx={{
-                    fontWeight: "bold",
-                    mb: 0.5,
-                    textAlign: "right",
-                  }}
-                >
-                  {day.displayDay}
-                </Typography>
-                {renderDayCellEvents(day.dateObj)}
-              </Box>
-            ))
-          )}
-        </Box>
-      </>
-    );
-  };
-
-  const renderWeekView = () => {
-    const startOfWeek = new Date(cursor);
-    const day = startOfWeek.getDay();
-    startOfWeek.setDate(startOfWeek.getDate() - day);
-    startOfWeek.setHours(0, 0, 0, 0);
-
-    const days = [];
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(startOfWeek);
-      d.setDate(startOfWeek.getDate() + i);
-      d.setHours(0, 0, 0, 0);
-      days.push(d);
-    }
-
-    return (
-      <>
-        <Box
-          sx={{
-            display: "grid",
-            gridTemplateColumns: "repeat(7, 1fr)",
-            borderBottom: "1px solid #e0e0e0",
-            pb: 1,
-            mb: 1,
-          }}
-        >
-          {days.map((d) => (
-            <Box
-              key={d.toISOString()}
-              sx={{
-                textAlign: "center",
-                fontWeight: "bold",
-                color: blue[800],
-                fontSize: 13,
-              }}
-            >
-              {d.toLocaleDateString("default", {
-                weekday: "short",
-                day: "numeric",
-                month: "short",
-              })}
-            </Box>
-          ))}
-        </Box>
-        <Box
-          sx={{
-            display: "grid",
-            gridTemplateColumns: "repeat(7, 1fr)",
-            gap: 0.5,
-          }}
-        >
-          {days.map((d) => {
-            const key = formatDate(d);
-            const events = dayEventsMap[key] || [];
-
-            let bgColor = "white";
-            let borderColor = "#e0e0e0";
-
-            const hasHoliday = events.some((e) => e.category === "holiday");
-            const hasOptional = events.some((e) => e.category === "optionalHoliday");
-            const hasTrainerLeave = events.some((e) => e.category === "trainer");
-
-            if (hasHoliday) {
-              bgColor = green[50];
-              borderColor = green[200];
-            } else if (hasOptional) {
-              bgColor = red[50];
-              borderColor = red[200];
-            } else if (hasTrainerLeave) {
-              bgColor = deepPurple[50];
-              borderColor = deepPurple[200];
-            }
-
-            return (
-              <Box
-                key={key}
-                sx={{
-                  minHeight: 120,
-                  borderRadius: 1,
-                  border: `1px solid ${borderColor}`,
-                  bgcolor: bgColor,
-                  p: 0.75,
-                  display: "flex",
-                  flexDirection: "column",
-                }}
-              >
-                {renderDayCellEvents(d)}
-              </Box>
-            );
-          })}
-        </Box>
-      </>
-    );
-  };
-
-  const renderDayView = () => {
-    const d = new Date(cursor);
-    d.setHours(0, 0, 0, 0);
-
-    return (
-      <Box
-        sx={{
-          borderRadius: 1,
-          border: "1px solid #e0e0e0",
-          p: 1.5,
-          minHeight: 150,
-        }}
-      >
-        <Typography variant="subtitle1" sx={{ fontWeight: "bold", mb: 1 }}>
-          {d.toLocaleDateString("default", {
-            weekday: "long",
-            day: "numeric",
-            month: "long",
-            year: "numeric",
-          })}
-        </Typography>
-        {renderDayCellEvents(d)}
+      <Box sx={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 0.5 }}>
+        {weeks.flat().map((d, i) => (
+          <Box key={i} sx={{ border: "1px solid #ddd", p: 0.5, minHeight: 90 }}>
+            <Typography variant="caption">{d.getDate()}</Typography>
+            {renderEvents(d)}
+          </Box>
+        ))}
       </Box>
     );
   };
 
-  return (
-    <Paper sx={{ p: 3, mb: 3 }}>
-      <Box
-        sx={{
-          display: "flex",
-          alignItems: "center",
-          mb: 2,
-          justifyContent: "space-between",
-          flexWrap: "wrap",
-          gap: 2,
-        }}
-      >
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-          <Typography variant="h6" fontWeight="bold">
-            Trainer Leave Calendar
-          </Typography>
-          <ToggleButtonGroup
-            size="small"
-            value={viewType}
-            exclusive
-            onChange={handleViewChange}
-          >
-            <ToggleButton value="day">Day</ToggleButton>
-            <ToggleButton value="week">Week</ToggleButton>
-            <ToggleButton value="month">Month</ToggleButton>
-          </ToggleButtonGroup>
-        </Box>
+  /* ---------- Navigation ---------- */
+  const goPrev = () =>
+    setCursor((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1));
+  const goNext = () =>
+    setCursor((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1));
 
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-          <IconButton size="small" onClick={goPrev}>
+  return (
+    <Paper sx={{ p: 3 }}>
+      <Box sx={{ display: "flex", justifyContent: "space-between", mb: 2 }}>
+        <Typography variant="h6">Leave Calendar</Typography>
+        <Box>
+          <IconButton onClick={goPrev}>
             <ArrowBackIosNewIcon fontSize="small" />
           </IconButton>
-          <Typography variant="subtitle1" fontWeight="medium">
-            {viewType === "month"
-              ? monthLabel
-              : cursor.toLocaleDateString("default", {
-                  day: "numeric",
-                  month: "long",
-                  year: "numeric",
-                })}
-          </Typography>
-          <IconButton size="small" onClick={goNext}>
+          <IconButton onClick={goNext}>
             <ArrowForwardIosIcon fontSize="small" />
           </IconButton>
         </Box>
-
-        <FormControl size="small" sx={{ minWidth: 200 }}>
-          <InputLabel>Trainer</InputLabel>
-          <Select
-            label="Trainer"
-            value={selectedTrainerId}
-            onChange={(e) => setSelectedTrainerId(e.target.value)}
-          >
-            <MenuItem value="all">
-              <em>All Trainers</em>
-            </MenuItem>
-            {trainers.map((t) => {
-              const key =
-                t.email?.toLowerCase() || `id:${r.trainer_id || t.id}`;
-              return (
-                <MenuItem key={key} value={key}>
-                  {t.name || t.trainer_name} ({t.email})
-                </MenuItem>
-              );
-              })}
-          </Select>
-        </FormControl>
       </Box>
 
-      {/* Holiday file upload area */}
-      <Box
-        sx={{
-          display: "flex",
-          alignItems: "center",
-          gap: 2,
-          mb: 2,
-          flexWrap: "wrap",
-        }}
-      >
-        <Typography variant="body2" sx={{ fontWeight: "bold" }}>
-          Upload Holiday List (updates holidays table)
-        </Typography>
+      <Box sx={{ mb: 2 }}>
         <input
           type="file"
           accept=".xlsx,.xls,.csv"
-          onChange={handleHolidayFileChange}
-          style={{ maxWidth: 260 }}
+          onChange={(e) => setHolidayFile(e.target.files[0])}
         />
-        <Button
-          variant="contained"
-          size="small"
-          onClick={handleHolidayUpload}
-          disabled={!holidayFile}
-        >
-          Upload
+        <Button size="small" variant="contained" onClick={handleUpload}>
+          Upload Holiday Calendar
         </Button>
       </Box>
 
       {uploadStatus && (
-        <Box sx={{ mb: 2 }}>
-          <Alert severity={uploadStatus.type}>{uploadStatus.msg}</Alert>
-        </Box>
+        <Alert severity={uploadStatus.type}>{uploadStatus.msg}</Alert>
       )}
 
-      {/* Legend */}
-      <Box
-        sx={{
-          display: "flex",
-          gap: 2,
-          mb: 2,
-          flexWrap: "wrap",
-          fontSize: 14,
-        }}
-      >
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-          <Box
-            sx={{
-              width: 16,
-              height: 16,
-              bgcolor: red[50],
-              border: `1px solid ${red[200]}`,
-            }}
-          />
-          <Typography variant="body2">Restricted / Optional Holiday</Typography>
-        </Box>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-          <Box
-            sx={{
-              width: 16,
-              height: 16,
-              bgcolor: green[50],
-              border: `1px solid ${green[200]}`,
-            }}
-          />
-          <Typography variant="body2">Holiday</Typography>
-        </Box>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-          <Box
-            sx={{
-              width: 16,
-              height: 16,
-              bgcolor: deepPurple[50],
-              border: `1px solid ${deepPurple[200]}`,
-            }}
-          />
-          <Typography variant="body2">
-            Trainer Leave (unique per trainer)
-          </Typography>
-        </Box>
-      </Box>
-
-      {viewType === "month" && renderMonthView()}
-      {viewType === "week" && renderWeekView()}
-      {viewType === "day" && renderDayView()}
+      {renderMonthView()}
     </Paper>
   );
 }
