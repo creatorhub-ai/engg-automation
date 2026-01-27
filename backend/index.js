@@ -503,6 +503,13 @@ export async function getDistinctTrainersForBatch(batchNo) {
   return emails;
 }
 
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false, // REQUIRED for Render / Supabase / Neon
+  },
+});
+
 /* ---------------- HEALTH CHECK ---------------- */
 app.get("/api/health", async (req, res) => {
   try {
