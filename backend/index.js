@@ -316,28 +316,26 @@ function computeScheduledAtISO(startDateStr, offsetDays = 0, sendTime = "09:00")
   }
 }
 
-/* ===============================
-   SAFE EXCEL DATE PARSER
-   =============================== */
-function parseExcelDate(value) {
+/* ======================
+   HELPER: DATE PARSER
+   ====================== */
+function normalizeDate(value) {
+  if (!value) return null;
+
   // Excel serial number
   if (typeof value === "number") {
-    const date = new Date(Math.round((value - 25569) * 86400 * 1000));
-    return date.toISOString().split("T")[0];
+    const d = new Date((value - 25569) * 86400 * 1000);
+    return d.toISOString().split("T")[0];
   }
 
   // YYYY-MM-DD
-  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    return value;
-  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
 
   // DD/MM/YYYY or DD-MM-YYYY
-  if (typeof value === "string") {
-    const parts = value.split(/[-/]/);
-    if (parts.length === 3) {
-      const [d, m, y] = parts.map(Number);
-      return new Date(y, m - 1, d).toISOString().split("T")[0];
-    }
+  const parts = value.split(/[-/]/);
+  if (parts.length === 3) {
+    const [d, m, y] = parts.map(Number);
+    return new Date(y, m - 1, d).toISOString().split("T")[0];
   }
 
   return null;
@@ -1588,6 +1586,58 @@ app.post("/api/save-classroom-matrix", async (req, res) => {
   }
 });
 
+
+// ✅ POST upload holidays (auto-detects current year)
+app.post("/api/holidays/upload", upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: "No file uploaded" });
+    }
+
+    const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet);
+
+    if (!rows.length) {
+      return res.status(400).json({ message: "Empty file" });
+    }
+
+    let inserted = 0;
+
+    for (const row of rows) {
+      const holiday_date = normalizeDate(row["Date"]);
+      const name = row["Holiday"];
+      const type = row["Type of Holiday"];
+
+      if (!holiday_date || !name || !type) continue;
+
+      await pool.query(
+        `
+        INSERT INTO holidays (holiday_date, name, type)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (holiday_date) DO NOTHING
+        `,
+        [holiday_date, name.trim(), type.trim()]
+      );
+
+      inserted++;
+    }
+
+    res.json({
+      success: true,
+      message: "Holidays uploaded successfully",
+      inserted,
+    });
+  } catch (err) {
+    console.error("UPLOAD ERROR:", err);
+    res.status(500).json({
+      success: false,
+      message: "Holiday upload failed",
+    });
+  }
+});
+
+
 // ✅ GET holidays for current year (no query param needed)
 app.get("/api/holidays", async (req, res) => {
   try {
@@ -1595,98 +1645,12 @@ app.get("/api/holidays", async (req, res) => {
       "SELECT id, holiday_date, name, type FROM holidays ORDER BY holiday_date"
     );
     res.json(result.rows);
-  } catch (e) {
-    console.error(e);
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ message: "Failed to fetch holidays" });
   }
 });
 
-/* ➤ Add a holiday */
-app.post("/api/holidays", async (req, res) => {
-  try {
-    const { holiday_date, name, type } = req.body;
-
-    if (!holiday_date || !name || !type) {
-      return res.status(400).json({ message: "Missing fields" });
-    }
-
-    const result = await pool.query(
-      `
-      INSERT INTO holidays (holiday_date, name, type)
-      VALUES ($1, $2, $3)
-      ON CONFLICT (holiday_date) DO NOTHING
-      RETURNING *
-      `,
-      [holiday_date, name, type]
-    );
-
-    res.status(201).json(result.rows[0] || { message: "Already exists" });
-  } catch (err) {
-    console.error("Holiday insert error:", err);
-    res.status(500).json({ message: "Failed to save holiday" });
-  }
-});
-
-
-// ✅ POST upload holidays (auto-detects current year)
-app.post("/api/holidays/upload", upload.single("file"), async (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ message: "File missing" });
-  }
-
-  try {
-    const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
-    const sheetName = workbook.SheetNames[0];
-    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
-
-    if (!rows.length) {
-      return res.status(400).json({ message: "Empty file" });
-    }
-
-    const client = await pool.connect();
-    let inserted = 0;
-
-    try {
-      await client.query("BEGIN");
-
-      for (const row of rows) {
-        const holidayDate = parseExcelDate(row["Date"]);
-        const name = row["Holiday"];
-        const type = row["Type of Holiday"];
-
-        if (!holidayDate || !name || !type) continue;
-
-        await client.query(
-          `
-          INSERT INTO holidays (holiday_date, name, type)
-          VALUES ($1, $2, $3)
-          ON CONFLICT (holiday_date) DO NOTHING
-          `,
-          [holidayDate, name.trim(), type.trim()]
-        );
-
-        inserted++;
-      }
-
-      await client.query("COMMIT");
-    } catch (e) {
-      await client.query("ROLLBACK");
-      throw e;
-    } finally {
-      client.release();
-    }
-
-    return res.json({
-      message: "Holiday upload successful",
-      inserted,
-    });
-  } catch (error) {
-    console.error("Holiday upload failed:", error);
-    return res.status(500).json({
-      message: "Failed to process holiday file",
-    });
-  }
-});
 
 // Get trainers for dropdown
 app.get("/api/trainers", async (req, res) => {
