@@ -15,25 +15,23 @@ import {
   CircularProgress,
 } from "@mui/material";
 
-// 🔴 NEVER hardcode localhost in deployed apps
-const API_BASE = process.env.REACT_APP_API_URL;
+/* ✅ SAME PATTERN AS OTHER FRONTEND FILES */
+const API_BASE =
+  process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 
-export default function ManagerLeaveDashboard() {
-  const [events, setEvents] = useState([]);
+function ManagerLeaveDashboard() {
   const [file, setFile] = useState(null);
+  const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [showCalendar, setShowCalendar] = useState(false);
 
-  // 🔹 Upload holidays
-  const uploadHolidays = async () => {
+  /* ===============================
+     UPLOAD HOLIDAY FILE
+     =============================== */
+  const handleUpload = async () => {
     if (!file) {
-      setMessage("Please select a holiday file");
-      return;
-    }
-
-    if (!API_BASE) {
-      setMessage("Backend URL not configured");
+      setMessage("Please select a holiday Excel file");
       return;
     }
 
@@ -50,25 +48,27 @@ export default function ManagerLeaveDashboard() {
         { headers: { "Content-Type": "multipart/form-data" } }
       );
 
-      setMessage("Holidays uploaded successfully");
+      setMessage("✅ Holidays uploaded successfully");
       fetchHolidays();
     } catch (err) {
       console.error(err);
-      setMessage("Upload failed. Please check backend connectivity.");
+      setMessage("❌ Failed to upload holidays");
     } finally {
       setLoading(false);
     }
   };
 
-  // 🔹 Fetch holidays AFTER upload
+  /* ===============================
+     FETCH HOLIDAYS FOR CALENDAR
+     =============================== */
   const fetchHolidays = async () => {
     try {
       setLoading(true);
 
       const res = await axios.get(`${API_BASE}/api/holidays`);
 
-      if (!res.data || res.data.length === 0) {
-        setMessage("No holidays found.");
+      if (!Array.isArray(res.data) || res.data.length === 0) {
+        setMessage("No holidays found. Please upload a file.");
         setShowCalendar(false);
         return;
       }
@@ -89,53 +89,49 @@ export default function ManagerLeaveDashboard() {
       setShowCalendar(true);
     } catch (err) {
       console.error(err);
-      setMessage("Failed to load holidays");
+      setMessage("❌ Failed to load holidays");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <Box sx={{ p: 2 }}>
-      <Typography variant="h5" sx={{ mb: 2 }}>
-        Holiday Calendar
-      </Typography>
+    <Box sx={{ maxWidth: 1200, mx: "auto", my: 3 }}>
+      <Paper sx={{ p: 3 }}>
+        <Typography variant="h4" sx={{ mb: 2 }}>
+          Holiday Calendar
+        </Typography>
 
-      {/* Upload Section */}
-      {!showCalendar && (
-        <Paper sx={{ p: 2, mb: 2 }}>
-          <Typography sx={{ mb: 1 }}>
-            Upload Holiday Excel File
-          </Typography>
+        {/* ===============================
+           UPLOAD SECTION
+           =============================== */}
+        {!showCalendar && (
+          <Box sx={{ mb: 2 }}>
+            <input
+              type="file"
+              accept=".xlsx,.xls"
+              onChange={(e) => setFile(e.target.files[0])}
+            />
 
-          <input
-            type="file"
-            accept=".xlsx,.xls"
-            onChange={(e) => setFile(e.target.files[0])}
-          />
+            <Button
+              sx={{ ml: 2 }}
+              variant="contained"
+              onClick={handleUpload}
+              disabled={loading}
+            >
+              Upload Holidays
+            </Button>
+          </Box>
+        )}
 
-          <Button
-            variant="contained"
-            sx={{ ml: 2 }}
-            onClick={uploadHolidays}
-            disabled={loading}
-          >
-            Upload
-          </Button>
-        </Paper>
-      )}
+        {message && <Alert sx={{ mb: 2 }}>{message}</Alert>}
 
-      {message && (
-        <Alert sx={{ mb: 2 }} severity="info">
-          {message}
-        </Alert>
-      )}
+        {loading && <CircularProgress />}
 
-      {loading && <CircularProgress />}
-
-      {/* Calendar */}
-      {showCalendar && (
-        <Paper sx={{ p: 2 }}>
+        {/* ===============================
+           GOOGLE-CALENDAR STYLE VIEW
+           =============================== */}
+        {showCalendar && (
           <FullCalendar
             plugins={[
               dayGridPlugin,
@@ -152,8 +148,10 @@ export default function ManagerLeaveDashboard() {
             events={events}
             eventDisplay="block"
           />
-        </Paper>
-      )}
+        )}
+      </Paper>
     </Box>
   );
 }
+
+export default ManagerLeaveDashboard;
