@@ -9,7 +9,7 @@ import interactionPlugin from "@fullcalendar/interaction";
 import { Box, Paper, Typography, CircularProgress, Alert } from "@mui/material";
 
 // Change if needed
-const API_BASE = "http://localhost:5000";
+const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 
 export default function ManagerLeaveDashboard() {
   const [events, setEvents] = useState([]);
