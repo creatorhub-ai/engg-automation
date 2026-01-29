@@ -1571,25 +1571,12 @@ app.post("/api/save-classroom-matrix", async (req, res) => {
 // ✅ GET holidays for current year (no query param needed)
 app.get("/api/holidays", async (req, res) => {
   try {
-    const year = Number(req.query.year);
-
-    if (!year) {
-      return res.status(400).json({ message: "Year is required" });
-    }
-
     const result = await pool.query(
-      `
-      SELECT id, holiday_date, name, type
-      FROM holidays
-      WHERE EXTRACT(YEAR FROM holiday_date) = $1
-      ORDER BY holiday_date
-      `,
-      [year]
+      "SELECT * FROM holidays ORDER BY holiday_date"
     );
-
     res.json(result.rows);
-  } catch (err) {
-    console.error("Holiday fetch error:", err);
+  } catch (error) {
+    console.error(error);
     res.status(500).json({ message: "Failed to fetch holidays" });
   }
 });
@@ -1624,50 +1611,53 @@ app.post("/api/holidays", async (req, res) => {
 // ✅ POST upload holidays (auto-detects current year)
 app.post("/api/holidays/upload", upload.single("file"), async (req, res) => {
   try {
-    const filePath = req.file.path;
-    const ext = req.file.originalname.split(".").pop().toLowerCase();
-
-    let rows = [];
-
-    if (ext === "xlsx" || ext === "xls") {
-      const workbook = xlsx.readFile(filePath);
-      const sheet = workbook.Sheets[workbook.SheetNames[0]];
-      rows = xlsx.utils.sheet_to_json(sheet);
-    } else if (ext === "csv") {
-      rows = await new Promise((resolve, reject) => {
-        const data = [];
-        fs.createReadStream(filePath)
-          .pipe(csv())
-          .on("data", (row) => data.push(row))
-          .on("end", () => resolve(data))
-          .on("error", reject);
-      });
+    if (!req.file) {
+      return res.status(400).json({ message: "No file uploaded" });
     }
 
-    for (const r of rows) {
-      const date = r["Date"];
-      const name = r["Holiday"];
-      const type = r["Type of Holiday"];
+    // Read Excel
+    const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+    const sheetName = workbook.SheetNames[0];
+    const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
 
-      if (!date || !name || !type) continue;
+    /*
+      Expected Excel Columns:
+      Date | Day | Holiday | Type of Holiday
+    */
 
-      await pool.query(
-        `
-        INSERT INTO holidays (holiday_date, name, type)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (holiday_date) DO UPDATE
-        SET name = EXCLUDED.name,
-            type = EXCLUDED.type
-        `,
-        [date, name, type]
-      );
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      for (const row of sheetData) {
+        const holidayDate = row["Date"];
+        const holidayName = row["Holiday"];
+        const holidayType = row["Type of Holiday"];
+
+        if (!holidayDate || !holidayName || !holidayType) continue;
+
+        await client.query(
+          `
+          INSERT INTO holidays (holiday_date, name, type)
+          VALUES ($1, $2, $3)
+          ON CONFLICT (holiday_date) DO NOTHING
+          `,
+          [holidayDate, holidayName, holidayType]
+        );
+      }
+
+      await client.query("COMMIT");
+      res.json({ message: "Holidays uploaded successfully" });
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
     }
-
-    fs.unlinkSync(filePath);
-    res.json({ success: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to upload holidays" });
+  } catch (error) {
+    console.error("Holiday upload error:", error);
+    res.status(500).json({ message: "Failed to upload holidays" });
   }
 });
 
@@ -2501,23 +2491,6 @@ app.post('/api/leave/apply', async (req, res) => {
   }
 });
 
-// ================= TRAINER LEAVES =================
-app.get('/api/leave/trainer/:trainerId', async (req, res) => {
-  try {
-    const { trainerId } = req.params;
-
-    const result = await pool.query(
-      `SELECT * FROM trainer_leaves
-       WHERE trainer_id = $1
-       ORDER BY created_at DESC`,
-      [trainerId]
-    );
-
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
 
 // ================= MANAGER FILTER =================
 app.post('/api/leave/manager/filter', async (req, res) => {
@@ -2553,38 +2526,6 @@ app.post('/api/leave/manager/filter', async (req, res) => {
   }
 });
 
-// ================= APPROVE / REJECT =================
-app.put('/api/leave/update', async (req, res) => {
-  try {
-    const { leave_id, status } = req.body;
-
-    const result = await pool.query(
-      `UPDATE trainer_leaves
-       SET status=$1, updated_at=now()
-       WHERE id=$2 RETURNING *`,
-      [status, leave_id]
-    );
-
-    const leave = result.rows[0];
-
-    await pool.query(
-      `INSERT INTO leave_notifications (recipient_id, leave_id, type)
-       VALUES ($1,$2,$3)`,
-      [leave.trainer_id, leave_id, status]
-    );
-
-    await transporter.sendMail({
-      from: process.env.LEAVE_EMAIL_USER,
-      to: process.env.LEAVE_EMAIL_USER,
-      subject: `Leave ${status}`,
-      text: `Your leave has been ${status}`
-    });
-
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
 
 // Suggest classroom API
 app.post('/api/suggestClassroom', async (req, res) => {
