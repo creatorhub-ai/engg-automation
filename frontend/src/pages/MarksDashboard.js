@@ -1,5 +1,8 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
+import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
 import {
   Paper,
   Typography,
@@ -89,30 +92,86 @@ export default function MarksDashboard({ user }) {
     }
   };
 
-  const handleDownload = async (format) => {
+  // ✅ CLIENT-SIDE CSV/XLSX DOWNLOAD
+  const downloadExcel = () => {
     try {
-      setMessage(`📥 Downloading ${format.toUpperCase()}...`);
-      const res = await axios.get(
-        `${API_BASE}/api/download/${format}/${batchNo}/${assessmentType}`,
-        { responseType: "blob" }
-      );
+      const ws = XLSX.utils.json_to_sheet(marksData);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Marks Data");
       
-      const url = window.URL.createObjectURL(new Blob([res.data]));
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute(
-        "download",
-        `marks_${batchNo}_${assessmentType}_${format}_${new Date().toISOString().split('T')[0]}.${format === 'csv' ? 'xlsx' : 'pdf'}`
-      );
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
+      const filename = `marks_${batchNo}_${assessmentType}_${new Date().toISOString().split('T')[0]}.xlsx`;
+      XLSX.writeFile(wb, filename);
       
-      setMessage(`✅ ${format.toUpperCase()} downloaded successfully!`);
+      setMessage(`✅ XLSX downloaded: ${marksData.length} records`);
     } catch (error) {
-      console.error(`Download failed:`, error);
-      setMessage(`❌ Failed to download ${format.toUpperCase()}`);
+      console.error("Excel download failed:", error);
+      setMessage("❌ Excel download failed");
+    }
+  };
+
+  // ✅ CLIENT-SIDE PDF DOWNLOAD
+  const downloadPDF = () => {
+    try {
+      const doc = new jsPDF();
+      const date = new Date().toLocaleDateString();
+      
+      // Title
+      doc.setFontSize(16);
+      doc.text(`Marks Report - ${batchNo} (${assessmentType})`, 14, 20);
+      doc.setFontSize(10);
+      doc.text(`Generated: ${date}`, 14, 28);
+
+      // Dynamic columns based on data
+      const sampleRow = marksData[0] || {};
+      const columns = [
+        { header: 'Learner ID', dataKey: 'learner_id' },
+        { header: 'Course ID', dataKey: 'course_planner_id' },
+        { header: 'Batch', dataKey: 'batch_no' },
+      ];
+
+      if (sampleRow.week_no !== undefined) columns.push({ header: 'Week', dataKey: 'week_no' });
+      if (sampleRow.module_no !== undefined) columns.push({ header: 'Module', dataKey: 'module_no' });
+      
+      columns.push(
+        { header: 'Date', dataKey: 'assessment_date' },
+        ...(sampleRow.assessment_name ? [{ header: 'Assessment', dataKey: 'assessment_name' }] : []),
+        { header: 'Out Of', dataKey: 'out_off' },
+        { header: 'Points', dataKey: 'points' },
+        { header: 'Percentage', dataKey: 'percentage' }
+      );
+
+      // Prepare table data
+      const tableData = marksData.map(row => ({
+        learner_id: row.learner_id,
+        course_planner_id: row.course_planner_id,
+        batch_no: row.batch_no,
+        week_no: row.week_no || '',
+        module_no: row.module_no || '',
+        assessment_date: row.assessment_date || '',
+        assessment_name: row.assessment_name || '',
+        out_off: row.out_off,
+        points: row.points,
+        percentage: row.percentage ? `${row.percentage.toFixed(2)}%` : '-'
+      }));
+
+      // Generate table
+      doc.autoTable({
+        startY: 35,
+        head: columns.map(col => [col.header]),
+        body: tableData.map(row => columns.map(col => row[col.dataKey] || '-')),
+        theme: 'grid',
+        styles: { fontSize: 8, cellPadding: 3 },
+        headStyles: { fillColor: [66, 139, 202], textColor: 255, fontStyle: 'bold' },
+        margin: { top: 35 }
+      });
+
+      const filename = `marks_${batchNo}_${assessmentType}_${new Date().toISOString().split('T')[0]}.pdf`;
+      doc.save(filename);
+      
+      setMessage(`✅ PDF downloaded: ${marksData.length} records`);
+    } catch (error) {
+      console.error("PDF download failed:", error);
+      setMessage("❌ PDF download failed");
     }
   };
 
@@ -212,23 +271,23 @@ export default function MarksDashboard({ user }) {
           </Button>
         </Box>
 
-        {/* Download Buttons */}
+        {/* ✅ Download Buttons - CLIENT-SIDE */}
         {marksData.length > 0 && (
           <Box sx={{ display: "flex", gap: 2, mb: 3 }}>
             <Button
               variant="outlined"
               color="success"
               startIcon={<DownloadIcon />}
-              onClick={() => handleDownload("csv")}
+              onClick={downloadExcel}
               sx={{ fontWeight: "bold" }}
             >
-              Download CSV/XLSX
+              Download XLSX
             </Button>
             <Button
               variant="outlined"
               color="error"
               startIcon={<DownloadIcon />}
-              onClick={() => handleDownload("pdf")}
+              onClick={downloadPDF}
               sx={{ fontWeight: "bold" }}
             >
               Download PDF
