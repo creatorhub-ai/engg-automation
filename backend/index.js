@@ -64,6 +64,18 @@ const excelFileFilter = (req, file, cb) => {
   }
 };
 
+// Middleware to verify JWT token
+const authenticate = (req, res, next) => {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    req.user = jwt.verify(token, process.env.JWT_SECRET); // Adjust secret
+    next();
+  } catch {
+    res.status(401).json({ error: 'Invalid token' });
+  }
+};
+
 
 // =====================================================
 // ✅ FIXED CORS — ONLY THIS IS ENOUGH (Render Friendly)
@@ -1597,150 +1609,79 @@ app.post("/api/save-classroom-matrix", async (req, res) => {
 });
 
 
-// ✅ POST upload holidays (auto-detects current year)
-app.post("/api/holidays/upload", upload.single("file"), async (req, res) => {
-  console.log("📥 Holiday upload request received");
-  
+// ✅ GET holidays for current year (no query param needed)
+app.get('/api/holidays', authenticate, async (req, res) => {
+  const { year } = req.query;
+  if (!year || isNaN(year)) return res.status(400).json({ error: 'Invalid year' });
   try {
-    if (!req.file) {
-      console.error("❌ No file uploaded");
-      return res.status(400).json({ 
-        success: false,
-        message: "No file uploaded" 
-      });
-    }
-
-    console.log("📄 File received:", req.file.originalname, `(${req.file.size} bytes)`);
-
-    // Read Excel file from buffer
-    const workbook = xlsx.read(req.file.buffer, { type: "buffer" });
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const rows = xlsx.utils.sheet_to_json(sheet);
-
-    if (!rows.length) {
-      console.error("❌ Empty file");
-      return res.status(400).json({ 
-        success: false,
-        message: "Excel file is empty" 
-      });
-    }
-
-    console.log(`📊 Processing ${rows.length} rows...`);
-
-    let inserted = 0;
-    let skipped = 0;
-    let errors = [];
-
-    for (const row of rows) {
-      try {
-        const holiday_date = normalizeDate(row["Date"]);
-        const name = row["Holiday"];
-        const type = row["Type of Holiday"];
-
-        if (!holiday_date || !name || !type) {
-          skipped++;
-          console.log(`⚠️ Skipping row (missing data):`, row);
-          continue;
-        }
-
-        // Insert into PostgreSQL using pool
-        const result = await pool.query(
-          `
-          INSERT INTO holidays (holiday_date, name, type)
-          VALUES ($1, $2, $3)
-          ON CONFLICT (holiday_date) DO NOTHING
-          RETURNING id
-          `,
-          [holiday_date, name.trim(), type.trim()]
-        );
-
-        if (result.rowCount > 0) {
-          inserted++;
-          console.log(`✅ Inserted: ${name} on ${holiday_date}`);
-        } else {
-          skipped++;
-          console.log(`⏭️ Skipped (duplicate): ${name} on ${holiday_date}`);
-        }
-      } catch (rowError) {
-        errors.push({
-          row: row,
-          error: rowError.message
-        });
-        console.error(`❌ Error processing row:`, row, rowError.message);
-      }
-    }
-
-    console.log(`\n📈 UPLOAD SUMMARY:`);
-    console.log(`   ✅ Inserted: ${inserted}`);
-    console.log(`   ⏭️ Skipped: ${skipped}`);
-    console.log(`   ❌ Errors: ${errors.length}\n`);
-
-    res.json({
-      success: true,
-      message: `Holidays uploaded successfully: ${inserted} inserted, ${skipped} skipped`,
-      inserted,
-      skipped,
-      errors: errors.length > 0 ? errors : undefined
-    });
-
+    const result = await pool.query(`
+      SELECT holiday_date, name, type
+      FROM holidays
+      WHERE EXTRACT(YEAR FROM holiday_date) = $1
+    `, [year]);
+    res.json(result.rows);
   } catch (err) {
-    console.error("💥 UPLOAD ERROR:", err);
-    res.status(500).json({
-      success: false,
-      message: "Holiday upload failed",
-      error: err.message
-    });
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch holidays' });
   }
 });
 
+  // POST /api/holidays/upload
+app.post('/api/holidays/upload', authenticate, upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const filePath = req.file.path;
+  const ext = req.file.originalname.split('.').pop().toLowerCase();
+  let data = [];
 
-
-// ✅ GET holidays for current year (no query param needed)
-app.get("/api/holidays", async (req, res) => {
   try {
-    console.log("📅 Fetching holidays...");
-    
-    const result = await pool.query(
-      "SELECT id, holiday_date, name, type FROM holidays ORDER BY holiday_date"
-    );
-    
-    console.log(`✅ Returned ${result.rows.length} holidays`);
-    res.json(result.rows);
+    if (ext === 'xlsx' || ext === 'xls') {
+      const workbook = xlsx.readFile(filePath);
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      data = xlsx.utils.sheet_to_json(sheet);
+    } else if (ext === 'csv') {
+      data = [];
+      fs.createReadStream(filePath)
+        .pipe(csv())
+        .on('data', (row) => data.push(row))
+        .on('end', () => processData());
+    } else {
+      throw new Error('Unsupported file type');
+    }
+
+    const processData = async () => {
+      for (const row of data) {
+        const holidayDate = new Date(row['Date']);
+        const name = row['Holiday'];
+        const type = row['Type of Holiday'];
+        if (!holidayDate || !name || !type) continue;
+        await pool.query(`
+          INSERT INTO holidays (holiday_date, name, type)
+          VALUES ($1, $2, $3)
+          ON CONFLICT (holiday_date) DO UPDATE SET name = EXCLUDED.name, type = EXCLUDED.type
+        `, [holidayDate.toISOString().split('T')[0], name, type]);
+      }
+      fs.unlinkSync(filePath);
+      res.json({ message: 'Holidays uploaded successfully' });
+    };
+
+    if (ext !== 'csv') processData();
   } catch (err) {
-    console.error("❌ Error fetching holidays:", err);
-    res.status(500).json({ 
-      success: false,
-      message: "Failed to fetch holidays",
-      error: err.message 
-    });
+    console.error(err);
+    fs.unlinkSync(filePath);
+    res.status(500).json({ error: 'Failed to process file' });
   }
 });
 
 
 // Get trainers for dropdown
-app.get("/api/trainers", async (req, res) => {
+app.get('/api/trainers', authenticate, async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from("internal_users")
-      .select("id, name, email, role")
-      .eq("role", "Trainer")
-      .order("name", { ascending: true });
-
-    if (error) {
-      console.error("GET /api/trainers error:", error);
-      return res.status(200).json([]); // avoid frontend console 500s
-    }
-
-    const trainers = (data || []).map((t) => ({
-      id: t.id,
-      name: t.name,
-      email: t.email,
-    }));
-
-    return res.status(200).json(trainers);
+    // Assuming a 'trainers' table with id, name, email
+    const result = await pool.query('SELECT id, name, email FROM trainers');
+    res.json(result.rows);
   } catch (err) {
-    console.error("GET /api/trainers crash:", err);
-    return res.status(200).json([]);
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch trainers' });
   }
 });
 
@@ -1748,72 +1689,17 @@ app.get("/api/trainers", async (req, res) => {
 // UNAVAILABILITY REQUESTS - FIXED
 // Provides GET /api/unavailability-requests
 // ===============================
-app.get("/api/unavailability-requests", async (req, res) => {
+app.get('/api/unavailability-requests', authenticate, async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT
-        id,
-        trainer_email,
-        trainer_name,
-        domain,
-        start_date,
-        end_date,
-        reason,
-        status,
-        batch_nos,
-        module_name
+      SELECT id, trainer_email AS trainer_id, trainer_name, domain, start_date, end_date, reason, reason AS leave_type
       FROM trainer_unavailability
-      ORDER BY start_date DESC
+      WHERE status = 'approved' OR status IS NULL
     `);
-
     res.json(result.rows);
   } catch (err) {
-    console.error("Unavailability fetch error:", err);
-    res.status(500).json({ message: "Failed to fetch unavailability" });
-  }
-});
-
-/* ➤ Create unavailability request */
-app.post("/api/unavailability-requests", async (req, res) => {
-  try {
-    const {
-      trainer_email,
-      trainer_name,
-      domain,
-      start_date,
-      end_date,
-      reason,
-      batch_nos,
-      module_name,
-    } = req.body;
-
-    if (!trainer_email || !start_date || !end_date) {
-      return res.status(400).json({ message: "Missing required fields" });
-    }
-
-    const result = await pool.query(
-      `
-      INSERT INTO trainer_unavailability
-      (trainer_email, trainer_name, domain, start_date, end_date, reason, batch_nos, module_name)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-      RETURNING *
-      `,
-      [
-        trainer_email,
-        trainer_name,
-        domain,
-        start_date,
-        end_date,
-        reason,
-        batch_nos,
-        module_name,
-      ]
-    );
-
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    console.error("Unavailability insert error:", err);
-    res.status(500).json({ message: "Failed to save unavailability" });
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch unavailability requests' });
   }
 });
 
