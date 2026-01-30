@@ -2197,6 +2197,136 @@ app.get("/api/get_learners", async (req, res) => {
   }
 });
 
+
+// GET assessments by batch and type
+app.get('/api/assessments/:batchNo/:assessmentType', async (req, res) => {
+  try {
+    const { batchNo, assessmentType } = req.params;
+    let query;
+
+    switch (assessmentType.toLowerCase()) {
+      case 'weekly':
+        query = supabase
+          .from('weekly_assessment_scores')
+          .select('*')
+          .eq('batch_no', batchNo)
+          .order('learner_id')
+          .order('assessment_date', { ascending: false });
+        break;
+      case 'intermediate':
+        query = supabase
+          .from('intermediate_assessment_scores')
+          .select('*')
+          .eq('batch_no', batchNo)
+          .order('learner_id')
+          .order('assessment_date', { ascending: false });
+        break;
+      case 'module':
+        query = supabase
+          .from('module_level_assessment_scores')
+          .select('*')
+          .eq('batch_no', batchNo)
+          .order('learner_id')
+          .order('assessment_date', { ascending: false });
+        break;
+      default:
+        return res.status(400).json({ error: 'Invalid assessment type' });
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.json({ data });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Download CSV
+app.get('/api/download/csv/:batchNo/:assessmentType', async (req, res) => {
+  try {
+    const { batchNo, assessmentType } = req.params;
+    
+    // Fetch data (same logic as above)
+    let query;
+    switch (assessmentType.toLowerCase()) {
+      case 'weekly':
+        query = supabase.from('weekly_assessment_scores').select('*').eq('batch_no', batchNo);
+        break;
+      case 'intermediate':
+        query = supabase.from('intermediate_assessment_scores').select('*').eq('batch_no', batchNo);
+        break;
+      case 'module':
+        query = supabase.from('module_level_assessment_scores').select('*').eq('batch_no', batchNo);
+        break;
+    }
+
+    const { data } = await query;
+    
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Assessments');
+    
+    const filename = `assessments_${batchNo}_${assessmentType}_${Date.now()}.xlsx`;
+    const filepath = path.join(__dirname, 'downloads', filename);
+    
+    XLSX.writeFile(wb, filepath);
+    
+    res.json({ downloadUrl: `/downloads/${filename}` });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Download PDF
+app.get('/api/download/pdf/:batchNo/:assessmentType', async (req, res) => {
+  try {
+    const { batchNo, assessmentType } = req.params;
+    
+    let query;
+    switch (assessmentType.toLowerCase()) {
+      case 'weekly':
+        query = supabase.from('weekly_assessment_scores').select('*').eq('batch_no', batchNo);
+        break;
+      case 'intermediate':
+        query = supabase.from('intermediate_assessment_scores').select('*').eq('batch_no', batchNo);
+        break;
+      case 'module':
+        query = supabase.from('module_level_assessment_scores').select('*').eq('batch_no', batchNo);
+        break;
+    }
+
+    const { data } = await query;
+    
+    const doc = new jsPDF();
+    doc.text(`Assessment Report - ${batchNo} (${assessmentType})`, 14, 15);
+    
+    doc.autoTable({
+      startY: 20,
+      head: [['Learner ID', 'Date', 'Assessment Name', 'Out Of', 'Points', 'Percentage']],
+      body: data.map(row => [
+        row.learner_id,
+        row.assessment_date,
+        row.assessment_name || '-',
+        row.out_off,
+        row.points,
+        row.percentage ? `${row.percentage.toFixed(2)}%` : '-'
+      ])
+    });
+    
+    const filename = `assessments_${batchNo}_${assessmentType}_${Date.now()}.pdf`;
+    const filepath = path.join(__dirname, 'downloads', filename);
+    doc.save(filepath);
+    
+    res.json({ downloadUrl: `/downloads/${filename}` });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 //=== Get the batches dates ===
 app.get("/api/get_batch_dates", async (req, res) => {
   try {

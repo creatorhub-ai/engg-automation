@@ -26,6 +26,7 @@ import TrainerLeaveDashboard from "./pages/TrainerLeaveDashboard";
 import ManagerLeaveDashboard from "./pages/ManagerLeaveDashboard";
 import HolidayUpload from "./pages/HolidayUpload";
 import TrainerAssignmentDashboard from "./pages/TrainerAssignmentDashboard";
+import MarksDashboard from "./pages/MarksDashboard";
 
 const roleMenus = {
   admin: [
@@ -42,7 +43,8 @@ const roleMenus = {
     { text: "Course Progress", path: "/course-progress" },
     { text: "Classroom Planner", path: "/schedule" },
     { text: "Attendance", path: "/attendance" }, // <-- added attendance menu
-    { text: "Mark Entry", path: "/marks-entry" }, 
+    { text: "Mark Entry", path: "/marks-entry" },
+    { text: "Marks Dashboard", path: "/marks-dashboard" }, 
     { text: "Announcement", path: "/announcement" }, 
     { text: "Classroom Planner-2", path: "/classroom-planner" }, 
     { text: "Manager Leave Dashboard", path: "/manager/leaves" }, 
@@ -141,6 +143,8 @@ function getComponentForPath(path, login) {
       return <ClassroomScheduler user={login} />;
     case "/marks-entry":
       return <MarkSheet user={login} />;
+    case "/marks-dashboard":
+      return <MarksDashboard user={login} />;
     case "/announcement":
       return <AnnouncementDashboard user={login} />;
     case "/attendance":
