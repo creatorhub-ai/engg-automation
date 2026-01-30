@@ -1610,18 +1610,20 @@ app.post("/api/save-classroom-matrix", async (req, res) => {
 
 
 // ✅ GET holidays for current year (no query param needed)
-app.get('/api/holidays', async (req, res) => {  // Removed authenticate
+app.get('/api/holidays', async (req, res) => {
   const { year } = req.query;
   if (!year || isNaN(year)) return res.status(400).json({ error: 'Invalid year' });
   try {
+    console.log('Fetching holidays for year:', year);
     const result = await pool.query(`
       SELECT holiday_date, name, type
       FROM holidays
       WHERE EXTRACT(YEAR FROM holiday_date) = $1
     `, [year]);
+    console.log('Fetched holiday rows:', result.rows.length);
     res.json(result.rows);
   } catch (err) {
-    console.error(err);
+    console.error('Error in /api/holidays:', err);
     res.status(500).json({ error: 'Failed to fetch holidays' });
   }
 });
@@ -1674,13 +1676,18 @@ app.post('/api/holidays/upload', upload.single('file'), async (req, res) => {  /
 
 
 // Get trainers for dropdown
-app.get('/api/trainers', async (req, res) => {  // Removed authenticate
+app.get('/api/trainers', async (req, res) => {  // authenticate removed
   try {
-    // Assuming a 'trainers' table with id, name, email
-    const result = await pool.query('SELECT id, name, email FROM trainers');
+    // Use internal_users table instead of non-existent 'trainers' table
+    const result = await pool.query(`
+      SELECT id, name, email
+      FROM internal_users
+      WHERE role = 'Trainer' AND is_active = true
+      ORDER BY name
+    `);
     res.json(result.rows);
   } catch (err) {
-    console.error(err);
+    console.error('Error fetching trainers:', err);
     res.status(500).json({ error: 'Failed to fetch trainers' });
   }
 });
@@ -1688,16 +1695,18 @@ app.get('/api/trainers', async (req, res) => {  // Removed authenticate
 // =============================== UNAVAILABILITY REQUESTS - FIXED
 // Provides GET /api/unavailability-requests
 // ===============================
-app.get('/api/unavailability-requests', async (req, res) => {  // Removed authenticate
+app.get('/api/unavailability-requests', async (req, res) => {
   try {
+    console.log('Fetching unavailability requests...');
     const result = await pool.query(`
       SELECT id, trainer_email AS trainer_id, trainer_name, domain, start_date, end_date, reason, reason AS leave_type
       FROM trainer_unavailability
       WHERE status = 'approved' OR status IS NULL
     `);
+    console.log('Fetched rows:', result.rows.length);
     res.json(result.rows);
   } catch (err) {
-    console.error(err);
+    console.error('Error in /api/unavailability-requests:', err);
     res.status(500).json({ error: 'Failed to fetch unavailability requests' });
   }
 });
