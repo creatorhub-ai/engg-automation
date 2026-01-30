@@ -1610,7 +1610,7 @@ app.post("/api/save-classroom-matrix", async (req, res) => {
 
 
 // ✅ GET holidays for current year (no query param needed)
-app.get('/api/holidays', authenticate, async (req, res) => {
+app.get('/api/holidays', async (req, res) => {  // Removed authenticate
   const { year } = req.query;
   if (!year || isNaN(year)) return res.status(400).json({ error: 'Invalid year' });
   try {
@@ -1626,8 +1626,8 @@ app.get('/api/holidays', authenticate, async (req, res) => {
   }
 });
 
-  // POST /api/holidays/upload
-app.post('/api/holidays/upload', authenticate, upload.single('file'), async (req, res) => {
+// POST /api/holidays/upload
+app.post('/api/holidays/upload', upload.single('file'), async (req, res) => {  // Removed authenticate
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   const filePath = req.file.path;
   const ext = req.file.originalname.split('.').pop().toLowerCase();
@@ -1674,7 +1674,7 @@ app.post('/api/holidays/upload', authenticate, upload.single('file'), async (req
 
 
 // Get trainers for dropdown
-app.get('/api/trainers', authenticate, async (req, res) => {
+app.get('/api/trainers', async (req, res) => {  // Removed authenticate
   try {
     // Assuming a 'trainers' table with id, name, email
     const result = await pool.query('SELECT id, name, email FROM trainers');
@@ -1685,11 +1685,10 @@ app.get('/api/trainers', authenticate, async (req, res) => {
   }
 });
 
-// ===============================
-// UNAVAILABILITY REQUESTS - FIXED
+// =============================== UNAVAILABILITY REQUESTS - FIXED
 // Provides GET /api/unavailability-requests
 // ===============================
-app.get('/api/unavailability-requests', authenticate, async (req, res) => {
+app.get('/api/unavailability-requests', async (req, res) => {  // Removed authenticate
   try {
     const result = await pool.query(`
       SELECT id, trainer_email AS trainer_id, trainer_name, domain, start_date, end_date, reason, reason AS leave_type
