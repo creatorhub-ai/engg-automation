@@ -21,11 +21,21 @@ function validateEmail(email) {
 
 function validatePhone(phone) {
   if (!phone) return false;
-  const normalized = String(phone).replace(/\s|-/g, '');
-  // Accept both international format (+ followed by 10-15 digits) and Indian 10-digit mobile numbers
-  // Indian mobile: exactly 10 digits, starting with 6-9
-  if (/^\+[1-9]\d{9,14}$/.test(normalized)) return true; // International format
-  if (/^[6-9]\d{9}$/.test(normalized)) return true; // Indian 10-digit mobile (plain digits)
+  
+  const normalized = String(phone).replace(/[\s\-\(\)]/g, '');
+  
+  // Pattern 1: International format - + followed by 1-4 digits (country code) then 6-15 digits total after +
+  if (/^\+[1-9]\d{6,14}$/.test(normalized)) return true;
+  
+  // Pattern 2: Indian mobile - 10 digits starting with 6-9 (no +)
+  if (/^[6-9]\d{9}$/.test(normalized)) return true;
+  
+  // Pattern 3: US/Canada 10-digit (starts with 2-9 for valid area/mobile)
+  if (/^[2-9]\d{9}$/.test(normalized)) return true;
+  
+  // Pattern 4: Shorter international plain numbers (7-15 digits, common for some countries)
+  if (/^\d{7,15}$/.test(normalized)) return true;
+  
   return false;
 }
 
