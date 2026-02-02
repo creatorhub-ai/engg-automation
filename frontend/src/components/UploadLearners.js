@@ -22,9 +22,11 @@ function validateEmail(email) {
 function validatePhone(phone) {
   if (!phone) return false;
   const normalized = String(phone).replace(/\s|-/g, '');
-  if (!normalized.startsWith('+')) return false;
-  const digits = normalized.slice(1);
-  return /^\d{8,15}$/.test(digits);
+  // Accept both international format (+ followed by 10-15 digits) and Indian 10-digit mobile numbers
+  // Indian mobile: exactly 10 digits, starting with 6-9
+  if (/^\+[1-9]\d{9,14}$/.test(normalized)) return true; // International format
+  if (/^[6-9]\d{9}$/.test(normalized)) return true; // Indian 10-digit mobile (plain digits)
+  return false;
 }
 
 export default function UploadLearners() {
