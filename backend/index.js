@@ -2,7 +2,8 @@
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
-import nodemailer from "nodemailer";
+// import nodemailer from "nodemailer";
+import { sendEmail } from "./services/emailService.js";
 import xlsx from "xlsx";
 import cron from "node-cron";
 import fetch from "node-fetch";
@@ -108,26 +109,26 @@ app.use("/api/attendance", attendanceRoutes);
 const upload = multer({ dest: "uploads/" });
 
 // Nodemailer transporter - update with your email provider settings
-const mailTransporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 465,
-  secure: true, // SSL
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-  connectionTimeout: 10000, // 10s
-  greetingTimeout: 10000,
-  socketTimeout: 10000,
-});
+// const mailTransporter = nodemailer.createTransport({
+//   host: "smtp.gmail.com",
+//   port: 465,
+//   secure: true, // SSL
+//   auth: {
+//     user: process.env.EMAIL_USER,
+//     pass: process.env.EMAIL_PASS,
+//   },
+//   connectionTimeout: 10000, // 10s
+//   greetingTimeout: 10000,
+//   socketTimeout: 10000,
+// });
 
-mailTransporter.verify((error, success) => {
-  if (error) {
-    console.error("❌ SMTP ERROR:", error);
-  } else {
-    console.log("✅ SMTP READY – Emails can be sent");
-  }
-});
+// mailTransporter.verify((error, success) => {
+//   if (error) {
+//     console.error("❌ SMTP ERROR:", error);
+//   } else {
+//     console.log("✅ SMTP READY – Emails can be sent");
+//   }
+// });
 
 const validateMarkEntryWindow = (assessmentDate, assessmentType) => {
   try {
@@ -367,30 +368,11 @@ function normalizeDate(value) {
 }
 
 // Helper used by leave emails
-async function sendEmail({ to, subject, text, html }) {
-  const fromAddress = process.env.EMAIL_USER; // MUST match auth user
-
-  if (!fromAddress) {
-    throw new Error("EMAIL_USER is not defined in environment variables");
-  }
-
-  const mailOptions = {
-    from: `Leave Management <${fromAddress}>`,
-    to,
-    subject,
-    text: text || "",
-    html: html || text || "",
-  };
-
-  try {
-    const info = await mailTransporter.sendMail(mailOptions);
-    console.log("✅ Email sent successfully:", info.messageId);
-    return info;
-  } catch (err) {
-    console.error("❌ Error sending email:", err);
-    throw err; // IMPORTANT: don’t swallow the error
-  }
-}
+await sendEmail({
+  to: "hariharan@chipedge.com",
+  subject: "Test Email",
+  text: "This email is sent via local relay",
+});
 
 // Helper to generate Soft Skills monthly reminder email HTML
 function generateSoftSkillSummaryEmail(topics, trainerEmail) {
