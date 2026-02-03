@@ -751,34 +751,34 @@ function extractAttendanceData(filepath) {
   return { session, users };
 }
 
-async function sendMail({ name, email, session, absents }) {
-  const formatted_dates = absents.map(d => `• ${d}`).join('\n');
-  const mailText = `Dear ${name},
+// async function sendMail({ name, email, session, absents }) {
+//   const formatted_dates = absents.map(d => `• ${d}`).join('\n');
+//   const mailText = `Dear ${name},
 
-We noticed that you were absent for the enrolled course ${session} on the following days:
-${formatted_dates}
+// We noticed that you were absent for the enrolled course ${session} on the following days:
+// ${formatted_dates}
 
-Regular attendance is essential to stay aligned with the course content and placement activities. Please ensure you go through the missed session before attending the upcoming ones.
+// Regular attendance is essential to stay aligned with the course content and placement activities. Please ensure you go through the missed session before attending the upcoming ones.
 
-Kindly note 85% attendance is mandatory to get certification and placement assistance. A minimum of 70% attendance is mandatory to be eligible for certification and placement support.
+// Kindly note 85% attendance is mandatory to get certification and placement assistance. A minimum of 70% attendance is mandatory to be eligible for certification and placement support.
 
-Warm Regards,
-Learning Coordinator
-ChipEdge Technologies Pvt Ltd
-https://chipedge.com/`;
+// Warm Regards,
+// Learning Coordinator
+// ChipEdge Technologies Pvt Ltd
+// https://chipedge.com/`;
 
-  let transporter = nodemailer.createTransport({
-    service: "gmail",
-    auth: { user: SENDER_EMAIL, pass: SENDER_PASS },
-  });
-  const mailOptions = {
-    from: SENDER_EMAIL,
-    to: email,
-    subject: `Absent Notification: ${session}`,
-    text: mailText
-  };
-  await transporter.sendMail(mailOptions);
-}
+//   let transporter = nodemailer.createTransport({
+//     service: "gmail",
+//     auth: { user: SENDER_EMAIL, pass: SENDER_PASS },
+//   });
+//   const mailOptions = {
+//     from: SENDER_EMAIL,
+//     to: email,
+//     subject: `Absent Notification: ${session}`,
+//     text: mailText
+//   };
+//   await transporter.sendMail(mailOptions);
+// }
 
 app.use(express.json());
 
@@ -3633,146 +3633,146 @@ app.get('/api/marks/:category', async (req, res) => {
   }
 });
 
-// ✅ FIXED: Main announcement endpoint - NO SYNTAX ERRORS
-app.post('/api/announcement/send-direct', async (req, res) => {
-  try {
-    const { subject, message, messageType, batch_no } = req.body;
+// // ✅ FIXED: Main announcement endpoint - NO SYNTAX ERRORS
+// app.post('/api/announcement/send-direct', async (req, res) => {
+//   try {
+//     const { subject, message, messageType, batch_no } = req.body;
 
-    if (!subject || !message || !batch_no) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing required fields'
-      });
-    }
+//     if (!subject || !message || !batch_no) {
+//       return res.status(400).json({
+//         success: false,
+//         error: 'Missing required fields'
+//       });
+//     }
 
-    console.log('📥 Announcement request:', { subject, batch_no });
+//     console.log('📥 Announcement request:', { subject, batch_no });
 
-    // 🔹 Fetch learners
-    const learnerRes = await fetch(
-      `${process.env.API_BASE_URL || 'http://localhost:5000'}/apigetlearners?batchno=${batch_no}`
-    );
-    const learners = await learnerRes.json();
+//     // 🔹 Fetch learners
+//     const learnerRes = await fetch(
+//       `${process.env.API_BASE_URL || 'http://localhost:5000'}/apigetlearners?batchno=${batch_no}`
+//     );
+//     const learners = await learnerRes.json();
 
-    const validLearners = learners.filter(
-      l => l.email && l.email.trim()
-    );
+//     const validLearners = learners.filter(
+//       l => l.email && l.email.trim()
+//     );
 
-    if (validLearners.length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'No learners with valid email'
-      });
-    }
+//     if (validLearners.length === 0) {
+//       return res.status(400).json({
+//         success: false,
+//         error: 'No learners with valid email'
+//       });
+//     }
 
-    let sentCount = 0;
-    let failed = [];
+//     let sentCount = 0;
+//     let failed = [];
 
-    for (const learner of validLearners) {
-      try {
-        const mailOptions = {
-          from: `"Training Team" <${process.env.EMAIL_USER}>`,
-          to: learner.email,
-          subject: `[${batch_no}] ${subject}`,
-          text: message,
-          html: messageType === 'html'
-            ? `
-              <div style="font-family:Arial;padding:20px">
-                <h2>${subject}</h2>
-                <div>${message.replace(/\n/g, '<br>')}</div>
-                <p style="font-size:12px;color:#666">
-                  Batch: ${batch_no}<br/>
-                  ${new Date().toLocaleString('en-IN')}
-                </p>
-              </div>
-            `
-            : undefined
-        };
+//     for (const learner of validLearners) {
+//       try {
+//         const mailOptions = {
+//           from: `"Training Team" <${process.env.EMAIL_USER}>`,
+//           to: learner.email,
+//           subject: `[${batch_no}] ${subject}`,
+//           text: message,
+//           html: messageType === 'html'
+//             ? `
+//               <div style="font-family:Arial;padding:20px">
+//                 <h2>${subject}</h2>
+//                 <div>${message.replace(/\n/g, '<br>')}</div>
+//                 <p style="font-size:12px;color:#666">
+//                   Batch: ${batch_no}<br/>
+//                   ${new Date().toLocaleString('en-IN')}
+//                 </p>
+//               </div>
+//             `
+//             : undefined
+//         };
 
-        await transporter.sendMail(mailOptions);
-        sentCount++;
+//         await transporter.sendMail(mailOptions);
+//         sentCount++;
 
-        // Gmail rate limit safety
-        await new Promise(r => setTimeout(r, 250));
+//         // Gmail rate limit safety
+//         await new Promise(r => setTimeout(r, 250));
 
-      } catch (err) {
-        failed.push({ email: learner.email, error: err.message });
-        console.error(`❌ Failed ${learner.email}`, err.message);
-      }
-    }
+//       } catch (err) {
+//         failed.push({ email: learner.email, error: err.message });
+//         console.error(`❌ Failed ${learner.email}`, err.message);
+//       }
+//     }
 
-    console.log(`📊 RESULT: ${sentCount} sent, ${failed.length} failed`);
+//     console.log(`📊 RESULT: ${sentCount} sent, ${failed.length} failed`);
 
-    return res.json({
-      success: sentCount > 0,
-      sentCount,
-      failedCount: failed.length,
-      failed
-    });
+//     return res.json({
+//       success: sentCount > 0,
+//       sentCount,
+//       failedCount: failed.length,
+//       failed
+//     });
 
-  } catch (err) {
-    console.error('❌ Announcement fatal error:', err);
-    res.status(500).json({
-      success: false,
-      error: 'Server error while sending emails'
-    });
-  }
-});
+//   } catch (err) {
+//     console.error('❌ Announcement fatal error:', err);
+//     res.status(500).json({
+//       success: false,
+//       error: 'Server error while sending emails'
+//     });
+//   }
+// });
 
 
-// ✅ Email sending function (separate)
-async function sendBatchEmails(data) {
-  try {
-    const { subject, message, messageType, batch_no } = data;
+// // ✅ Email sending function (separate)
+// async function sendBatchEmails(data) {
+//   try {
+//     const { subject, message, messageType, batch_no } = data;
     
-    // Get learners for batch
-    const learnerRes = await fetch(`http://localhost:5000/apigetlearners?batchno=${batch_no}`);
-    const learners = await learnerRes.json();
-    const validLearners = learners.filter(l => l.email && l.email.trim());
+//     // Get learners for batch
+//     const learnerRes = await fetch(`http://localhost:5000/apigetlearners?batchno=${batch_no}`);
+//     const learners = await learnerRes.json();
+//     const validLearners = learners.filter(l => l.email && l.email.trim());
 
-    console.log(`📤 Processing ${validLearners.length} emails for ${batch_no}`);
+//     console.log(`📤 Processing ${validLearners.length} emails for ${batch_no}`);
 
-    let sentCount = 0;
-    let failedCount = 0;
+//     let sentCount = 0;
+//     let failedCount = 0;
 
-    for (const learner of validLearners) {
-      try {
-        const mailOptions = {
-          from: `"Training Team" <${process.env.EMAIL_USER}>`,
-          to: learner.email,
-          subject: `[${batch_no}] ${subject}`,
-          text: message,
-          html: messageType === 'html' ? `
-            <div style="font-family: Arial; padding: 20px; max-width: 600px;">
-              <h2 style="color: #2c5aa0;">${subject}</h2>
-              <div style="background: #f5f5f5; padding: 15px; border-radius: 5px;">
-                ${message.replace(/\n/g, '<br>')}
-              </div>
-              <p style="color: #666; font-size: 12px; margin-top: 20px;">
-                Batch: ${batch_no} | ${new Date().toLocaleString('en-IN')}
-              </p>
-            </div>
-          ` : undefined
-        };
+//     for (const learner of validLearners) {
+//       try {
+//         const mailOptions = {
+//           from: `"Training Team" <${process.env.EMAIL_USER}>`,
+//           to: learner.email,
+//           subject: `[${batch_no}] ${subject}`,
+//           text: message,
+//           html: messageType === 'html' ? `
+//             <div style="font-family: Arial; padding: 20px; max-width: 600px;">
+//               <h2 style="color: #2c5aa0;">${subject}</h2>
+//               <div style="background: #f5f5f5; padding: 15px; border-radius: 5px;">
+//                 ${message.replace(/\n/g, '<br>')}
+//               </div>
+//               <p style="color: #666; font-size: 12px; margin-top: 20px;">
+//                 Batch: ${batch_no} | ${new Date().toLocaleString('en-IN')}
+//               </p>
+//             </div>
+//           ` : undefined
+//         };
 
-        await transporter.sendMail(mailOptions);
-        sentCount++;
-        console.log(`✅ SENT: ${learner.email}`);
+//         await transporter.sendMail(mailOptions);
+//         sentCount++;
+//         console.log(`✅ SENT: ${learner.email}`);
         
-        // Rate limiting
-        await new Promise(resolve => setTimeout(resolve, 200));
+//         // Rate limiting
+//         await new Promise(resolve => setTimeout(resolve, 200));
         
-      } catch (emailError) {
-        failedCount++;
-        console.error(`❌ FAILED ${learner.email}:`, emailError.message);
-      }
-    }
+//       } catch (emailError) {
+//         failedCount++;
+//         console.error(`❌ FAILED ${learner.email}:`, emailError.message);
+//       }
+//     }
 
-    console.log(`🎉 RESULT: ${sentCount} sent, ${failedCount} failed`);
+//     console.log(`🎉 RESULT: ${sentCount} sent, ${failedCount} failed`);
 
-  } catch (error) {
-    console.error('Batch email error:', error);
-  }
-}
+//   } catch (error) {
+//     console.error('Batch email error:', error);
+//   }
+// }
 
 // File upload (IMMEDIATE response)
 app.post('/api/upload', upload.single('file'), (req, res) => {
@@ -3789,22 +3789,22 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
 // Serve uploaded files
 app.use('/uploads', express.static('uploads'));
 
-// Test email endpoint
-app.get("/api/test-email", async (req, res) => {
-  try {
-    await mailTransporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: "hariharan@chipedge.com",  //used for checking the mail function works
-      subject: "Render Email Test",
-      text: "If you received this, email sending works 🚀",
-    });
+// // Test email endpoint
+// app.get("/api/test-email", async (req, res) => {
+//   try {
+//     await mailTransporter.sendMail({
+//       from: process.env.EMAIL_USER,
+//       to: "hariharan@chipedge.com",  //used for checking the mail function works
+//       subject: "Render Email Test",
+//       text: "If you received this, email sending works 🚀",
+//     });
 
-    res.json({ success: true });
-  } catch (err) {
-    console.error("MAIL SEND ERROR:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
+//     res.json({ success: true });
+//   } catch (err) {
+//     console.error("MAIL SEND ERROR:", err);
+//     res.status(500).json({ error: err.message });
+//   }
+// });
 
 
 // === Schedule Email API (with Templates + Course Application Emails + Internal Emails) ===
@@ -5762,64 +5762,64 @@ app.get('/api/mail/content', async (req, res) => {
   }
 });
 
-// Resend email with edited content
-app.post('/api/mail/resend', async (req, res) => {
-  const { mail_id, recipient_email, subject, body } = req.body;
+// // Resend email with edited content
+// app.post('/api/mail/resend', async (req, res) => {
+//   const { mail_id, recipient_email, subject, body } = req.body;
   
-  console.log('[API] Resending email for mail_id:', mail_id);
+//   console.log('[API] Resending email for mail_id:', mail_id);
   
-  if (!mail_id || !recipient_email || !subject || !body) {
-    return res.status(400).json({ 
-      success: false, 
-      error: 'mail_id, recipient_email, subject, and body are required' 
-    });
-  }
+//   if (!mail_id || !recipient_email || !subject || !body) {
+//     return res.status(400).json({ 
+//       success: false, 
+//       error: 'mail_id, recipient_email, subject, and body are required' 
+//     });
+//   }
   
-  try {
-    // Send email using nodemailer
-    await mailTransporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: recipient_email,
-      subject: subject,
-      html: body,
-    });
+//   try {
+//     // Send email using nodemailer
+//     await mailTransporter.sendMail({
+//       from: process.env.EMAIL_USER,
+//       to: recipient_email,
+//       subject: subject,
+//       html: body,
+//     });
     
-    console.log('[API] Email sent successfully to:', recipient_email);
+//     console.log('[API] Email sent successfully to:', recipient_email);
     
-    // Update database with new content and sent timestamp
-    const { data, error } = await supabase
-      .from('scheduled_emails')
-      .update({ 
-        subject: subject,
-        body_html: body,
-        status: 'sent',
-        sent_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', mail_id)
-      .select();
+//     // Update database with new content and sent timestamp
+//     const { data, error } = await supabase
+//       .from('scheduled_emails')
+//       .update({ 
+//         subject: subject,
+//         body_html: body,
+//         status: 'sent',
+//         sent_at: new Date().toISOString(),
+//         updated_at: new Date().toISOString(),
+//       })
+//       .eq('id', mail_id)
+//       .select();
     
-    if (error) {
-      console.error('[API] Database update error:', error);
-      // Email was sent but DB update failed
-      return res.json({ 
-        success: true, 
-        message: 'Email sent but database update failed',
-        warning: error.message 
-      });
-    }
+//     if (error) {
+//       console.error('[API] Database update error:', error);
+//       // Email was sent but DB update failed
+//       return res.json({ 
+//         success: true, 
+//         message: 'Email sent but database update failed',
+//         warning: error.message 
+//       });
+//     }
     
-    console.log('[API] Database updated successfully');
-    res.json({ 
-      success: true, 
-      message: 'Email resent successfully',
-      data 
-    });
-  } catch (err) {
-    console.error('[API] Error resending email:', err);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
+//     console.log('[API] Database updated successfully');
+//     res.json({ 
+//       success: true, 
+//       message: 'Email resent successfully',
+//       data 
+//     });
+//   } catch (err) {
+//     console.error('[API] Error resending email:', err);
+//     res.status(500).json({ success: false, error: err.message });
+//   }
+// });
 
 //===Reply to the emails of that template
 app.post("/api/mail/reply", async (req, res) => {
@@ -6475,154 +6475,154 @@ app.post("/api/internal/schedule", async (req, res) => {
 });
 
 
-//===Share the feedback to the learners with the attachment===
-app.post("/api/internal/feedback-share", upload.single("file"), async (req, res) => {
-  try {
-    const { batchNo, roles, feedbackType } = req.body;
-    const file = req.file;
+// //===Share the feedback to the learners with the attachment===
+// app.post("/api/internal/feedback-share", upload.single("file"), async (req, res) => {
+//   try {
+//     const { batchNo, roles, feedbackType } = req.body;
+//     const file = req.file;
 
-    if (!batchNo || !roles || !feedbackType || !file) {
-      return res.status(400).json({ error: "All fields and file are required" });
-    }
+//     if (!batchNo || !roles || !feedbackType || !file) {
+//       return res.status(400).json({ error: "All fields and file are required" });
+//     }
 
-    // Parse roles array
-    const rolesArr = JSON.parse(roles);
+//     // Parse roles array
+//     const rolesArr = JSON.parse(roles);
 
-    // Read original Excel/CSV file
-    const workbook = xlsx.readFile(file.path);
-    const sheetName = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[sheetName];
-    let jsonData = xlsx.utils.sheet_to_json(worksheet, { defval: "" });
+//     // Read original Excel/CSV file
+//     const workbook = xlsx.readFile(file.path);
+//     const sheetName = workbook.SheetNames[0];
+//     const worksheet = workbook.Sheets[sheetName];
+//     let jsonData = xlsx.utils.sheet_to_json(worksheet, { defval: "" });
 
-    // Remove first 4 columns (learner details)
-    jsonData = jsonData.map(row => {
-      const keys = Object.keys(row);
-      const newRow = {};
-      for (let i = 4; i < keys.length; i++) {
-        newRow[keys[i]] = row[keys[i]];
-      }
-      return newRow;
-    });
+//     // Remove first 4 columns (learner details)
+//     jsonData = jsonData.map(row => {
+//       const keys = Object.keys(row);
+//       const newRow = {};
+//       for (let i = 4; i < keys.length; i++) {
+//         newRow[keys[i]] = row[keys[i]];
+//       }
+//       return newRow;
+//     });
 
-    // Convert trimmed data back to sheet
-    const newSheet = xlsx.utils.json_to_sheet(jsonData);
-    const newWb = xlsx.utils.book_new();
-    xlsx.utils.book_append_sheet(newWb, newSheet, sheetName);
-    const tempFilePath = file.path + "-trimmed" + path.extname(file.originalname);
-    xlsx.writeFile(newWb, tempFilePath);
+//     // Convert trimmed data back to sheet
+//     const newSheet = xlsx.utils.json_to_sheet(jsonData);
+//     const newWb = xlsx.utils.book_new();
+//     xlsx.utils.book_append_sheet(newWb, newSheet, sheetName);
+//     const tempFilePath = file.path + "-trimmed" + path.extname(file.originalname);
+//     xlsx.writeFile(newWb, tempFilePath);
 
-    // Read the trimmed file into buffer for email attachment
-    const fileBuffer = fs.readFileSync(tempFilePath);
-    const base64Data = fileBuffer.toString("base64");
-    const filename = file.originalname;
+//     // Read the trimmed file into buffer for email attachment
+//     const fileBuffer = fs.readFileSync(tempFilePath);
+//     const base64Data = fileBuffer.toString("base64");
+//     const filename = file.originalname;
 
-    // Map roles to roles array
-    const rolesToSend = rolesArr; // You sent actual roles like "Trainer", "Management", etc.
+//     // Map roles to roles array
+//     const rolesToSend = rolesArr; // You sent actual roles like "Trainer", "Management", etc.
 
-    // Fetch recipients based on roles
-    let recipients = [];
+//     // Fetch recipients based on roles
+//     let recipients = [];
 
-    for (const role of rolesToSend) {
-      if (role === "Trainer") {
-        // Trainers in the batch
-        const { data: trainers, error: trainerErr } = await supabase
-          .from("course_planner_data")
-          .select("trainer_name")
-          .eq("batch_no", batchNo);
-        if (trainerErr) continue;
+//     for (const role of rolesToSend) {
+//       if (role === "Trainer") {
+//         // Trainers in the batch
+//         const { data: trainers, error: trainerErr } = await supabase
+//           .from("course_planner_data")
+//           .select("trainer_name")
+//           .eq("batch_no", batchNo);
+//         if (trainerErr) continue;
 
-        for (const trainer of trainers || []) {
-          if (!trainer.trainer_name) continue;
-          const { data: user, error: userErr } = await supabase
-            .from("internal_users")
-            .select("name,email,is_active")
-            .eq("name", trainer.trainer_name)
-            .eq("role", "Trainer")
-            .eq("is_active", true)
-            .single();
+//         for (const trainer of trainers || []) {
+//           if (!trainer.trainer_name) continue;
+//           const { data: user, error: userErr } = await supabase
+//             .from("internal_users")
+//             .select("name,email,is_active")
+//             .eq("name", trainer.trainer_name)
+//             .eq("role", "Trainer")
+//             .eq("is_active", true)
+//             .single();
 
-          if (user && user.email && user.is_active) {
-            recipients.push(user);
-          }
-        }
-      } else if (role === "Management") {
-        // Both Management and Manager
-        const { data: users, error: mgErr } = await supabase
-          .from("internal_users")
-          .select("name,email,is_active")
-          .in("role", ["Management", "Manager"])
-          .eq("is_active", true);
-        if (users) recipients.push(...users.filter(u => u.email && u.is_active));
-      } else if (role === "Learning Coordinator") {
-        // Role 'Coordinator'
-        const { data: coords, error: coordErr } = await supabase
-          .from("internal_users")
-          .select("name,email,is_active")
-          .eq("role", "Coordinator")
-          .eq("is_active", true);
-        if (coords) recipients.push(...coords.filter(u => u.email && u.is_active));
-      } else {
-        // Other roles
-        const { data: users, error: userErr } = await supabase
-          .from("internal_users")
-          .select("name,email,is_active")
-          .eq("role", role)
-          .eq("is_active", true);
-        if (users) recipients.push(...users.filter(u => u.email && u.is_active));
-      }
-    }
+//           if (user && user.email && user.is_active) {
+//             recipients.push(user);
+//           }
+//         }
+//       } else if (role === "Management") {
+//         // Both Management and Manager
+//         const { data: users, error: mgErr } = await supabase
+//           .from("internal_users")
+//           .select("name,email,is_active")
+//           .in("role", ["Management", "Manager"])
+//           .eq("is_active", true);
+//         if (users) recipients.push(...users.filter(u => u.email && u.is_active));
+//       } else if (role === "Learning Coordinator") {
+//         // Role 'Coordinator'
+//         const { data: coords, error: coordErr } = await supabase
+//           .from("internal_users")
+//           .select("name,email,is_active")
+//           .eq("role", "Coordinator")
+//           .eq("is_active", true);
+//         if (coords) recipients.push(...coords.filter(u => u.email && u.is_active));
+//       } else {
+//         // Other roles
+//         const { data: users, error: userErr } = await supabase
+//           .from("internal_users")
+//           .select("name,email,is_active")
+//           .eq("role", role)
+//           .eq("is_active", true);
+//         if (users) recipients.push(...users.filter(u => u.email && u.is_active));
+//       }
+//     }
 
-    // Remove duplicates
-    recipients = Array.from(
-      new Map(
-        recipients
-          .filter(u => u.email && u.is_active)
-          .map(u => [u.email.toLowerCase().trim(), u])
-      ).values()
-    );
+//     // Remove duplicates
+//     recipients = Array.from(
+//       new Map(
+//         recipients
+//           .filter(u => u.email && u.is_active)
+//           .map(u => [u.email.toLowerCase().trim(), u])
+//       ).values()
+//     );
 
-    if (recipients.length === 0) {
-      // Cleanup temp files
-      fs.unlinkSync(file.path);
-      fs.unlinkSync(tempFilePath);
-      return res.status(404).json({ error: "No valid recipients found." });
-    }
+//     if (recipients.length === 0) {
+//       // Cleanup temp files
+//       fs.unlinkSync(file.path);
+//       fs.unlinkSync(tempFilePath);
+//       return res.status(404).json({ error: "No valid recipients found." });
+//     }
 
-    // Send emails (immediately)
-    let successCount = 0;
-    let errorList = [];
-    for (const user of recipients) {
-      try {
-        // Use your preferred email SMTP method here (Nodemailer, SendGrid, etc.)
-        await mailTransporter.sendMail({
-          from: process.env.MAIL_FROM,
-          to: user.email,
-          subject: `${feedbackType} for Batch: ${batchNo}`,
-          html: `<p>Hello ${user.name},</p><p>PFA for the ${feedbackType} for Batch: ${batchNo}</p>`,
-          attachments: [{ filename: filename, content: fileBuffer }]
-        });
-        successCount++;
-      } catch (err) {
-        errorList.push({ email: user.email, error: err.message });
-        console.error(`Failed to send email to ${user.email}:`, err);
-      }
-    }
+//     // Send emails (immediately)
+//     let successCount = 0;
+//     let errorList = [];
+//     for (const user of recipients) {
+//       try {
+//         // Use your preferred email SMTP method here (Nodemailer, SendGrid, etc.)
+//         await mailTransporter.sendMail({
+//           from: process.env.MAIL_FROM,
+//           to: user.email,
+//           subject: `${feedbackType} for Batch: ${batchNo}`,
+//           html: `<p>Hello ${user.name},</p><p>PFA for the ${feedbackType} for Batch: ${batchNo}</p>`,
+//           attachments: [{ filename: filename, content: fileBuffer }]
+//         });
+//         successCount++;
+//       } catch (err) {
+//         errorList.push({ email: user.email, error: err.message });
+//         console.error(`Failed to send email to ${user.email}:`, err);
+//       }
+//     }
 
-    // Cleanup temp files
-    fs.unlinkSync(file.path);
-    fs.unlinkSync(tempFilePath);
+//     // Cleanup temp files
+//     fs.unlinkSync(file.path);
+//     fs.unlinkSync(tempFilePath);
 
-    // Send response
-    res.json({
-      success: true,
-      message: `Sent ${successCount} emails`,
-      errors: errorList,
-    });
-  } catch (err) {
-    console.error("Error in /api/internal/feedback-share:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
+//     // Send response
+//     res.json({
+//       success: true,
+//       message: `Sent ${successCount} emails`,
+//       errors: errorList,
+//     });
+//   } catch (err) {
+//     console.error("Error in /api/internal/feedback-share:", err);
+//     res.status(500).json({ error: err.message });
+//   }
+// });
 
 // API endpoint: POST /api/attendance/send
 app.post("/api/attendance/upload", upload.single("file"), async (req, res) => {
