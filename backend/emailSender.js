@@ -31,12 +31,15 @@ if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS || !process.env.FROM_EMAI
 // =========================================================
 const mailTransporter = nodemailer.createTransport({
   host: "smtp.gmail.com",
-  port: 587,
-  secure: false, // TLS
+  port: 465,
+  secure: true, // SSL
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
   },
+  connectionTimeout: 10000, // 10s
+  greetingTimeout: 10000,
+  socketTimeout: 10000,
 });
 
 // =========================================================
