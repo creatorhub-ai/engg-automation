@@ -108,14 +108,22 @@ app.use("/api/attendance", attendanceRoutes);
 const upload = multer({ dest: "uploads/" });
 
 // Nodemailer transporter - update with your email provider settings
-const transporter = nodemailer.createTransport({
+const mailTransporter = nodemailer.createTransport({
   host: "smtp.gmail.com",
   port: 587,
-  secure: false,
+  secure: false, // TLS
   auth: {
-    user: "coordinator@chipedge.com",
-    pass: "rjtjpkclsqgnafgs",
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
   },
+});
+
+mailTransporter.verify((error, success) => {
+  if (error) {
+    console.error("❌ SMTP ERROR:", error);
+  } else {
+    console.log("✅ SMTP READY – Emails can be sent");
+  }
 });
 
 const validateMarkEntryWindow = (assessmentDate, assessmentType) => {
@@ -166,14 +174,6 @@ const validateMarkEntryWindow = (assessmentDate, assessmentType) => {
     return { valid: false, error: 'Date validation failed' };
   }
 };
-
-const mailTransporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.LEAVE_EMAIL_USER || "coordinator@chipedge.com",
-    pass: process.env.LEAVE_EMAIL_PASS || "rjtjpkclsqgnafgs"
-  },
-});
 
 const SENDER_EMAIL = "customer.success@chipedge.com";
 const SENDER_PASS = "hvxdizbuidwsitpg"; // app password
@@ -365,21 +365,27 @@ function normalizeDate(value) {
 
 // Helper used by leave emails
 async function sendEmail({ to, subject, text, html }) {
-  const fromAddress = process.env.LEAVE_EMAIL_USER || "coordinator@chipedge.com";
+  const fromAddress = process.env.EMAIL_USER; // MUST match auth user
+
+  if (!fromAddress) {
+    throw new Error("EMAIL_USER is not defined in environment variables");
+  }
 
   const mailOptions = {
     from: `Leave Management <${fromAddress}>`,
     to,
     subject,
-    text,
-    html: html || text,
+    text: text || "",
+    html: html || text || "",
   };
 
   try {
     const info = await mailTransporter.sendMail(mailOptions);
-    console.log("Email sent:", info.response);
+    console.log("✅ Email sent successfully:", info.messageId);
+    return info;
   } catch (err) {
-    console.error("Error sending email:", err);
+    console.error("❌ Error sending email:", err);
+    throw err; // IMPORTANT: don’t swallow the error
   }
 }
 
@@ -3799,17 +3805,19 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
 app.use('/uploads', express.static('uploads'));
 
 // Test email endpoint
-app.post('/api/test-email', async (req, res) => {
+app.get("/api/test-email", async (req, res) => {
   try {
-    await transporter.sendMail({
-      from: `"Test" <${process.env.EMAIL_USER}>`,
-      to: process.env.EMAIL_USER,
-      subject: 'Test Email from Server',
-      text: 'If you received this, EMAIL_USER/EMAIL_PASS is working!'
+    await mailTransporter.sendMail({
+      from: process.env.EMAIL_USER,
+      to: "hariharan@chipedge.com",  //used for checking the mail function works
+      subject: "Render Email Test",
+      text: "If you received this, email sending works 🚀",
     });
-    res.json({ success: true, message: 'Test email sent successfully!' });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("MAIL SEND ERROR:", err);
+    res.status(500).json({ error: err.message });
   }
 });
 

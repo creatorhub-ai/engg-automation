@@ -29,28 +29,24 @@ if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS || !process.env.FROM_EMAI
 // Gmail SMTP transporter (App Password required, not normal password)
 // Forcing IPv4 by setting family: 4
 // =========================================================
-const transporter = nodemailer.createTransport({
+const mailTransporter = nodemailer.createTransport({
   host: "smtp.gmail.com",
   port: 587,
-  secure: false, // Use STARTTLS
+  secure: false, // TLS
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
   },
-  tls: {
-    rejectUnauthorized: true,
-  },
-  family: 4,
 });
 
 // =========================================================
 // Verify transporter once at startup
 // =========================================================
-transporter.verify(function (error, success) {
+mailTransporter.verify((error, success) => {
   if (error) {
-    console.error("❌ SMTP transporter verification failed:", error.message);
+    console.error("❌ SMTP ERROR:", error);
   } else {
-    console.log("✅ SMTP transporter is ready to send emails");
+    console.log("✅ SMTP READY – Emails can be sent");
   }
 });
 
@@ -108,7 +104,7 @@ export async function sendRawEmail({
   }
 
   try {
-    const info = await transporter.sendMail(mailOptions);
+    const info = await mailTransporter.sendMail(mailOptions);
     console.log(`✅ Email successfully sent to ${toField}: ${info.messageId}`);
     return { success: true, info };
   } catch (error) {
@@ -159,7 +155,7 @@ export async function sendGroupEmail({
   };
 
   try {
-    const info = await transporter.sendMail(mailOptions);
+    const info = await mailTransporter.sendMail(mailOptions);
     console.log(`✅ Group email successfully sent to ${recipients.length} recipients: ${info.messageId}`);
     return { success: true, info };
   } catch (error) {
