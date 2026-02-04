@@ -613,28 +613,6 @@ function ManagerLeaveDashboard({ user, token }) {
             <ArrowForwardIosIcon fontSize="small" />
           </IconButton>
         </Box>
-
-        <FormControl size="small" sx={{ minWidth: 200 }}>
-          <InputLabel>Trainer</InputLabel>
-          <Select
-            label="Trainer"
-            value={selectedTrainerId}
-            onChange={(e) => setSelectedTrainerId(e.target.value)}
-          >
-            <MenuItem value="all">
-              <em>All Trainers</em>
-            </MenuItem>
-            {trainers.map((t) => {
-              const key =
-                t.email?.toLowerCase() || `id:${r.trainer_id || t.id}`;
-              return (
-                <MenuItem key={key} value={key}>
-                  {t.name || t.trainer_name} ({t.email})
-                </MenuItem>
-              );
-              })}
-          </Select>
-        </FormControl>
       </Box>
 
       {/* Holiday file upload area */}
