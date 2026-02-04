@@ -14,9 +14,15 @@ import {
   Menu as MenuIcon,
   People as PeopleIcon,
   Logout as LogoutIcon,
+  // Additional icons for complete coverage
+  Dashboard as DashboardIcon,
+  Assessment as MarksIcon,
+  EventNote as ReportIcon,
+  WorkspacePremium as ClassroomIcon,
+  PersonAdd as TrainerAssignmentIcon,
 } from "@mui/icons-material";
 
-// Icon mapping for menu items
+// Updated Icon mapping for all menu items
 const ICON_MAP = {
   "/home": <HomeIcon />,
   "/dashboard": <TrainerIcon />,
@@ -31,12 +37,14 @@ const ICON_MAP = {
   "/course-progress": <ProgressIcon />,
   "/schedule": <ScheduleIcon />,
   "/matrix": <ScheduleIcon />,
-  "/attendance": <PeopleIcon />,
-  "/marks-entry": <AssessmentIcon />,
+  "/attendance": <AttendanceIcon />,
+  "marks/entry": <MarksIcon />,
   "/announcement": <AnnouncementIcon />,
-  "/classroom-planner": <ScheduleIcon />,
+  "/classroom-planner": <ClassroomIcon />,
   "/trainer/leaves": <PeopleIcon />,
   "/manager/leaves": <PeopleIcon />,
+  "/trainer-assignment": <TrainerAssignmentIcon />,
+  "/reports": <ReportIcon />,
 };
 
 // Define menus that match the routes in App.js
@@ -54,7 +62,7 @@ const MENUS_BY_ROLE = {
     { id: 10, name: "User Dashboard", path: "/users" },
     { id: 11, name: "Attendance", path: "/attendance" },
     { id: 12, name: "Mark Entry", path: "marks/entry"},
-    { id: 13, name: "Manager Leave Dashboard", path: "/manager/leaves " },
+    { id: 13, name: "Manager Leave Dashboard", path: "/manager/leaves" },
     { id: 14, name: "Announcement", path: "/announcement" },
   ],
   manager: [
@@ -63,14 +71,13 @@ const MENUS_BY_ROLE = {
     { id: 3, name: "Home", path: "/home" },
     { id: 4, name: "Trainer Dashboard", path: "/dashboard" },
     { id: 5, name: "Course Progress", path: "/course-progress" },
-    { id: 6, name: "Manager Leave Dashboard", path: "/manager/leaves " },
+    { id: 6, name: "Manager Leave Dashboard", path: "/manager/leaves" },
     { id: 7, name: "Mail Status Check", path: "/mail-status" },
     { id: 8, name: "Report", path: "/reports" },
     { id: 9, name: "User Dashboard", path: "/users" },
     { id: 10, name: "Attendance", path: "/attendance" },
     { id: 11, name: "Mark Entry", path: "marks/entry"},
     { id: 12, name: "Announcement", path: "/announcement" },
-    
   ],
   trainer: [
     { id: 1, name: "Trainer Dashboard", path: "/dashboard" },
