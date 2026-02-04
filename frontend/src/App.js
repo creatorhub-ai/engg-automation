@@ -27,6 +27,7 @@ import ManagerLeaveDashboard from "./pages/ManagerLeaveDashboard";
 import HolidayUpload from "./pages/HolidayUpload";
 import TrainerAssignmentDashboard from "./pages/TrainerAssignmentDashboard";
 import MarksDashboard from "./pages/MarksDashboard";
+import MarkEntryDashboard from "./pages/MarkEntryDashboard";
 
 const roleMenus = {
   admin: [
@@ -50,6 +51,7 @@ const roleMenus = {
     { text: "Manager Leave Dashboard", path: "/manager/leaves" }, 
     { text: "Manager Leave Dashboard", path: "/holiday-upload" },
     { text: "Trainer Assignment Dashboard", path: "/trainer-assignment" },
+    { text: "Marks Dashboard", path: "/marks/entry" },
   ],
   manager: [
     { text: "Home", path: "/home" },
@@ -68,7 +70,8 @@ const roleMenus = {
     { text: "Mark Entry", path: "/marks-entry" }, 
     { text: "Announcement", path: "/announcement" }, 
     { text: "Manager Leave Dashboard", path: "/manager/leaves" },
-    { text: "Upload Holidays", path: "/holiday-upload" }, 
+    { text: "Upload Holidays", path: "/holiday-upload" },
+    { text: "Marks Dashboard", path: "/marks/entry" }, 
   ],
   trainer: [
     { text: "Trainer Dashboard", path: "/dashboard" },
@@ -76,7 +79,8 @@ const roleMenus = {
     { text: "Soft Skill Announcement", path: "/soft-skill-announcement" },
     { text: "Attendance", path: "/attendance" }, // <-- added attendance menu
     { text: "Mark Entry", path: "/marks-entry" },
-    { text: "Trainer Leave Dashboard", path: "/trainer/leaves" }, 
+    { text: "Trainer Leave Dashboard", path: "/trainer/leaves" },
+    { text: "Marks Dashboard", path: "/marks/entry" }, 
   ],
   coordinator: [
     { text: "Home", path: "/home" },
@@ -84,6 +88,7 @@ const roleMenus = {
     { text: "Final Assessment Schedule", path: "/final-assessments" },
     { text: "Mail Status Check", path: "/mail-status" },
     { text: "Course Progress", path: "/course-progress" },
+    { text: "Marks Dashboard", path: "/marks/entry" },
   ],
 };
 
@@ -159,6 +164,8 @@ function getComponentForPath(path, login) {
       return <HolidayUpload user={login} />;
     case "/trainer-assignment":
       return <TrainerAssignmentDashboard user={login} />;
+    case "/marks/entry":
+      return <MarkEntryDashboard user={login} />;
     default:
       return <div>Page not found</div>;
   }
