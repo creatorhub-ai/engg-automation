@@ -54,8 +54,7 @@ export default function AttendanceReport({ user, token }) {
         // Fetch attendance data from learner_attendance table
         const attendanceRes = await axios.get(`${API_BASE}/api/learner-attendance`, {
           params: { 
-            batch_no: batchNo,
-            select: 'learner_email,batch_no,date,session,status,marked_by,marked_at'
+            batch_no: batchNo
           },
           headers,
           timeout: 10000
