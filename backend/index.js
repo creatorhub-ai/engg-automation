@@ -643,16 +643,42 @@ app.get('/api/modules-by-date', async (req, res) => {
 });
 
 
+// GET /api/learner-attendance - Fetch attendance by batch
+app.get('/api/learner-attendance', authMiddleware, async (req, res) => {
+  try {
+    const { batch_no, select } = req.query;
+    
+    let query = `
+      SELECT learner_email, batch_no, date, session, status, marked_by, marked_at
+      FROM learner_attendance 
+      WHERE batch_no = $1
+      ORDER BY date DESC, session DESC
+    `;
+    
+    const values = [batch_no];
+    const result = await pool.query(query, values);
+    
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Attendance query error:', error);
+    res.status(500).json({ error: 'Failed to fetch attendance data' });
+  }
+});
+
+
 // Learners by batch (NO authMiddleware)
 app.get('/api/learners', async (req, res) => {
   try {
     const { batch_no } = req.query;
     
+    console.log(`🔍 Fetching learners for batch: ${batch_no || 'ALL'}`);
+
     let query = supabase
       .from("learners_data")
       .select("id, name, email, phone, batch_no, status")
       .order("name", { ascending: true });
 
+    // Filter by batch_no if provided
     if (batch_no) {
       query = query.eq("batch_no", batch_no);
     }
@@ -660,26 +686,49 @@ app.get('/api/learners', async (req, res) => {
     const { data, error } = await query;
 
     if (error) {
-      console.error("Learners error:", error);
-      return res.status(200).json([]);
+      console.error("Supabase learners query error:", error);
+      return res.status(500).json({ 
+        error: 'Failed to fetch learners from database',
+        details: error.message 
+      });
     }
 
+    // Normalize and clean data
     const normalized = (data || []).map(row => ({
       id: row.id,
-      name: row.name || "",
+      name: row.name || row.email?.split('@')[0] || "Unknown Learner",
       email: row.email || "",
       phone: row.phone || "",
-      batchno: row.batch_no || "",
       batch_no: row.batch_no || "",
+      batchno: row.batch_no || "", // Keep both formats for compatibility
       status: row.status || "Enabled",
-    })).filter(row => row.name && row.email);
+    }))
+    // Filter out invalid records
+    .filter(row => row.email && row.name && row.email.includes('@'))
+    // Remove duplicates by email
+    .reduce((acc, row) => {
+      const existing = acc.find(l => l.email.toLowerCase() === row.email.toLowerCase());
+      if (!existing) {
+        acc.push(row);
+      }
+      return acc;
+    }, [])
+    // Sort by name
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+    console.log(`✅ Found ${normalized.length} learners for batch ${batch_no || 'ALL'}`);
 
     res.json(normalized);
+    
   } catch (err) {
-    console.error("Learners CRASH:", err);
-    res.status(200).json([]);
+    console.error("🚨 Learners API CRASH:", err);
+    res.status(500).json({ 
+      error: 'Internal server error',
+      message: 'Unable to fetch learners data'
+    });
   }
 });
+
 
 // API to schedule batch with classroom suggestion and license check
 app.post('/api/scheduleBatch', async (req, res) => {
