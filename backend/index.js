@@ -178,9 +178,6 @@ const validateMarkEntryWindow = (assessmentDate, assessmentType) => {
   }
 };
 
-const SENDER_EMAIL = "customer.success@chipedge.com";
-const SENDER_PASS = "hvxdizbuidwsitpg"; // app password
-
 const MOCK_INTERVIEW_REMINDER_SEND_TIME = "17:05"; // HH:mm
 const TRAINER_SOFT_SKILLS_REMINDER_TIME = "17:08"; // HH:mm
 const LEARNER_SOFT_SKILLS_REMINDER_TIME = "17:10"; // HH:mm
