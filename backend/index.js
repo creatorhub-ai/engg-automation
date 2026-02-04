@@ -644,26 +644,61 @@ app.get('/api/modules-by-date', async (req, res) => {
 
 
 // GET /api/learner-attendance - Fetch attendance by batch
-app.get('/api/learner-attendance', authMiddleware, async (req, res) => {
+app.get('/api/learner-attendance', async (req, res) => {
   try {
     const { batch_no, select } = req.query;
     
-    let query = `
-      SELECT learner_email, batch_no, date, session, status, marked_by, marked_at
-      FROM learner_attendance 
-      WHERE batch_no = $1
-      ORDER BY date DESC, session DESC
-    `;
+    if (!batch_no) {
+      return res.status(400).json({ 
+        error: 'batch_no parameter is required' 
+      });
+    }
+
+    console.log(`🔍 Fetching attendance for batch: ${batch_no}`);
+
+    // Query learner_attendance table from Supabase
+    let query = supabase
+      .from("learner_attendance")
+      .select("learner_email, batch_no, date, session, status, marked_by, marked_at")
+      .eq("batch_no", batch_no)
+      .order("date", { ascending: false })
+      .order("session", { ascending: false });
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error("🚨 Supabase attendance query error:", error);
+      return res.status(500).json({ 
+        error: 'Failed to fetch attendance data',
+        details: error.message 
+      });
+    }
+
+    // Normalize data to match frontend expectations
+    const normalizedAttendance = (data || []).map(row => ({
+      learner_email: row.learner_email,
+      batch_no: row.batch_no,
+      date: row.date,
+      session: parseInt(row.session),
+      status: row.status,
+      marked_by: row.marked_by || null,
+      marked_at: row.marked_at || null,
+      topic_name: `Session ${row.session} (${row.date})` // Computed for display
+    }));
+
+    console.log(`✅ Found ${normalizedAttendance.length} attendance records for ${batch_no}`);
+
+    res.json(normalizedAttendance);
     
-    const values = [batch_no];
-    const result = await pool.query(query, values);
-    
-    res.json(result.rows);
-  } catch (error) {
-    console.error('Attendance query error:', error);
-    res.status(500).json({ error: 'Failed to fetch attendance data' });
+  } catch (err) {
+    console.error("🚨 Learner Attendance API CRASH:", err);
+    res.status(500).json({ 
+      error: 'Internal server error',
+      message: 'Unable to fetch attendance data' 
+    });
   }
 });
+
 
 
 // Learners by batch (NO authMiddleware)
