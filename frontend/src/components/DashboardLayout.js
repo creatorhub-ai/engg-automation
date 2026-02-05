@@ -25,6 +25,7 @@ import {
 // Updated Icon mapping for all menu items
 const ICON_MAP = {
   "/home": <HomeIcon />,
+  "/trainer-dashboard": <TrainerIcon />,
   "/dashboard": <TrainerIcon />,
   "/mock-interview-schedule": <ScheduleIcon />,
   "/internal": <CommunicationIcon />,
@@ -64,6 +65,7 @@ const MENUS_BY_ROLE = {
     { id: 12, name: "Mark Entry", path: "marks/entry"},
     { id: 13, name: "Manager Leave Dashboard", path: "/manager/leaves" },
     { id: 14, name: "Announcement", path: "/announcement" },
+    { id: 15, name: "Trainer Dashboards", path: "/trainer-dashboard" },
   ],
   manager: [
     { id: 1, name: "Classroom Planner", path: "/classroom-planner" },

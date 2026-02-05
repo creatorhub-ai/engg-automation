@@ -28,10 +28,12 @@ import HolidayUpload from "./pages/HolidayUpload";
 import TrainerAssignmentDashboard from "./pages/TrainerAssignmentDashboard";
 import MarksDashboard from "./pages/MarksDashboard";
 import MarkEntryDashboard from "./pages/MarkEntryDashboard";
+import TrainerParentDashboard from "./pages/TrainerParentDashboard";
 
 const roleMenus = {
   admin: [
     { text: "Home", path: "/home" },
+    { text: "Trainer Dashboards", path: "/trainer-dashboard" },
     { text: "Trainer Dashboard", path: "/dashboard" },
     { text: "Mock Interview Schedule", path: "/mock-interview-schedule" },
     { text: "Internal Communication", path: "/internal" },
@@ -55,6 +57,7 @@ const roleMenus = {
   ],
   manager: [
     { text: "Home", path: "/home" },
+    { text: "Trainer Dashboards", path: "/trainer-dashboard" },
     { text: "Trainer Dashboard", path: "/dashboard" },
     { text: "Mock Interview Schedule", path: "/mock-interview-schedule" },
     { text: "Internal Communication", path: "/internal" },
@@ -74,6 +77,7 @@ const roleMenus = {
     { text: "Marks Dashboard", path: "/marks/entry" }, 
   ],
   trainer: [
+    { text: "Trainer Dashboards", path: "/trainer-dashboard" },
     { text: "Trainer Dashboard", path: "/dashboard" },
     { text: "Mock Interview Schedule", path: "/mock-interview-schedule" },
     { text: "Soft Skill Announcement", path: "/soft-skill-announcement" },
@@ -120,6 +124,8 @@ function getComponentForPath(path, login) {
   switch (path) {
     case "/home":
       return <HomeDashboard user={login} />;
+    case "/trainer-dashboard":
+      return <TrainerParentDashboard user={login} />;
     case "/dashboard":
       return <TrainerDashboard user={login} />;
     case "/mock-interview-schedule":
