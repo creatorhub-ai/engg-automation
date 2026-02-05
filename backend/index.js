@@ -646,36 +646,50 @@ app.get('/api/modules-by-date', async (req, res) => {
 // GET /api/learner-attendance - Fetch attendance by batch
 app.get('/api/learner-attendance', async (req, res) => {
   try {
-    const { batch_no, select } = req.query;
+    const { batch_no } = req.query;
     
     if (!batch_no) {
-      return res.status(400).json({ 
-        error: 'batch_no parameter is required' 
-      });
+      return res.status(400).json({ error: 'batch_no parameter is required' });
     }
 
-    console.log(`🔍 Fetching attendance for batch: ${batch_no}`);
+    console.log(`🔍 Fetching attendance + planner data for batch: ${batch_no}`);
 
-    // Query learner_attendance table from Supabase
-    let query = supabase
+    // 1. Get attendance data
+    const { data: attendanceData, error: attendanceError } = await supabase
       .from("learner_attendance")
       .select("learner_email, batch_no, date, session, status, marked_by, marked_at")
       .eq("batch_no", batch_no)
       .order("date", { ascending: false })
       .order("session", { ascending: false });
 
-    const { data, error } = await query;
-
-    if (error) {
-      console.error("🚨 Supabase attendance query error:", error);
-      return res.status(500).json({ 
-        error: 'Failed to fetch attendance data',
-        details: error.message 
-      });
+    if (attendanceError) {
+      console.error("Attendance query error:", attendanceError);
+      return res.status(500).json({ error: attendanceError.message });
     }
 
-    // Normalize data to match frontend expectations
-    const normalizedAttendance = (data || []).map(row => ({
+    // 2. Get course planner data to calculate TOTAL sessions
+    const { data: plannerData, error: plannerError } = await supabase
+      .from("course_planner_data")
+      .select("date, session") // We only need dates to count total sessions
+      .eq("batch_no", batch_no)
+      .order("date", { ascending: true });
+
+    if (plannerError) {
+      console.error("Planner query error:", plannerError);
+    }
+
+    // Calculate total sessions from course planner (distinct date-session pairs)
+    const totalSessionsMap = new Map();
+    (plannerData || []).forEach(row => {
+      const sessionKey = `${row.date}-${row.session || 1}`;
+      totalSessionsMap.set(sessionKey, true);
+    });
+    const totalSessionsCount = totalSessionsMap.size;
+
+    console.log(`📊 Batch ${batch_no}: ${attendanceData?.length || 0} attendance records, ${totalSessionsCount} total sessions`);
+
+    // Normalize attendance data
+    const normalizedAttendance = (attendanceData || []).map(row => ({
       learner_email: row.learner_email,
       batch_no: row.batch_no,
       date: row.date,
@@ -683,19 +697,19 @@ app.get('/api/learner-attendance', async (req, res) => {
       status: row.status,
       marked_by: row.marked_by || null,
       marked_at: row.marked_at || null,
-      topic_name: `Session ${row.session} (${row.date})` // Computed for display
+      topic_name: `Session ${row.session} (${row.date})`
     }));
 
-    console.log(`✅ Found ${normalizedAttendance.length} attendance records for ${batch_no}`);
-
-    res.json(normalizedAttendance);
+    // Include total sessions in response
+    res.json({
+      attendance: normalizedAttendance,
+      total_sessions: totalSessionsCount,
+      planner_dates: plannerData || []
+    });
     
   } catch (err) {
     console.error("🚨 Learner Attendance API CRASH:", err);
-    res.status(500).json({ 
-      error: 'Internal server error',
-      message: 'Unable to fetch attendance data' 
-    });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

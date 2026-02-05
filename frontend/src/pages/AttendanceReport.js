@@ -2,9 +2,9 @@ import React, { useEffect, useState, useMemo } from "react";
 import axios from "axios";
 import {
   Box, Paper, Typography, FormControl, InputLabel, Select, MenuItem,
-  Button, Table, TableHead, TableBody, TableRow, TableCell, TableContainer,
+  Table, TableHead, TableBody, TableRow, TableCell, TableContainer,
   CircularProgress, Alert, Grid, Card, CardContent, Chip,
-  Dialog, DialogTitle, DialogContent, ToggleButtonGroup, ToggleButton
+  Dialog, DialogTitle, DialogContent
 } from "@mui/material";
 
 const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
@@ -14,11 +14,11 @@ export default function AttendanceReport({ user, token }) {
   const [batchNo, setBatchNo] = useState("");
   const [attendanceData, setAttendanceData] = useState([]);
   const [learnersData, setLearnersData] = useState([]);
+  const [totalSessions, setTotalSessions] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [selectedLearner, setSelectedLearner] = useState(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
-  const [detailFilter, setDetailFilter] = useState('all');
 
   const headers = { Authorization: `Bearer ${token}` };
 
@@ -40,7 +40,7 @@ export default function AttendanceReport({ user, token }) {
     fetchBatches();
   }, [token]);
 
-  // Load attendance data from learner_attendance table
+  // Load attendance + planner data (UPDATED)
   useEffect(() => {
     if (!batchNo) return;
 
@@ -49,71 +49,48 @@ export default function AttendanceReport({ user, token }) {
       setError("");
       
       try {
-        console.log(`🔄 Loading attendance for batch: ${batchNo}`);
-        
-        // Fetch attendance data from learner_attendance table
+        console.log(`🔄 Loading data for batch: ${batchNo}`);
+
+        // Fetch attendance + total sessions from course_planner_data
         const attendanceRes = await axios.get(`${API_BASE}/api/learner-attendance`, {
-          params: { 
-            batch_no: batchNo
-          },
+          params: { batch_no: batchNo },
           headers,
           timeout: 10000
         });
 
-        const rawAttendance = Array.isArray(attendanceRes.data) ? attendanceRes.data : [];
-        console.log(`📊 Raw attendance records: ${rawAttendance.length}`);
-        console.log("Sample data:", rawAttendance.slice(0, 3));
+        const { attendance, total_sessions } = attendanceRes.data;
+        
+        setAttendanceData(attendance || []);
+        setTotalSessions(total_sessions || 0);
+        console.log(`✅ Loaded ${attendance?.length || 0} records, ${total_sessions} total sessions`);
 
-        // Store raw attendance data with proper field mapping
-        setAttendanceData(rawAttendance.map(row => ({
-          learner_email: row.learner_email,
-          batch_no: row.batch_no,
-          date: row.date,
-          session: parseInt(row.session),
-          status: row.status,
-          marked_by: row.marked_by,
-          marked_at: row.marked_at,
-          // Add computed topic_name if needed (you can join with session table later)
-          topic_name: `Session ${row.session}`
-        })));
-
-        // Fetch distinct learners for this batch
+        // Fetch learners
         const learnersRes = await axios.get(`${API_BASE}/api/learners`, {
           params: { batch_no: batchNo },
           headers,
           timeout: 5000
         });
 
-        const learners = Array.isArray(learnersRes.data) ? learnersRes.data : [];
-        setLearnersData(learners.map(l => ({
-          email: l.learner_email || l.email,
-          name: l.learner_name || l.name || l.learner_email?.split('@')[0] || 'Unknown'
-        })));
-
-        console.log(`✅ Loaded ${rawAttendance.length} attendance records, ${learners.length} learners`);
+        setLearnersData(learnersRes.data || []);
 
       } catch (err) {
-        console.error('🔥 Attendance API Error:', err.response?.status, err.message);
+        console.error('🔥 API Error:', err.response?.status, err.message);
         
-        // Try alternative endpoint if main one fails
+        // Fallback to old logic
         try {
-          console.log('🔄 Trying alternative endpoint...');
-          const altRes = await axios.get(`${API_BASE}/api/session-attendance-report`, {
+          console.log('🔄 Trying fallback...');
+          const fallbackRes = await axios.get(`${API_BASE}/api/session-attendance-report`, {
             params: { batch_no: batchNo },
             headers,
             timeout: 5000
           });
-          
-          const altData = Array.isArray(altRes.data) ? altRes.data : [];
-          setAttendanceData(altData);
-          setLearnersData([{name: 'Fallback Learner', email: 'fallback@example.com'}]);
-          console.log(`✅ Fallback data loaded: ${altData.length} records`);
-          
-        } catch (altErr) {
-          console.error('🔥 Both APIs failed:', altErr.message);
-          setError(`Failed to load attendance data: ${err.response?.data?.message || err.message}`);
+          setAttendanceData(fallbackRes.data || []);
+          setTotalSessions(0);
+          setLearnersData([{name: 'Fallback', email: 'fallback@example.com'}]);
+        } catch (fallbackErr) {
+          setError(`Failed to load data: ${err.response?.data?.error || err.message}`);
           setAttendanceData([]);
-          setLearnersData([]);
+          setTotalSessions(0);
         }
       } finally {
         setLoading(false);
@@ -123,35 +100,34 @@ export default function AttendanceReport({ user, token }) {
     fetchData();
   }, [batchNo, token]);
 
-  // Calculate attendance summary
+  // UPDATED: Calculate % based on TOTAL batch sessions from course_planner_data
   const summary = useMemo(() => {
     const stats = {};
 
-    // Process each attendance record
+    // Process attendance records
     attendanceData.forEach(row => {
       const email = row.learner_email;
       if (!stats[email]) {
         const learner = learnersData.find(l => l.email === email);
         stats[email] = {
-          name: learner?.name || email.split('@')[0],
+          name: learner?.name || email.split('@')[0] || 'Unknown',
           email,
-          totalSessions: 0,
+          totalSessions: totalSessions, // FIXED: Use TOTAL batch sessions
           present: 0,
           absent: 0,
-          sessions: new Set()
+          attendedSessions: new Set()
         };
       }
 
       const stat = stats[email];
       const sessionKey = `${row.date}-${row.session}`;
       
-      if (!stat.sessions.has(sessionKey)) {
-        stat.sessions.add(sessionKey);
-        stat.totalSessions++;
-      }
-
+      // Count only PRESENT sessions
       if (row.status?.toUpperCase() === 'P' || row.status === 'Present') {
-        stat.present++;
+        if (!stat.attendedSessions.has(sessionKey)) {
+          stat.attendedSessions.add(sessionKey);
+          stat.present++;
+        }
       } else {
         stat.absent++;
       }
@@ -159,8 +135,9 @@ export default function AttendanceReport({ user, token }) {
 
     const learners = Object.values(stats);
     const totalLearners = learners.length;
+    
     const avgAttendance = totalLearners > 0 
-      ? learners.reduce((sum, l) => sum + (l.totalSessions > 0 ? l.present / l.totalSessions * 100 : 0), 0) / totalLearners 
+      ? learners.reduce((sum, l) => sum + (l.totalSessions > 0 ? (l.present / l.totalSessions) * 100 : 0), 0) / totalLearners 
       : 0;
 
     return {
@@ -169,9 +146,10 @@ export default function AttendanceReport({ user, token }) {
         (a.totalSessions > 0 ? a.present / a.totalSessions : 0)
       ),
       totalLearners,
+      totalSessions,
       avgAttendance: Math.round(avgAttendance * 10) / 10
     };
-  }, [attendanceData, learnersData]);
+  }, [attendanceData, learnersData, totalSessions]);
 
   const handleLearnerClick = (learner) => {
     setSelectedLearner(learner);
@@ -182,7 +160,7 @@ export default function AttendanceReport({ user, token }) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 400 }}>
         <CircularProgress size={60} />
-        <Typography sx={{ ml: 2 }}>Loading attendance data...</Typography>
+        <Typography sx={{ ml: 2 }}>Loading attendance...</Typography>
       </Box>
     );
   }
@@ -202,6 +180,15 @@ export default function AttendanceReport({ user, token }) {
       <Paper sx={{ p: 4 }}>
         <Typography variant="h4" gutterBottom align="center">
           📊 Attendance Report - {batchNo || 'Select Batch'}
+          {totalSessions > 0 && (
+            <Typography 
+              variant="h6" 
+              component="span" 
+              sx={{ ml: 2, color: 'text.secondary' }}
+            >
+              ({totalSessions} Total Sessions)
+            </Typography>
+          )}
         </Typography>
 
         <Box sx={{ display: 'flex', gap: 2, mb: 4 }}>
@@ -229,29 +216,30 @@ export default function AttendanceReport({ user, token }) {
         {summary.learners.length === 0 ? (
           <Alert severity="info" sx={{ mb: 3 }}>
             <div>
-              No attendance data found for <strong>{batchNo}</strong>
+              No attendance data for <strong>{batchNo}</strong>
               <br />
               <small>
-                Raw records: <strong>{attendanceData.length}</strong> | 
+                Records: <strong>{attendanceData.length}</strong> | 
+                Total Sessions: <strong>{totalSessions}</strong> | 
                 Learners: <strong>{learnersData.length}</strong>
               </small>
             </div>
           </Alert>
         ) : (
           <>
-            {/* SUMMARY CARDS */}
+            {/* SUMMARY CARDS - UPDATED */}
             <Grid container spacing={3} sx={{ mb: 4 }}>
-              <Grid item xs={12} md={4}>
+              <Grid item xs={12} md={3}>
                 <Card>
                   <CardContent>
                     <Typography variant="h6" gutterBottom>📈 Average Attendance</Typography>
-                    <Typography variant="h2" color="primary">
+                    <Typography variant="h3" color="primary">
                       {summary.avgAttendance}%
                     </Typography>
                   </CardContent>
                 </Card>
               </Grid>
-              <Grid item xs={12} md={4}>
+              <Grid item xs={12} md={3}>
                 <Card>
                   <CardContent>
                     <Typography variant="h6" gutterBottom>👥 Total Learners</Typography>
@@ -259,49 +247,64 @@ export default function AttendanceReport({ user, token }) {
                   </CardContent>
                 </Card>
               </Grid>
-              <Grid item xs={12} md={4}>
+              <Grid item xs={12} md={3}>
                 <Card>
                   <CardContent>
                     <Typography variant="h6" gutterBottom>📅 Total Sessions</Typography>
+                    <Typography variant="h4" color="info.main">
+                      {summary.totalSessions}
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={12} md={3}>
+                <Card>
+                  <CardContent>
+                    <Typography variant="h6" gutterBottom>✅ Avg Present</Typography>
                     <Typography variant="h4">
-                      {Math.max(...attendanceData.map(r => r.session || 0), 0)}
+                      {Math.round(
+                        summary.learners.reduce((sum, l) => sum + l.present, 0) / summary.totalLearners
+                      )}
                     </Typography>
                   </CardContent>
                 </Card>
               </Grid>
             </Grid>
 
-            {/* ATTENDANCE TABLE */}
+            {/* ATTENDANCE TABLE - UPDATED */}
             <Paper sx={{ overflow: 'hidden' }}>
               <TableContainer sx={{ maxHeight: 600 }}>
                 <Table stickyHeader>
                   <TableHead>
                     <TableRow>
                       <TableCell sx={{ bgcolor: 'primary.main', color: 'white', fontWeight: 'bold' }}>#</TableCell>
-                      <TableCell sx={{ bgcolor: 'primary.main', color: 'white', fontWeight: 'bold' }}>Name</TableCell>
+                      <TableCell sx={{ bgcolor: 'primary.main', color: 'white', fontWeight: 'bold' }}>Learner</TableCell>
                       <TableCell sx={{ bgcolor: 'primary.main', color: 'white', fontWeight: 'bold' }}>Email</TableCell>
-                      <TableCell sx={{ bgcolor: 'primary.main', color: 'white', fontWeight: 'bold', textAlign: 'right' }}>Sessions</TableCell>
-                      <TableCell sx={{ bgcolor: 'primary.main', color: 'white', fontWeight: 'bold', textAlign: 'right' }}>Present</TableCell>
+                      <TableCell sx={{ bgcolor: 'primary.main', color: 'white', fontWeight: 'bold', textAlign: 'right' }}>
+                        Present / {totalSessions}
+                      </TableCell>
                       <TableCell sx={{ bgcolor: 'primary.main', color: 'white', fontWeight: 'bold', textAlign: 'right' }}>%</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {summary.learners.map((learner, index) => {
-                      const percentage = learner.totalSessions > 0 ? (learner.present / learner.totalSessions * 100) : 0;
+                      const percentage = totalSessions > 0 ? (learner.present / totalSessions * 100) : 0;
                       return (
                         <TableRow 
                           key={learner.email} 
                           sx={{ 
                             cursor: 'pointer',
-                            bgcolor: percentage >= 80 ? '#e8f5e8' : percentage >= 60 ? '#fff3e0' : '#ffebee'
+                            bgcolor: percentage >= 80 ? '#e8f5e8' : 
+                                   percentage >= 60 ? '#fff3e0' : '#ffebee'
                           }}
                           onClick={() => handleLearnerClick(learner)}
                         >
                           <TableCell>{index + 1}</TableCell>
                           <TableCell sx={{ fontWeight: 500 }}>{learner.name}</TableCell>
                           <TableCell sx={{ maxWidth: 250, wordBreak: 'break-all' }}>{learner.email}</TableCell>
-                          <TableCell align="right"><strong>{learner.totalSessions}</strong></TableCell>
-                          <TableCell align="right" sx={{ color: '#4caf50', fontWeight: 'bold' }}>{learner.present}</TableCell>
+                          <TableCell align="right">
+                            <strong style={{ color: '#4caf50' }}>{learner.present}</strong> / {totalSessions}
+                          </TableCell>
                           <TableCell align="right">
                             <Chip 
                               label={`${percentage.toFixed(1)}%`}
@@ -318,17 +321,29 @@ export default function AttendanceReport({ user, token }) {
             </Paper>
           </>
         )}
-      </Paper>
 
-      {/* Detail Dialog - Basic implementation */}
-      <Dialog open={detailDialogOpen} onClose={() => setDetailDialogOpen(false)} maxWidth="md" fullWidth>
-        <DialogTitle>Attendance Details - {selectedLearner?.name}</DialogTitle>
-        <DialogContent>
-          {selectedLearner && (
-            <Typography>Coming soon: Detailed attendance breakdown for {selectedLearner.email}</Typography>
-          )}
-        </DialogContent>
-      </Dialog>
+        {/* Detail Dialog */}
+        <Dialog open={detailDialogOpen} onClose={() => setDetailDialogOpen(false)} maxWidth="md" fullWidth>
+          <DialogTitle>Attendance Details - {selectedLearner?.name}</DialogTitle>
+          <DialogContent>
+            {selectedLearner ? (
+              <div>
+                <Typography>
+                  <strong>Email:</strong> {selectedLearner.email}
+                </Typography>
+                <Typography>
+                  <strong>Total Sessions:</strong> {selectedLearner.totalSessions}
+                </Typography>
+                <Typography>
+                  <strong>Present:</strong> {selectedLearner.present} ({(selectedLearner.present / selectedLearner.totalSessions * 100).toFixed(1)}%)
+                </Typography>
+              </div>
+            ) : (
+              <Typography>Select a learner to see details</Typography>
+            )}
+          </DialogContent>
+        </Dialog>
+      </Paper>
     </Box>
   );
 }
