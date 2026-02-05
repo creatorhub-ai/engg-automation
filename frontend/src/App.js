@@ -34,7 +34,6 @@ const roleMenus = {
   admin: [
     { text: "Home", path: "/home" },
     { text: "Trainer Dashboards", path: "/trainer-dashboard" },
-    { text: "Trainer Dashboard", path: "/dashboard" },
     { text: "Mock Interview Schedule", path: "/mock-interview-schedule" },
     { text: "Internal Communication", path: "/internal" },
     { text: "Final Assessment Schedule", path: "/final-assessments" },
@@ -58,7 +57,6 @@ const roleMenus = {
   manager: [
     { text: "Home", path: "/home" },
     { text: "Trainer Dashboards", path: "/trainer-dashboard" },
-    { text: "Trainer Dashboard", path: "/dashboard" },
     { text: "Mock Interview Schedule", path: "/mock-interview-schedule" },
     { text: "Internal Communication", path: "/internal" },
     { text: "Final Assessment Schedule", path: "/final-assessments" },
@@ -78,7 +76,6 @@ const roleMenus = {
   ],
   trainer: [
     { text: "Trainer Dashboards", path: "/trainer-dashboard" },
-    { text: "Trainer Dashboard", path: "/dashboard" },
     { text: "Mock Interview Schedule", path: "/mock-interview-schedule" },
     { text: "Soft Skill Announcement", path: "/soft-skill-announcement" },
     { text: "Attendance", path: "/attendance" }, // <-- added attendance menu
@@ -126,8 +123,6 @@ function getComponentForPath(path, login) {
       return <HomeDashboard user={login} />;
     case "/trainer-dashboard":
       return <TrainerParentDashboard user={login} />;
-    case "/dashboard":
-      return <TrainerDashboard user={login} />;
     case "/mock-interview-schedule":
       return <MockInterviewSchedule user={login} />;
     case "/internal":

@@ -8,7 +8,6 @@ import {
 } from "@mui/material";
 import TrainerDashboard from "./TrainerDashboard";
 import MarksEntryDashboard from "./MarkEntryDashboard";
-import MarksDashboard from "./MarksDashboard";
 import AttendanceDashboard from "./AttendanceDashboard";
 
 export default function TrainerParentDashboard({ user, token }) {
@@ -64,10 +63,6 @@ export default function TrainerParentDashboard({ user, token }) {
             value="marks-entry"
           />
           <Tab
-            label="📊 Marks Overview"
-            value="marks-dashboard"
-          />
-          <Tab
             label="📋 Attendance"
             value="attendance"
           />
@@ -80,9 +75,6 @@ export default function TrainerParentDashboard({ user, token }) {
           )}
           {activeTab === "marks-entry" && (
             <MarksEntryDashboard user={user} token={token} />
-          )}
-          {activeTab === "marks-dashboard" && (
-            <MarksDashboard user={user} token={token} />
           )}
           {activeTab === "attendance" && (
             <AttendanceDashboard user={user} token={token} />
