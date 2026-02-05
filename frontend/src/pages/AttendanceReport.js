@@ -40,7 +40,7 @@ export default function AttendanceReport({ user, token }) {
     fetchBatches();
   }, [token]);
 
-  // Load attendance + planner data (UPDATED)
+  // FIXED: Load attendance + planner data with PROPER total sessions calculation
   useEffect(() => {
     if (!batchNo) return;
 
@@ -51,47 +51,42 @@ export default function AttendanceReport({ user, token }) {
       try {
         console.log(`🔄 Loading data for batch: ${batchNo}`);
 
-        // Fetch attendance + total sessions from course_planner_data
+        // 1. Fetch attendance + total sessions
         const attendanceRes = await axios.get(`${API_BASE}/api/learner-attendance`, {
           params: { batch_no: batchNo },
           headers,
-          timeout: 10000
+          timeout: 15000
         });
 
+        console.log("📊 Full API Response:", attendanceRes.data);
         const { attendance, total_sessions } = attendanceRes.data;
         
         setAttendanceData(attendance || []);
         setTotalSessions(total_sessions || 0);
-        console.log(`✅ Loaded ${attendance?.length || 0} records, ${total_sessions} total sessions`);
+        console.log(`✅ Attendance: ${attendance?.length || 0} | Total Sessions: ${total_sessions}`);
 
-        // Fetch learners
+        // 2. Fetch learners with CORRECT name mapping
         const learnersRes = await axios.get(`${API_BASE}/api/learners`, {
           params: { batch_no: batchNo },
           headers,
           timeout: 5000
         });
 
-        setLearnersData(learnersRes.data || []);
+        // FIXED: Proper learner data mapping
+        const mappedLearners = (learnersRes.data || []).map(l => ({
+          name: l.name || l.learner_name || l.email?.split('@')[0] || 'Unknown',
+          email: l.email || l.learner_email
+        })).filter(l => l.email);
+
+        setLearnersData(mappedLearners);
+        console.log(`✅ Learners loaded: ${mappedLearners.length}`);
 
       } catch (err) {
         console.error('🔥 API Error:', err.response?.status, err.message);
-        
-        // Fallback to old logic
-        try {
-          console.log('🔄 Trying fallback...');
-          const fallbackRes = await axios.get(`${API_BASE}/api/session-attendance-report`, {
-            params: { batch_no: batchNo },
-            headers,
-            timeout: 5000
-          });
-          setAttendanceData(fallbackRes.data || []);
-          setTotalSessions(0);
-          setLearnersData([{name: 'Fallback', email: 'fallback@example.com'}]);
-        } catch (fallbackErr) {
-          setError(`Failed to load data: ${err.response?.data?.error || err.message}`);
-          setAttendanceData([]);
-          setTotalSessions(0);
-        }
+        setError(`Failed to load data: ${err.response?.data?.error || err.message}`);
+        setAttendanceData([]);
+        setTotalSessions(0);
+        setLearnersData([]);
       } finally {
         setLoading(false);
       }
@@ -100,7 +95,7 @@ export default function AttendanceReport({ user, token }) {
     fetchData();
   }, [batchNo, token]);
 
-  // UPDATED: Calculate % based on TOTAL batch sessions from course_planner_data
+  // FIXED: Proper percentage calculation using totalSessions
   const summary = useMemo(() => {
     const stats = {};
 
@@ -108,13 +103,15 @@ export default function AttendanceReport({ user, token }) {
     attendanceData.forEach(row => {
       const email = row.learner_email;
       if (!stats[email]) {
-        const learner = learnersData.find(l => l.email === email);
+        // FIXED: Case-insensitive email matching + proper name lookup
+        const learner = learnersData.find(l => 
+          l.email.toLowerCase() === email.toLowerCase()
+        );
         stats[email] = {
           name: learner?.name || email.split('@')[0] || 'Unknown',
           email,
-          totalSessions: totalSessions, // FIXED: Use TOTAL batch sessions
+          totalSessions: totalSessions, // CRITICAL: Use TOTAL batch sessions
           present: 0,
-          absent: 0,
           attendedSessions: new Set()
         };
       }
@@ -122,14 +119,12 @@ export default function AttendanceReport({ user, token }) {
       const stat = stats[email];
       const sessionKey = `${row.date}-${row.session}`;
       
-      // Count only PRESENT sessions
+      // Count PRESENT sessions only
       if (row.status?.toUpperCase() === 'P' || row.status === 'Present') {
         if (!stat.attendedSessions.has(sessionKey)) {
           stat.attendedSessions.add(sessionKey);
           stat.present++;
         }
-      } else {
-        stat.absent++;
       }
     });
 
@@ -160,7 +155,7 @@ export default function AttendanceReport({ user, token }) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 400 }}>
         <CircularProgress size={60} />
-        <Typography sx={{ ml: 2 }}>Loading attendance...</Typography>
+        <Typography sx={{ ml: 2 }}>Loading attendance data...</Typography>
       </Box>
     );
   }
@@ -170,7 +165,7 @@ export default function AttendanceReport({ user, token }) {
       <Alert severity="error" sx={{ mb: 3 }}>
         <strong>{error}</strong>
         <br />
-        <small>Batch: {batchNo} | Records: {attendanceData.length}</small>
+        <small>Batch: {batchNo} | Records: {attendanceData.length} | Sessions: {totalSessions}</small>
       </Alert>
     );
   }
@@ -213,7 +208,7 @@ export default function AttendanceReport({ user, token }) {
           </Box>
         </Box>
 
-        {summary.learners.length === 0 ? (
+        {summary.totalLearners === 0 ? (
           <Alert severity="info" sx={{ mb: 3 }}>
             <div>
               No attendance data for <strong>{batchNo}</strong>
@@ -221,13 +216,13 @@ export default function AttendanceReport({ user, token }) {
               <small>
                 Records: <strong>{attendanceData.length}</strong> | 
                 Total Sessions: <strong>{totalSessions}</strong> | 
-                Learners: <strong>{learnersData.length}</strong>
+                Learners found: <strong>{learnersData.length}</strong>
               </small>
             </div>
           </Alert>
         ) : (
           <>
-            {/* SUMMARY CARDS - UPDATED */}
+            {/* SUMMARY CARDS */}
             <Grid container spacing={3} sx={{ mb: 4 }}>
               <Grid item xs={12} md={3}>
                 <Card>
@@ -264,14 +259,14 @@ export default function AttendanceReport({ user, token }) {
                     <Typography variant="h4">
                       {Math.round(
                         summary.learners.reduce((sum, l) => sum + l.present, 0) / summary.totalLearners
-                      )}
+                      ) || 0}
                     </Typography>
                   </CardContent>
                 </Card>
               </Grid>
             </Grid>
 
-            {/* ATTENDANCE TABLE - UPDATED */}
+            {/* ATTENDANCE TABLE */}
             <Paper sx={{ overflow: 'hidden' }}>
               <TableContainer sx={{ maxHeight: 600 }}>
                 <Table stickyHeader>
@@ -328,14 +323,12 @@ export default function AttendanceReport({ user, token }) {
           <DialogContent>
             {selectedLearner ? (
               <div>
-                <Typography>
-                  <strong>Email:</strong> {selectedLearner.email}
-                </Typography>
-                <Typography>
-                  <strong>Total Sessions:</strong> {selectedLearner.totalSessions}
-                </Typography>
-                <Typography>
-                  <strong>Present:</strong> {selectedLearner.present} ({(selectedLearner.present / selectedLearner.totalSessions * 100).toFixed(1)}%)
+                <Typography><strong>Name:</strong> {selectedLearner.name}</Typography>
+                <Typography><strong>Email:</strong> {selectedLearner.email}</Typography>
+                <Typography><strong>Total Sessions:</strong> {selectedLearner.totalSessions}</Typography>
+                <Typography><strong>Present:</strong> {selectedLearner.present}</Typography>
+                <Typography variant="h6">
+                  <strong>{(selectedLearner.present / selectedLearner.totalSessions * 100).toFixed(1)}%</strong>
                 </Typography>
               </div>
             ) : (

@@ -649,70 +649,50 @@ app.get('/api/learner-attendance', async (req, res) => {
     const { batch_no } = req.query;
     
     if (!batch_no) {
-      return res.status(400).json({ error: 'batch_no parameter is required' });
+      return res.status(400).json({ error: 'batch_no required' });
     }
 
-    console.log(`🔍 Fetching attendance + planner data for batch: ${batch_no}`);
+    console.log(`🔍 Processing batch: ${batch_no}`);
 
-    // 1. Get attendance data
+    // 1. Get TOTAL SESSIONS from course_planner_data (DISTINCT date entries)
+    const { data: plannerData, error: plannerError } = await supabase
+      .from("course_planner_data")
+      .select("id, date, batch_no")
+      .eq("batch_no", batch_no)
+      .order("date");
+
+    let totalSessions = 0;
+    if (!plannerError && plannerData) {
+      // Count DISTINCT dates = total sessions
+      const uniqueDates = [...new Set(plannerData.map(row => row.date))];
+      totalSessions = uniqueDates.length;
+      console.log(`📅 ${plannerData.length} planner rows → ${totalSessions} unique sessions`);
+    }
+
+    // 2. Get ATTENDANCE data
     const { data: attendanceData, error: attendanceError } = await supabase
       .from("learner_attendance")
-      .select("learner_email, batch_no, date, session, status, marked_by, marked_at")
-      .eq("batch_no", batch_no)
-      .order("date", { ascending: false })
-      .order("session", { ascending: false });
+      .select("learner_email, batch_no, date, session, status")
+      .eq("batch_no", batch_no);
 
     if (attendanceError) {
-      console.error("Attendance query error:", attendanceError);
+      console.error("Attendance error:", attendanceError);
       return res.status(500).json({ error: attendanceError.message });
     }
 
-    // 2. Get course planner data to calculate TOTAL sessions
-    const { data: plannerData, error: plannerError } = await supabase
-      .from("course_planner_data")
-      .select("date, session") // We only need dates to count total sessions
-      .eq("batch_no", batch_no)
-      .order("date", { ascending: true });
+    console.log(`📊 ${attendanceData?.length || 0} attendance records`);
 
-    if (plannerError) {
-      console.error("Planner query error:", plannerError);
-    }
-
-    // Calculate total sessions from course planner (distinct date-session pairs)
-    const totalSessionsMap = new Map();
-    (plannerData || []).forEach(row => {
-      const sessionKey = `${row.date}-${row.session || 1}`;
-      totalSessionsMap.set(sessionKey, true);
-    });
-    const totalSessionsCount = totalSessionsMap.size;
-
-    console.log(`📊 Batch ${batch_no}: ${attendanceData?.length || 0} attendance records, ${totalSessionsCount} total sessions`);
-
-    // Normalize attendance data
-    const normalizedAttendance = (attendanceData || []).map(row => ({
-      learner_email: row.learner_email,
-      batch_no: row.batch_no,
-      date: row.date,
-      session: parseInt(row.session),
-      status: row.status,
-      marked_by: row.marked_by || null,
-      marked_at: row.marked_at || null,
-      topic_name: `Session ${row.session} (${row.date})`
-    }));
-
-    // Include total sessions in response
     res.json({
-      attendance: normalizedAttendance,
-      total_sessions: totalSessionsCount,
-      planner_dates: plannerData || []
+      attendance: attendanceData || [],
+      total_sessions: totalSessions,
+      planner_count: plannerData?.length || 0
     });
-    
+
   } catch (err) {
-    console.error("🚨 Learner Attendance API CRASH:", err);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error("🚨 API Error:", err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
-
 
 
 // Learners by batch (NO authMiddleware)
@@ -720,14 +700,12 @@ app.get('/api/learners', async (req, res) => {
   try {
     const { batch_no } = req.query;
     
-    console.log(`🔍 Fetching learners for batch: ${batch_no || 'ALL'}`);
-
     let query = supabase
       .from("learners_data")
-      .select("id, name, email, phone, batch_no, status")
-      .order("name", { ascending: true });
+      .select("id, name, email, batch_no")
+      .eq("name", supabase.rls?.shared ? supabase.auth.getUser() : true)
+      .order("name");
 
-    // Filter by batch_no if provided
     if (batch_no) {
       query = query.eq("batch_no", batch_no);
     }
@@ -735,46 +713,26 @@ app.get('/api/learners', async (req, res) => {
     const { data, error } = await query;
 
     if (error) {
-      console.error("Supabase learners query error:", error);
-      return res.status(500).json({ 
-        error: 'Failed to fetch learners from database',
-        details: error.message 
-      });
+      console.error("Learners error:", error);
+      return res.status(500).json([]);
     }
 
-    // Normalize and clean data
-    const normalized = (data || []).map(row => ({
-      id: row.id,
-      name: row.name || row.email?.split('@')[0] || "Unknown Learner",
-      email: row.email || "",
-      phone: row.phone || "",
-      batch_no: row.batch_no || "",
-      batchno: row.batch_no || "", // Keep both formats for compatibility
-      status: row.status || "Enabled",
-    }))
-    // Filter out invalid records
-    .filter(row => row.email && row.name && row.email.includes('@'))
-    // Remove duplicates by email
-    .reduce((acc, row) => {
-      const existing = acc.find(l => l.email.toLowerCase() === row.email.toLowerCase());
-      if (!existing) {
-        acc.push(row);
-      }
-      return acc;
-    }, [])
-    // Sort by name
-    .sort((a, b) => a.name.localeCompare(b.name));
+    const normalized = (data || [])
+      .map(row => ({
+        id: row.id,
+        name: row.name || row.email?.split('@')[0] || "Unknown",  // PRIORITY: learners_data.name
+        email: row.email,
+        batch_no: row.batch_no
+      }))
+      .filter(row => row.email && row.name)
+      .sort((a, b) => a.name.localeCompare(b.name));
 
-    console.log(`✅ Found ${normalized.length} learners for batch ${batch_no || 'ALL'}`);
-
+    console.log(`👥 ${normalized.length} learners for ${batch_no || 'ALL'}`);
     res.json(normalized);
-    
+
   } catch (err) {
-    console.error("🚨 Learners API CRASH:", err);
-    res.status(500).json({ 
-      error: 'Internal server error',
-      message: 'Unable to fetch learners data'
-    });
+    console.error("Learners CRASH:", err);
+    res.status(500).json([]);
   }
 });
 
