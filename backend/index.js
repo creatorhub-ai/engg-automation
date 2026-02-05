@@ -3417,76 +3417,91 @@ app.get('/apiperiods/:batchNo/:assessmentType', async (req, res) => {
   }
 });
 
-app.post("/api/trainer-leaves", async (req, res) => {
-  const {
-    trainer_email,
-    trainer_name,
-    domain,
-    start_date,
-    end_date,
-    reason,
-    batch_nos,
-  } = req.body;
-
-  if (!trainer_email || !start_date || !end_date) {
-    return res.status(400).json({ error: "Missing required fields" });
-  }
-
+// 🔥 trainer_unavailability table endpoint - PERFECT MATCH
+app.post('/api/trainer-leaves', async (req, res) => {
   try {
-    // 1️⃣ Fetch DISTINCT module names from course_planner_data
-    const moduleResult = await pool.query(
-      `
-      SELECT DISTINCT module_name
-      FROM course_planner_data
-      WHERE trainer_email = $1
-        AND date BETWEEN $2 AND $3
-        AND module_name IS NOT NULL
-      `,
-      [trainer_email, start_date, end_date]
-    );
+    console.log('🔍 POST /api/trainer-leaves:', req.body);
+    
+    const {
+      trainer_email,
+      trainer_name,
+      domain,
+      start_date,
+      end_date,
+      reason,
+      batch_nos
+    } = req.body;
 
-    // 2️⃣ Convert to comma-separated string
-    const moduleNames = moduleResult.rows
-      .map((r) => r.module_name)
-      .filter(Boolean);
+    // Validation
+    if (!trainer_email || !start_date || !end_date) {
+      return res.status(400).json({ 
+        error: 'Missing required fields: trainer_email, start_date, end_date' 
+      });
+    }
 
-    const moduleNameStr = moduleNames.join(", ");
+    const payload = {
+      trainer_email: trainer_email.trim().toLowerCase(),
+      trainer_name: trainer_name?.trim() || null,
+      domain: domain?.trim() || null,
+      start_date: start_date,
+      end_date: end_date,
+      reason: reason?.trim() || null,
+      batch_nos: batch_nos || null,
+      status: 'pending',
+      submitted_at: new Date().toISOString()
+    };
 
-    // 3️⃣ Insert leave record
-    await pool.query(
-      `
-      INSERT INTO trainer_unavailability
-      (
-        trainer_email,
-        trainer_name,
-        domain,
-        start_date,
-        end_date,
-        reason,
-        batch_nos,
-        module_name
-      )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-      `,
-      [
-        trainer_email,
-        trainer_name,
-        domain,
-        start_date,
-        end_date,
-        reason,
-        batch_nos,
-        moduleNameStr,
-      ]
-    );
+    console.log('📤 Inserting:', payload);
 
-    res.json({
-      success: true,
-      module_name: moduleNameStr,
+    const { data, error } = await supabase
+      .from('trainer_unavailability')
+      .insert([payload])
+      .select()
+      .single();
+
+    if (error) {
+      console.error('❌ Supabase error:', error);
+      return res.status(400).json({ error: error.message });
+    }
+
+    console.log('✅ Leave inserted:', data.id);
+    res.json({ 
+      success: true, 
+      data: data,
+      message: 'Leave request submitted successfully' 
     });
+
   } catch (err) {
-    console.error("Error applying leave:", err);
-    res.status(500).json({ error: "Failed to apply leave" });
+    console.error('🚨 CRASH:', err);
+    res.status(500).json({ error: 'Server error: ' + err.message });
+  }
+});
+
+// 🔥 Get trainer leaves (for dashboard)
+app.get('/api/trainer-leaves', async (req, res) => {
+  try {
+    const { trainer_email } = req.query;
+    
+    let query = supabase
+      .from('trainer_unavailability')
+      .select('*')
+      .order('start_date', { ascending: false });
+
+    if (trainer_email) {
+      query = query.eq('trainer_email', trainer_email);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error('❌ trainer-leaves error:', error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.json(data || []);
+  } catch (err) {
+    console.error('🚨 trainer-leaves CRASH:', err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 

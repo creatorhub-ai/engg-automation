@@ -109,11 +109,13 @@ function TrainerUnavailabilityForm({ user, token }) {
     setSelectedBatchNos(typeof value === "string" ? value.split(",") : value);
   };
 
+  // 🔥 FIXED: Complete submitUnavailability function
   const submitUnavailability = async () => {
     setMsg("");
     setErr("");
     setSubmitting(true);
 
+    // Validation
     if (!start || !end) {
       setErr("Please select From and To dates");
       setSubmitting(false);
@@ -139,41 +141,59 @@ function TrainerUnavailabilityForm({ user, token }) {
     }
 
     try {
-      const batch_nos_str = selectedBatchNos.join(",");
-      
-      await axios.post(`${API_BASE}/api/trainer-leaves`, {
-      trainer_email: user.email,
-      trainer_name: user.name,
-      domain,
-      start_date: start,
-      end_date: end,
-      reason,
-      batch_nos: batch_nos_str,
-    },
+      console.log("📤 Submitting leave:", {
+        trainer_email: user.email,
+        trainer_name: user.name,
+        domain,
+        start_date: start,
+        end_date: end,
+        batch_nos: selectedBatchNos.join(","),
+        reason
+      });
+
+      // 🔥 FIXED: Correct axios.post + response handling
+      const response = await axios.post(
+        `${API_BASE}/api/trainer-leaves`, // ✅ Correct endpoint
+        {
+          trainer_email: user.email,
+          trainer_name: user.name,
+          domain,
+          start_date: start,
+          end_date: end,
+          reason,
+          batch_nos: selectedBatchNos.join(","),
+        },
         { 
           headers: authHeaders,
-          timeout: 10000,
+          timeout: 15000,
         }
       );
 
-      if (response.data.success) {
+      console.log("✅ Response:", response.data);
+
+      if (response.data?.success) {
         setMsg("✅ Leave request submitted successfully!");
+        // Reset form
         setStart("");
         setEnd("");
         setReason("");
         setSelectedBatchNos([]);
         setDomain("");
-        fetchBatches();
+        fetchBatches(); // Refresh batches
+      } else {
+        setErr(`Server response: ${response.data?.message || 'Unknown error'}`);
       }
     } catch (e) {
-      console.error("Submit failed:", e);
+      console.error("🚨 Submit failed:", e.response?.data || e);
       
       if (e.response?.status === 404) {
-        setErr("🚫 API not found. Backend needs /api/trainer-leaves endpoint.");
+        setErr("🚫 API endpoint not found. Backend needs /api/trainer-leaves");
       } else if (e.response?.status === 400) {
-        setErr(`Validation error: ${e.response.data.error}`);
+        setErr(`Validation error: ${e.response.data?.error || 'Check your input'}`);
       } else if (e.code === 'ECONNABORTED') {
         setErr("⏰ Request timeout. Please try again.");
+      } else if (e.response?.status === 500) {
+        setErr("🚨 Server error (500). Check RLS policies on trainer_unavailability table");
       } else {
         setErr(`Failed: ${e.response?.data?.error || e.message}`);
       }
