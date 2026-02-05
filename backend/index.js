@@ -736,6 +736,29 @@ app.get('/api/learners', async (req, res) => {
   }
 });
 
+// 🔥 CRITICAL: learners_data table endpoints
+app.get('/api/learners-data', async (req, res) => {
+  try {
+    console.log('🔍 /api/learners-data called');
+    
+    const { data, error } = await supabase
+      .from('learners_data')
+      .select('*')
+      .order('name');
+
+    if (error) {
+      console.error('❌ learners_data error:', error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    console.log(`✅ learners_data: ${data?.length || 0} rows`);
+    res.json(data || []);
+  } catch (err) {
+    console.error('🚨 learners_data CRASH:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 
 // API to schedule batch with classroom suggestion and license check
 app.post('/api/scheduleBatch', async (req, res) => {
@@ -7395,43 +7418,32 @@ app.get('/api/tutors/modules/:email/:batch_no', async (req, res) => {
 
 // ==================== LEARNERS APIs ====================
 // GET all learners from learners_data table
-app.get("/api/learners", authMiddleware, async (req, res) => {
+app.get('/api/learners', async (req, res) => {
   try {
-    const { batch_no } = req.query;
+    console.log('🔍 /api/learners → learners_data');
     
+    const { batch_no } = req.query;
     let query = supabase
-      .from("learners_data")
-      .select("id, name, email, phone, batch_no, status")
-      .order("name", { ascending: true });
+      .from('learners_data')
+      .select('id, name, email, phone, batch_no, status')
+      .order('name');
 
-    // 🔥 NEW: Filter by batch_no if provided (for AttendanceReport)
     if (batch_no) {
-      query = query.eq("batch_no", batch_no);
+      query = query.eq('batch_no', batch_no);
     }
 
     const { data, error } = await query;
 
     if (error) {
-      console.error("GET /api/learners error:", error);
-      return res.status(200).json([]); // ✅ Return empty array, no 500
+      console.error('❌ learners error:', error);
+      return res.status(500).json([]);
     }
 
-    const normalized = (data || []).map((row) => ({
-      id: row.id,
-      name: row.name || "",
-      email: row.email || "",
-      phone: row.phone || "",
-      batchno: row.batch_no || "",  // ✅ Map batch_no → batchno (backward compatibility)
-      batch_no: row.batch_no || "",
-      status: row.status || "Enabled",
-    })).filter(row => row.name && row.email); // Filter invalid records
-
-    console.log(`GET /api/learners: found ${normalized.length} learners${batch_no ? ` for batch ${batch_no}` : ''}`);
-    return res.status(200).json(normalized);
-    
+    console.log(`✅ learners: ${data?.length || 0} rows${batch_no ? ` for ${batch_no}` : ''}`);
+    res.json(data || []);
   } catch (err) {
-    console.error("GET /api/learners CRASH:", err);
-    return res.status(200).json([]); // ✅ Always return array
+    console.error('🚨 learners CRASH:', err);
+    res.status(500).json([]);
   }
 });
 
@@ -7472,59 +7484,30 @@ app.get("/api/getlearners", async (req, res) => {
 });
 
 // POST add learner
-app.post("/api/learners/add", async (req, res) => {
+app.post('/api/learners/add', async (req, res) => {
   try {
-    const { name, email, phone, batchno, batch_no } = req.body;
+    const { name, email, phone, batchno } = req.body;
     
-    const normalized = {
-      name: (name || "").trim(),
-      email: (email || "").trim().toLowerCase(),
-      phone: (phone || "").trim(),
-      batch_no: (batchno || batch_no || "").trim(),  // ✅ Use batch_no
-    };
-
-    if (!normalized.name || !normalized.email || !normalized.batch_no) {
-      return res.status(400).json({ 
-        success: false, 
-        error: "name, email, batch_no required" 
-      });
+    if (!name || !email || !batchno) {
+      return res.status(400).json({ error: 'Missing required fields' });
     }
 
     const { data, error } = await supabase
-      .from("learners_data")  // ✅ Correct table name
-      .insert({
-        name: normalized.name,
-        email: normalized.email,
-        phone: normalized.phone || null,
-        batch_no: normalized.batch_no,  // ✅ Insert to batch_no
-        status: "Enabled",
-      })
+      .from('learners_data')
+      .insert([{ name: name.trim(), email: email.trim().toLowerCase(), phone: phone || null, batch_no: batchno.trim(), status: 'Enabled' }])
       .select()
       .single();
 
     if (error) {
-      console.error("POST /api/learners/add:", error);
-      return res.status(500).json({ 
-        success: false, 
-        error: error.message 
-      });
+      console.error('❌ Add learner error:', error);
+      return res.status(400).json({ error: error.message });
     }
 
-    const added = {
-      id: data.id,
-      name: normalized.name,
-      email: normalized.email,
-      phone: normalized.phone,
-      batchno: normalized.batch_no,
-      batch_no: normalized.batch_no,
-      status: "Enabled",
-    };
-
-    console.log("Added learner:", added);
-    return res.json({ success: true, data: added });
+    console.log('✅ Learner added:', data.email);
+    res.json({ success: true, data });
   } catch (err) {
-    console.error("POST /api/learners/add CRASH:", err);
-    return res.status(500).json({ success: false, error: "Server error" });
+    console.error('🚨 Add learner CRASH:', err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
