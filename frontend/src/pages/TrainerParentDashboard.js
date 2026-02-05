@@ -7,7 +7,7 @@ import {
   Tab,
 } from "@mui/material";
 import TrainerDashboard from "./TrainerDashboard";
-import MarksEntryDashboard from "./MarksEntryDashboard";
+import MarksEntryDashboard from "./MarkEntryDashboard";
 import MarksDashboard from "./MarksDashboard";
 import AttendanceDashboard from "./AttendanceDashboard";
 
