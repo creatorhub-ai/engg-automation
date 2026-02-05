@@ -41,8 +41,8 @@ function normalizeLearner(raw) {
     ...raw,
     batchno: raw.batch_no || raw.batchno || "",
     batch_no: raw.batch_no || raw.batchno || "",
-    email: (raw.email || "").trim().toLowerCase(),
-    name: (raw.name || "").trim(),
+    email: (raw.email || raw.learner_email || "").trim().toLowerCase(),
+    name: (raw.name || raw.learner_name || "").trim(),
     phone: raw.phone || "",
     status: raw.status || "Enabled",
   };
@@ -97,27 +97,34 @@ export default function LearnersDashboard({ user, token }) {
     );
   }, [allLearners, statusFilter]);
 
-  useEffect(() => {
-    loadLearnersData();
-  }, []);
-
+  // FIXED: Enhanced loadLearnersData with better error handling + logging
   async function loadLearnersData() {
     setLoading(true);
-    setMessage("Loading learners...");
+    setMessage("Loading learners from learners_data table...");
 
     try {
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const res = await axios.get(`${API_BASE}/api/learners`, { headers });
+      
+      console.log("🔄 Fetching learners from /api/learners...");
+      const res = await axios.get(`${API_BASE}/api/learners`, { 
+        headers,
+        timeout: 10000 
+      });
+
+      console.log("📊 Raw API response:", res.data.slice(0, 3)); // Log first 3 records
 
       const raw = Array.isArray(res.data) ? res.data : [];
       const normalized = raw.map(normalizeLearner);
 
-      const unique = normalized.filter(
-        (l, i, arr) =>
-          arr.findIndex(
-            (l2) => l2.email === l.email && l2.batch_no === l.batch_no
-          ) === i
+      // FIXED: Better duplicate removal (email + batch_no)
+      const unique = normalized.filter((l, i, arr) =>
+        arr.findIndex(l2 => 
+          l2.email.toLowerCase() === l.email.toLowerCase() && 
+          l2.batch_no === l.batch_no
+        ) === i
       );
+
+      console.log(`✅ Normalized ${raw.length} → ${unique.length} unique learners`);
 
       setAllLearners(unique);
 
@@ -129,14 +136,27 @@ export default function LearnersDashboard({ user, token }) {
       setMessage(
         `✅ Loaded ${unique.length} learners from ${batches.length} batches`
       );
+      
+      // Reset search results
+      setBatchLearners(unique);
+      
     } catch (err) {
-      console.error("Load error:", err);
+      console.error("❌ Load error:", err.response?.status, err.message);
+      console.error("Error details:", err.response?.data);
+      
+      setMessage(
+        `⚠️ Failed to load learners (${err.response?.status || err.message})`
+      );
       setAllLearners([]);
-      setMessage("⚠️ No learners loaded");
+      setDistinctBatches([]);
     } finally {
       setLoading(false);
     }
   }
+
+  useEffect(() => {
+    loadLearnersData();
+  }, []);
 
   function handleSearch() {
     const value = searchText.trim();
@@ -173,11 +193,12 @@ export default function LearnersDashboard({ user, token }) {
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
       const payload = {
         name: name.trim(),
-        email: email.trim(),
+        email: email.trim().toLowerCase(),
         phone: phone.trim(),
         batchno: batch_no.trim(),
       };
 
+      console.log("➕ Adding learner:", payload);
       const res = await axios.post(`${API_BASE}/api/learners/add`, payload, {
         headers,
       });
@@ -190,21 +211,20 @@ export default function LearnersDashboard({ user, token }) {
           setDistinctBatches((prev) => [...prev, added.batch_no].sort());
         }
 
-        setMessage("✅ Learner added");
+        setMessage("✅ Learner added successfully");
         setOpenAddDialog(false);
         setNewLearner({ name: "", email: "", phone: "", batch_no: "" });
       } else {
         setMessage(`❌ ${res.data?.error || "Failed to add learner"}`);
       }
     } catch (err) {
-      console.error(err);
-      setMessage("❌ Add failed");
+      console.error("Add error:", err.response?.data);
+      setMessage(`❌ ${err.response?.data?.error || "Add failed"}`);
     } finally {
       setLoading(false);
     }
   }
 
-  // ✅ Minimal fix: define handleStatusChange used in onClick
   function handleStatusChange(learner) {
     const normalized = normalizeLearner(learner);
     setSelectedLearner(normalized);
@@ -241,14 +261,14 @@ export default function LearnersDashboard({ user, token }) {
         setBatchLearners((prev) =>
           prev.map((l) => (match(l) ? { ...l, status: newStatus } : l))
         );
-        setMessage(`✅ Status changed to "${newStatus}"`);
+        setMessage(`✅ Status updated to "${newStatus}"`);
         setStatusDialogOpen(false);
       } else {
         setMessage(`❌ ${res.data?.error || "Status update failed"}`);
       }
     } catch (err) {
-      console.error(err);
-      setMessage("❌ Status update failed");
+      console.error("Status error:", err.response?.data);
+      setMessage(`❌ ${err.response?.data?.error || "Status update failed"}`);
     } finally {
       setStatusUpdating(false);
     }
@@ -256,7 +276,7 @@ export default function LearnersDashboard({ user, token }) {
 
   function handleReset() {
     setSearchText("");
-    setBatchLearners([]);
+    setBatchLearners(filteredLearners);
     setMessage("");
   }
 
@@ -267,25 +287,35 @@ export default function LearnersDashboard({ user, token }) {
       ? filteredLearners.map((l) => l.name)
       : distinctBatches;
 
+  const currentResults = batchLearners.length > 0 ? batchLearners : filteredLearners;
+
   return (
-    <Box sx={{ maxWidth: 1200, mx: "auto", p: 3 }}>
+    <Box sx={{ maxWidth: 1400, mx: "auto", p: 3 }}>
       <Paper elevation={3} sx={{ p: 4 }}>
-        <Box display="flex" justifyContent="space-between" mb={3}>
+        <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
           <Box display="flex" alignItems="center" gap={2}>
-            <MenuBookIcon sx={{ fontSize: 40 }} />
-            <Typography variant="h4" fontWeight="bold">
-              Learners Dashboard ({allLearners.length} total)
-            </Typography>
+            <MenuBookIcon sx={{ fontSize: 40, color: 'primary.main' }} />
+            <Box>
+              <Typography variant="h4" fontWeight="bold">
+                Learners Dashboard
+              </Typography>
+              <Typography variant="body1" color="text.secondary">
+                Total: {allLearners.length} | Batches: {distinctBatches.length}
+              </Typography>
+            </Box>
           </Box>
-          <Button
-            variant="contained"
-            startIcon={<PersonAddIcon />}
-            onClick={() => setOpenAddDialog(true)}
-          >
-            Add Learner
-          </Button>
+          {isManagerOrAdmin && (
+            <Button
+              variant="contained"
+              startIcon={<PersonAddIcon />}
+              onClick={() => setOpenAddDialog(true)}
+            >
+              Add Learner
+            </Button>
+          )}
         </Box>
 
+        {/* Search & Filter Row */}
         <Grid container spacing={2} mb={3}>
           <Grid item xs={12} md={2}>
             <TextField
@@ -297,7 +327,7 @@ export default function LearnersDashboard({ user, token }) {
             >
               <MenuItem value="email">Email</MenuItem>
               <MenuItem value="name">Name</MenuItem>
-              <MenuItem value="batch">Batch No</MenuItem>
+              <MenuItem value="batch">Batch</MenuItem>
             </TextField>
           </Grid>
 
@@ -309,7 +339,7 @@ export default function LearnersDashboard({ user, token }) {
                 label="Status"
                 onChange={(e) => setStatusFilter(e.target.value)}
               >
-                <MenuItem value="all">All</MenuItem>
+                <MenuItem value="all">All Status</MenuItem>
                 <MenuItem value="Enabled">Enabled</MenuItem>
                 <MenuItem value="Disabled">Disabled</MenuItem>
                 <MenuItem value="Dropout">Dropout</MenuItem>
@@ -327,11 +357,8 @@ export default function LearnersDashboard({ user, token }) {
                 <TextField
                   {...params}
                   label={
-                    searchType === "batch"
-                      ? "Batch No"
-                      : searchType === "email"
-                      ? "Email"
-                      : "Name"
+                    searchType === "batch" ? "Batch No" :
+                    searchType === "email" ? "Email" : "Name"
                   }
                   onKeyPress={(e) => e.key === "Enter" && handleSearch()}
                   fullWidth
@@ -340,59 +367,74 @@ export default function LearnersDashboard({ user, token }) {
             />
           </Grid>
 
-          <Grid item xs={12} md={2}>
+          <Grid item xs={12} md={1}>
             <Button
               fullWidth
               variant="contained"
               onClick={handleSearch}
-              disabled={loading}
+              startIcon={<SearchIcon />}
               sx={{ height: 56 }}
             >
-              {loading ? <CircularProgress size={20} /> : <SearchIcon />}
+              Search
+            </Button>
+          </Grid>
+
+          <Grid item xs={12} md={1}>
+            <Button
+              fullWidth
+              variant="outlined"
+              onClick={handleReset}
+              startIcon={<RestartAltIcon />}
+              sx={{ height: 56 }}
+            >
+              Reset
             </Button>
           </Grid>
         </Grid>
 
-        <Alert severity="info" sx={{ mb: 2 }}>
-          Total: {allLearners.length} | Filtered: {filteredLearners.length} |
-          Showing: {batchLearners.length}
-        </Alert>
-
+        {/* Status Message */}
         {message && (
-          <Alert severity="info" sx={{ mb: 2 }}>
+          <Alert severity={message.includes("✅") ? "success" : message.includes("❌") ? "error" : "info"} sx={{ mb: 2 }}>
             {message}
           </Alert>
         )}
 
-        {batchLearners.length ? (
-          <TableContainer component={Paper}>
-            <Table>
+        {/* Stats Row */}
+        <Alert severity="info" sx={{ mb: 2 }}>
+          Total: <strong>{allLearners.length}</strong> | 
+          Filtered: <strong>{filteredLearners.length}</strong> | 
+          Showing: <strong>{currentResults.length}</strong>
+        </Alert>
+
+        {/* Learners Table */}
+        {currentResults.length ? (
+          <TableContainer component={Paper} sx={{ maxHeight: 600 }}>
+            <Table stickyHeader>
               <TableHead>
                 <TableRow>
                   <TableCell>#</TableCell>
                   <TableCell>Name</TableCell>
                   <TableCell>Email</TableCell>
                   <TableCell>Phone</TableCell>
-                  <TableCell>Batch No</TableCell>
+                  <TableCell>Batch</TableCell>
                   <TableCell>Status</TableCell>
-                  {isManagerOrAdmin && <TableCell>Action</TableCell>}
+                  {isManagerOrAdmin && <TableCell>Actions</TableCell>}
                 </TableRow>
               </TableHead>
               <TableBody>
-                {batchLearners.map((raw, i) => {
+                {currentResults.map((raw, i) => {
                   const l = normalizeLearner(raw);
-                  const isDropout =
-                    (l.status || "").toLowerCase() === "dropout";
+                  const isDropout = (l.status || "").toLowerCase() === "dropout";
                   return (
                     <TableRow key={`${l.email}-${l.batch_no}`} hover>
                       <TableCell>{i + 1}</TableCell>
-                      <TableCell>{l.name}</TableCell>
-                      <TableCell>{l.email}</TableCell>
-                      <TableCell>{l.phone || "-"}</TableCell>
-                      <TableCell>{l.batch_no}</TableCell>
+                      <TableCell sx={{ fontWeight: 500 }}>{l.name}</TableCell>
+                      <TableCell sx={{ wordBreak: 'break-all' }}>{l.email}</TableCell>
+                      <TableCell>{l.phone || '-'}</TableCell>
+                      <TableCell><strong>{l.batch_no}</strong></TableCell>
                       <TableCell>
                         <Chip
-                          label={l.status}
+                          label={l.status || 'Enabled'}
                           color={getStatusColor(l.status)}
                           size="small"
                         />
@@ -400,15 +442,13 @@ export default function LearnersDashboard({ user, token }) {
                       {isManagerOrAdmin && (
                         <TableCell>
                           <Tooltip title="Change Status">
-                            <span>
-                              <IconButton
-                                size="small"
-                                onClick={() => handleStatusChange(l)}
-                                disabled={statusUpdating || isDropout}
-                              >
-                                <EditIcon />
-                              </IconButton>
-                            </span>
+                            <IconButton
+                              size="small"
+                              onClick={() => handleStatusChange(l)}
+                              disabled={statusUpdating || isDropout}
+                            >
+                              <EditIcon fontSize="small" />
+                            </IconButton>
                           </Tooltip>
                         </TableCell>
                       )}
@@ -419,91 +459,69 @@ export default function LearnersDashboard({ user, token }) {
             </Table>
           </TableContainer>
         ) : (
-          <Paper sx={{ p: 4, textAlign: "center" }}>
-            <Typography>No learners to display</Typography>
-            <Button onClick={loadLearnersData} variant="contained" sx={{ mt: 2 }}>
-              {loading ? "Loading..." : "Reload"}
+          <Paper sx={{ p: 6, textAlign: "center" }}>
+            <Typography variant="h6" color="text.secondary" gutterBottom>
+              {loading ? "Loading..." : "No learners found"}
+            </Typography>
+            <Button 
+              onClick={loadLearnersData} 
+              variant="contained" 
+              disabled={loading}
+              startIcon={loading ? <CircularProgress size={20} /> : <MenuBookIcon />}
+            >
+              {loading ? "Loading..." : "Reload Data"}
             </Button>
           </Paper>
         )}
 
-        {/* Add Dialog */}
-        <Dialog
-          open={openAddDialog}
-          onClose={() => setOpenAddDialog(false)}
-          maxWidth="sm"
-          fullWidth
-        >
-          <DialogTitle>Add Learner</DialogTitle>
+        {/* Add Learner Dialog */}
+        <Dialog open={openAddDialog} onClose={() => setOpenAddDialog(false)} maxWidth="sm" fullWidth>
+          <DialogTitle>Add New Learner</DialogTitle>
           <DialogContent sx={{ pt: 2 }}>
             <TextField
-              fullWidth
-              label="Name *"
+              fullWidth label="Full Name *" 
               value={newLearner.name}
-              onChange={(e) =>
-                setNewLearner({ ...newLearner, name: e.target.value })
-              }
+              onChange={(e) => setNewLearner({ ...newLearner, name: e.target.value })}
               sx={{ mb: 2 }}
             />
             <TextField
-              fullWidth
-              label="Email *"
-              type="email"
+              fullWidth label="Email *" type="email"
               value={newLearner.email}
-              onChange={(e) =>
-                setNewLearner({ ...newLearner, email: e.target.value })
-              }
+              onChange={(e) => setNewLearner({ ...newLearner, email: e.target.value })}
               sx={{ mb: 2 }}
             />
             <Autocomplete
-              freeSolo
-              options={distinctBatches}
+              freeSolo options={distinctBatches}
               value={newLearner.batch_no}
-              onChange={(e, v) =>
-                setNewLearner({ ...newLearner, batch_no: v || "" })
-              }
+              onChange={(e, v) => setNewLearner({ ...newLearner, batch_no: v || "" })}
               renderInput={(params) => (
                 <TextField {...params} label="Batch No *" sx={{ mb: 2 }} />
               )}
             />
             <TextField
-              fullWidth
-              label="Phone"
+              fullWidth label="Phone (Optional)"
               value={newLearner.phone}
-              onChange={(e) =>
-                setNewLearner({ ...newLearner, phone: e.target.value })
-              }
+              onChange={(e) => setNewLearner({ ...newLearner, phone: e.target.value })}
             />
           </DialogContent>
           <DialogActions>
             <Button onClick={() => setOpenAddDialog(false)}>Cancel</Button>
-            <Button
-              onClick={handleAddLearner}
-              disabled={loading}
-              variant="contained"
-            >
-              Add
+            <Button onClick={handleAddLearner} disabled={loading} variant="contained">
+              {loading ? "Adding..." : "Add Learner"}
             </Button>
           </DialogActions>
         </Dialog>
 
-        {/* Status Dialog */}
-        <Dialog
-          open={statusDialogOpen}
-          onClose={() => setStatusDialogOpen(false)}
-          maxWidth="xs"
-          fullWidth
-        >
+        {/* Status Update Dialog */}
+        <Dialog open={statusDialogOpen} onClose={() => setStatusDialogOpen(false)} maxWidth="xs" fullWidth>
           <DialogTitle>Update Status</DialogTitle>
           <DialogContent>
-            <Typography>{selectedLearner?.name}</Typography>
-            <Typography variant="body2" color="gray">
+            <Typography variant="h6">{selectedLearner?.name}</Typography>
+            <Typography variant="body2" color="text.secondary">
               {selectedLearner?.email} / {selectedLearner?.batch_no}
             </Typography>
             <TextField
-              select
-              fullWidth
-              label="Status"
+              select fullWidth label="New Status"
               value={newStatus}
               onChange={(e) => setNewStatus(e.target.value)}
               sx={{ mt: 2 }}
@@ -518,8 +536,9 @@ export default function LearnersDashboard({ user, token }) {
             <Button
               onClick={handleStatusChangeConfirm}
               disabled={statusUpdating}
+              variant="contained"
             >
-              {statusUpdating ? "Updating..." : "Update"}
+              {statusUpdating ? "Updating..." : "Update Status"}
             </Button>
           </DialogActions>
         </Dialog>
