@@ -7416,6 +7416,44 @@ app.get('/api/tutors/modules/:email/:batch_no', async (req, res) => {
   }
 });
 
+//dashboard learners fetch
+app.get('/api/learners-dashboard-data', async (req, res) => {
+  try {
+    const { batch_no } = req.query;
+    
+    let query = supabase
+      .from("learners_data")
+      .select("id, name, email, phone, batch_no, status")
+      .order("name", { ascending: true });
+
+    if (batch_no) {
+      query = query.eq("batch_no", batch_no);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error("Learners error:", error);
+      return res.status(200).json([]);
+    }
+
+    const normalized = (data || []).map(row => ({
+      id: row.id,
+      name: row.name || "",
+      email: row.email || "",
+      phone: row.phone || "",
+      batchno: row.batch_no || "",
+      batch_no: row.batch_no || "",
+      status: row.status || "Enabled",
+    })).filter(row => row.name && row.email);
+
+    res.json(normalized);
+  } catch (err) {
+    console.error("Learners CRASH:", err);
+    res.status(200).json([]);
+  }
+});
+
 // ==================== LEARNERS APIs ====================
 // GET all learners from learners_data table
 app.get('/api/learners', async (req, res) => {
@@ -7484,30 +7522,59 @@ app.get("/api/getlearners", async (req, res) => {
 });
 
 // POST add learner
-app.post('/api/learners/add', async (req, res) => {
+app.post("/api/learners/add", async (req, res) => {
   try {
-    const { name, email, phone, batchno } = req.body;
+    const { name, email, phone, batchno, batch_no } = req.body;
     
-    if (!name || !email || !batchno) {
-      return res.status(400).json({ error: 'Missing required fields' });
+    const normalized = {
+      name: (name || "").trim(),
+      email: (email || "").trim().toLowerCase(),
+      phone: (phone || "").trim(),
+      batch_no: (batchno || batch_no || "").trim(),  // ✅ Use batch_no
+    };
+
+    if (!normalized.name || !normalized.email || !normalized.batch_no) {
+      return res.status(400).json({ 
+        success: false, 
+        error: "name, email, batch_no required" 
+      });
     }
 
     const { data, error } = await supabase
-      .from('learners_data')
-      .insert([{ name: name.trim(), email: email.trim().toLowerCase(), phone: phone || null, batch_no: batchno.trim(), status: 'Enabled' }])
+      .from("learners_data")  // ✅ Correct table name
+      .insert({
+        name: normalized.name,
+        email: normalized.email,
+        phone: normalized.phone || null,
+        batch_no: normalized.batch_no,  // ✅ Insert to batch_no
+        status: "Enabled",
+      })
       .select()
       .single();
 
     if (error) {
-      console.error('❌ Add learner error:', error);
-      return res.status(400).json({ error: error.message });
+      console.error("POST /api/learners/add:", error);
+      return res.status(500).json({ 
+        success: false, 
+        error: error.message 
+      });
     }
 
-    console.log('✅ Learner added:', data.email);
-    res.json({ success: true, data });
+    const added = {
+      id: data.id,
+      name: normalized.name,
+      email: normalized.email,
+      phone: normalized.phone,
+      batchno: normalized.batch_no,
+      batch_no: normalized.batch_no,
+      status: "Enabled",
+    };
+
+    console.log("Added learner:", added);
+    return res.json({ success: true, data: added });
   } catch (err) {
-    console.error('🚨 Add learner CRASH:', err);
-    res.status(500).json({ error: 'Server error' });
+    console.error("POST /api/learners/add CRASH:", err);
+    return res.status(500).json({ success: false, error: "Server error" });
   }
 });
 
