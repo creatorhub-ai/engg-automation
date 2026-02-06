@@ -60,8 +60,6 @@ const MENUS_BY_ROLE = {
     { id: 8, name: "Attendance Mailer", path: "/attendance-mailer" },
     { id: 9, name: "Report", path: "/reports" },
     { id: 10, name: "User Dashboard", path: "/users" },
-    { id: 11, name: "Attendance", path: "/attendance" },
-    { id: 12, name: "Mark Entry", path: "marks/entry"},
     { id: 13, name: "Manager Leave Dashboard", path: "/manager/leaves" },
     { id: 14, name: "Announcement", path: "/announcement" },
   ],
@@ -75,8 +73,6 @@ const MENUS_BY_ROLE = {
     { id: 7, name: "Mail Status Check", path: "/mail-status" },
     { id: 8, name: "Report", path: "/reports" },
     { id: 9, name: "User Dashboard", path: "/users" },
-    { id: 10, name: "Attendance", path: "/attendance" },
-    { id: 11, name: "Mark Entry", path: "marks/entry"},
     { id: 12, name: "Announcement", path: "/announcement" },
   ],
   trainer: [
