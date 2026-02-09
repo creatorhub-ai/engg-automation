@@ -17,6 +17,10 @@ import {
   TextField,
   CircularProgress,
   Chip,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from "@mui/material";
 import * as XLSX from "xlsx";
 import ExcelJS from "exceljs";
@@ -127,22 +131,25 @@ function getDomainFromCourse(course) {
   return "";
 }
 
-/**
- * Plan classrooms only for MODE = OFFLINE.
- * Capacity rule:
- *   CAPACITY <= 35 -> Yamuna or Cauvery
- *   CAPACITY > 35  -> Ganga
- */
-function planClassroomsForOffline(rows) {
-  const classrooms = [
-    { name: "Ganga", capacity: 50 },
-    { name: "Yamuna", capacity: 35 },
-    { name: "Cauvery", capacity: 35 },
-  ];
-  const shifts = ["morning", "evening"];
+// ✅ UPDATED: Fetch classrooms from DB and plan based on actual capacity
+async function fetchClassrooms() {
+  try {
+    const res = await fetch(`${API_BASE}/api/classrooms`);
+    if (!res.ok) throw new Error("Failed to fetch classrooms");
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+  } catch (error) {
+    console.error("fetchClassrooms error:", error);
+    return [];
+  }
+}
 
+async function planClassroomsForOffline(rows, classrooms) {
+  const shifts = ["morning", "evening"];
   const plans = [];
+  const unallocatedBatches = [];
   const occupancyIndex = {};
+
   const getKey = (room, slot) => `${room}|${slot}`;
 
   rows.forEach((originalRow) => {
@@ -176,24 +183,22 @@ function planClassroomsForOffline(rows) {
       slot = slotDisplayMap[assignedShiftRaw] || "morning";
     }
 
+    // ✅ NEW: Dynamic allocation based on enrolled capacity and available classrooms
     if (!assignedRoom || !assignedShiftRaw) {
-      let candidateRooms;
-      if (capacity > 35) {
-        candidateRooms = classrooms.filter((c) => c.name === "Ganga");
-      } else {
-        candidateRooms = classrooms.filter((c) => c.name !== "Ganga");
-      }
+      // Filter classrooms that can accommodate this batch (enrolled <= classroom capacity)
+      const candidateRooms = classrooms.filter((c) => enrolled <= (c.capacity || 0));
 
       let found = false;
       for (const room of candidateRooms) {
         for (const s of shifts) {
           const key = getKey(room.name, s);
           if (!occupancyIndex[key]) occupancyIndex[key] = [];
-          const slotBookings = occupancyIndex[key];
 
+          const slotBookings = occupancyIndex[key];
           const overlap = slotBookings.some((b) =>
             isDateOverlap(aStart, aEnd, b.start, b.end)
           );
+
           if (!overlap) {
             assignedRoom = `${room.name} [${room.capacity}]`;
             slot = s;
@@ -205,12 +210,39 @@ function planClassroomsForOffline(rows) {
         }
         if (found) break;
       }
+
+      // ✅ NEW: Track unallocated batches
+      if (!found) {
+        unallocatedBatches.push({
+          batch_no: course,
+          enrolled,
+          capacity,
+          a_start: aStart,
+          a_end: aEnd,
+          reason: "No available classroom with sufficient capacity",
+        });
+      }
     } else {
+      // Pre-assigned room - validate capacity
       const roomName = assignedRoom.split(" ")[0];
-      slot = slotDisplayMap[assignedShiftRaw] || "morning";
-      const key = getKey(roomName, slot);
-      if (!occupancyIndex[key]) occupancyIndex[key] = [];
-      occupancyIndex[key].push({ start: aStart, end: aEnd, course });
+      const roomCapacity = classrooms.find((c) => c.name === roomName)?.capacity;
+      
+      if (roomCapacity && enrolled > roomCapacity) {
+        unallocatedBatches.push({
+          batch_no: course,
+          enrolled,
+          capacity,
+          a_start: aStart,
+          a_end: aEnd,
+          reason: `Pre-assigned room ${roomName} (${roomCapacity}) too small for ${enrolled} enrolled`,
+        });
+        assignedRoom = ""; // Clear invalid assignment
+      } else {
+        slot = slotDisplayMap[assignedShiftRaw] || "morning";
+        const key = getKey(roomName, slot);
+        if (!occupancyIndex[key]) occupancyIndex[key] = [];
+        occupancyIndex[key].push({ start: aStart, end: aEnd, course });
+      }
     }
 
     plans.push({
@@ -224,10 +256,11 @@ function planClassroomsForOffline(rows) {
       licenseNeeded,
       classroom_name: assignedRoom || "",
       slot,
+      allocationStatus: assignedRoom ? "allocated" : "unallocated",
     });
   });
 
-  return plans;
+  return { plans, unallocatedBatches };
 }
 
 function getBatchColorMap(allMatrixTable) {
@@ -268,8 +301,17 @@ export default function ClassroomPlanner() {
   const [saving, setSaving] = useState(false);
   const [licenses, setLicenses] = useState([]);
   const [licenseError, setLicenseError] = useState("");
+  const [classrooms, setClassrooms] = useState([]);
+  const [unallocatedBatches, setUnallocatedBatches] = useState([]);
+  const [showUnallocatedDialog, setShowUnallocatedDialog] = useState(false);
 
-  // ✅ FIX: hoisted so it is accessible to handleSaveMatrix + useEffect
+  // ✅ NEW: Load classrooms from DB
+  const loadClassrooms = useCallback(async () => {
+    const classroomsData = await fetchClassrooms();
+    setClassrooms(classroomsData);
+    return classroomsData;
+  }, []);
+
   const loadExistingMatrix = useCallback(async () => {
     try {
       setLoading(true);
@@ -303,6 +345,7 @@ export default function ClassroomPlanner() {
         enrolled: r.enrolled || 0,
         capacity: r.capacity || 35,
         mode: "OFFLINE",
+        allocationStatus: "allocated",
       }));
 
       setPlans(normalizedPlans);
@@ -327,7 +370,7 @@ export default function ClassroomPlanner() {
     }
   }, []);
 
-  // Auto-load matrix + licenses on mount
+  // Auto-load matrix + licenses + classrooms on mount
   useEffect(() => {
     const loadLicenses = async () => {
       try {
@@ -342,11 +385,12 @@ export default function ClassroomPlanner() {
       }
     };
 
+    loadClassrooms();
     loadExistingMatrix();
     loadLicenses();
-  }, [loadExistingMatrix]);
+  }, [loadExistingMatrix, loadClassrooms]);
 
-  const classrooms = useMemo(
+  const classroomsAvailable = useMemo(
     () => [...new Set(plans.map((p) => p.classroom_name).filter(Boolean))],
     [plans]
   );
@@ -354,7 +398,7 @@ export default function ClassroomPlanner() {
 
   const table = useMemo(() => {
     const t = [];
-    classrooms.forEach((room) => {
+    classroomsAvailable.forEach((room) => {
       slots.forEach((slot) => {
         const row = [room, slot];
         weeks.forEach((week) => {
@@ -380,7 +424,7 @@ export default function ClassroomPlanner() {
       });
     });
     return t;
-  }, [classrooms, slots, weeks, plans]);
+  }, [classroomsAvailable, slots, weeks, plans]);
 
   const batchColorMap = useMemo(() => getBatchColorMap(table), [table]);
 
@@ -425,6 +469,7 @@ export default function ClassroomPlanner() {
     setSelectedBatch({ ...base, licenseInfo });
   };
 
+  // ✅ UPDATED: Use dynamic classrooms from DB
   const handleFileUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -436,6 +481,7 @@ export default function ClassroomPlanner() {
     setWeeks([]);
     setSelectedBatch(null);
     setSaveStatus("");
+    setUnallocatedBatches([]);
 
     try {
       const data = await file.arrayBuffer();
@@ -450,9 +496,15 @@ export default function ClassroomPlanner() {
         raw: false,
       });
 
+      // ✅ NEW: Fetch classrooms and plan
+      setProcessingStatus("Fetching classrooms from database...");
+      const dbClassrooms = await loadClassrooms();
+
       setProcessingStatus("Processing OFFLINE batches...");
-      const offlinePlans = planClassroomsForOffline(rows);
+      const { plans: offlinePlans, unallocatedBatches: unallocated } = await planClassroomsForOffline(rows, dbClassrooms);
+      
       setPlans(offlinePlans);
+      setUnallocatedBatches(unallocated);
 
       if (!offlinePlans.length) {
         setError(
@@ -469,6 +521,11 @@ export default function ClassroomPlanner() {
         const w = getWeeksInRange(matrixStart, matrixEnd);
         setWeeks(w);
         setProcessingStatus(`Completed! Planned ${offlinePlans.length} OFFLINE batches.`);
+        
+        // ✅ NEW: Show dialog if unallocated batches exist
+        if (unallocated.length > 0) {
+          setShowUnallocatedDialog(true);
+        }
       }
     } catch (err) {
       console.error("File processing error:", err);
@@ -568,6 +625,7 @@ export default function ClassroomPlanner() {
         "LICENSE_ADDITIONAL_NEEDED",
         "CLASSROOM_NAME",
         "SLOT",
+        "ALLOCATION_STATUS",
       ];
       plansSheet.addRow(plansHeader);
 
@@ -596,6 +654,7 @@ export default function ClassroomPlanner() {
           p.licenseNeeded,
           p.classroom_name,
           p.slot,
+          p.allocationStatus || "unknown",
         ]);
       });
 
@@ -610,6 +669,7 @@ export default function ClassroomPlanner() {
         { width: 25 },
         { width: 20 },
         { width: 12 },
+        { width: 15 },
       ];
 
       const buffer = await workbook.xlsx.writeBuffer();
@@ -675,7 +735,6 @@ export default function ClassroomPlanner() {
         `✅ ${inserted || 0} NEW + ${updated || 0} UPDATED + ${skipped || 0} unchanged`
       );
 
-      // ✅ FIXED: now loadExistingMatrix is in scope
       await loadExistingMatrix();
     } catch (err) {
       console.error("Save error:", err);
@@ -706,6 +765,10 @@ export default function ClassroomPlanner() {
           <Typography variant="subtitle1">
             Upload CSV or XLSX file with columns like COURSE, MODE, A.START DATE, A.DUE DATE,
             CAPACITY, ENROLLED, CLASS_ROOM, SHIFTS. Only MODE = OFFLINE rows are planned.
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Available Classrooms ({classrooms.length}):{" "}
+            {classrooms.map((c) => `${c.name}(${c.capacity})`).join(", ")}
           </Typography>
 
           <Button variant="contained" component="label" disabled={loading}>
@@ -807,6 +870,9 @@ export default function ClassroomPlanner() {
                     Classroom: {selectedBatch.classroom_name || "Not assigned"} | Slot:{" "}
                     {slotDisplayMap[selectedBatch.slot] || selectedBatch.slot || "Not assigned"}
                   </Typography>
+                  <Typography variant="body2" color={selectedBatch.allocationStatus === "unallocated" ? "error.main" : "success.main"}>
+                    Status: {selectedBatch.allocationStatus || "unknown"}
+                  </Typography>
                 </Box>
 
                 {selectedBatch.licenseInfo && selectedBatch.licenseInfo.length > 0 && (
@@ -874,6 +940,50 @@ export default function ClassroomPlanner() {
         </Fade>
       </Paper>
 
+      {/* ✅ NEW: Unallocated Batches Dialog */}
+      <Dialog open={showUnallocatedDialog} onClose={() => setShowUnallocatedDialog(false)} maxWidth="md" fullWidth>
+        <DialogTitle sx={{ bgcolor: "error.main", color: "white" }}>
+          🚨 {unallocatedBatches.length} Batches Could Not Be Allocated
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body1" gutterBottom>
+            The following batches could not be assigned to any available classroom due to capacity or scheduling conflicts:
+          </Typography>
+          <TableContainer sx={{ mt: 2 }}>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Batch</TableCell>
+                  <TableCell>Enrolled</TableCell>
+                  <TableCell>Capacity</TableCell>
+                  <TableCell>Dates</TableCell>
+                  <TableCell>Reason</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {unallocatedBatches.map((batch, idx) => (
+                  <TableRow key={idx} sx={{ bgcolor: "error.light", '&:hover': { bgcolor: "error.lighter" } }}>
+                    <TableCell fontWeight="bold">{batch.batch_no}</TableCell>
+                    <TableCell>{batch.enrolled}</TableCell>
+                    <TableCell>{batch.capacity}</TableCell>
+                    <TableCell>{`${batch.a_start} → ${batch.a_end}`}</TableCell>
+                    <TableCell>{batch.reason}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+          <Alert severity="warning" sx={{ mt: 2 }}>
+            Available classrooms: {classrooms.map((c) => `${c.name}(${c.capacity})`).join(", ")}
+          </Alert>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowUnallocatedDialog(false)} color="primary">
+            Close
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       <Paper elevation={3} sx={{ p: 4, borderRadius: 3, minHeight: 320 }}>
         <Typography variant="h5" fontWeight="bold" mb={2}>
           Classroom Occupancy Matrix
@@ -899,7 +1009,8 @@ export default function ClassroomPlanner() {
         ) : (
           <>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Showing {plans.length} OFFLINE batches across {classrooms.length} classrooms.
+              Showing {plans.length} OFFLINE batches ({plans.filter(p => p.allocationStatus === "unallocated").length} unallocated) across {classroomsAvailable.length} classrooms.
+              Available: {classrooms.length} classrooms loaded from database.
             </Typography>
             <TableContainer sx={{ maxHeight: 450 }}>
               <Table size="small" stickyHeader>
