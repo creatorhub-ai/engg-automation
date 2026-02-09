@@ -2742,27 +2742,16 @@ app.post("/api/update-learner-status", async (req, res) => {
 });
 
 
-// GET /api/classrooms - Fetch classrooms with capacity for allocation
+// API to get all classrooms (for frontend dropdown or validation)
 app.get('/api/classrooms', async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('classrooms')
-      .select('name, capacity')
-      .eq('capacity', supabase.raw('NOT NULL')) // Filter out null capacities
-      .order('capacity', { ascending: false }); // Largest capacity first for better allocation
-    
+    const { data, error } = await supabase.from('classrooms').select('*');
     if (error) throw error;
-    
-    // Ensure we only return valid classrooms with capacity
-    const validClassrooms = (data || []).filter(c => c.capacity && c.capacity > 0);
-    
-    res.json(validClassrooms);
+    res.json(data);
   } catch (err) {
-    console.error('Error fetching classrooms:', err);
     res.status(500).json({ error: 'Failed to fetch classrooms' });
   }
 });
-
 
 // API to get domains for dropdown selection
 app.get('/api/domains', async (req, res) => {
