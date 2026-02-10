@@ -657,16 +657,18 @@ app.get("/api/learner-attendance", async (req, res) => {
        =============================== */
     const totalSessionsResult = await pool.query(
       `
-      SELECT COUNT(DISTINCT (date, session)) AS total
-      FROM course_planner_data
-      WHERE batch_no = $1
-        AND date <= CURRENT_DATE
+      SELECT COUNT(*) AS total
+      FROM (
+        SELECT DISTINCT date, session
+        FROM course_planner_data
+        WHERE batch_no = $1
+          AND date <= CURRENT_DATE
+      ) AS t
       `,
       [batch_no]
     );
 
-    const total_sessions =
-      parseInt(totalSessionsResult.rows[0]?.total || 0, 10);
+    const total_sessions = Number(totalSessionsResult.rows[0]?.total || 0);
 
     /* ===============================
        2. ATTENDANCE RECORDS
@@ -688,16 +690,16 @@ app.get("/api/learner-attendance", async (req, res) => {
     );
 
     /* ===============================
-       3. RESPONSE
+       3. SAFE RESPONSE
        =============================== */
     res.json({
-      attendance: attendanceResult.rows,
+      attendance: attendanceResult.rows || [],
       total_sessions,
     });
   } catch (err) {
-    console.error("🔥 learner-attendance API error:", err);
+    console.error("🔥 learner-attendance API FAILED:", err.message);
     res.status(500).json({
-      error: "Failed to fetch learner attendance",
+      error: "Internal server error while fetching attendance",
     });
   }
 });
