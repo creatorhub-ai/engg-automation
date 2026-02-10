@@ -648,59 +648,56 @@ app.get("/api/learner-attendance", async (req, res) => {
   const { batch_no } = req.query;
 
   if (!batch_no) {
-    return res.status(400).json({ error: "batch_no is required" });
+    return res.json({
+      attendance: [],
+      total_sessions: 0,
+    });
   }
 
   try {
-    /* ===============================
-       1. TOTAL SESSIONS TILL TODAY
-       =============================== */
-    const totalSessionsResult = await pool.query(
-      `
-      SELECT COUNT(*) AS total
-      FROM (
-        SELECT DISTINCT date, session
-        FROM course_planner_data
+    /* ---------- total sessions ---------- */
+    let total_sessions = 0;
+
+    try {
+      const ts = await pool.query(
+        `
+        SELECT COUNT(*) AS total FROM (
+          SELECT DISTINCT date, session
+          FROM course_planner_data
+          WHERE batch_no = $1
+        ) t
+        `,
+        [batch_no]
+      );
+      total_sessions = Number(ts.rows[0]?.total || 0);
+    } catch (e) {
+      console.warn("⚠ course_planner_data not available");
+    }
+
+    /* ---------- attendance ---------- */
+    let attendance = [];
+    try {
+      const ar = await pool.query(
+        `
+        SELECT learner_email, date, session, status
+        FROM learner_attendance
         WHERE batch_no = $1
-          AND date <= CURRENT_DATE
-      ) AS t
-      `,
-      [batch_no]
-    );
+        ORDER BY date, session
+        `,
+        [batch_no]
+      );
+      attendance = ar.rows;
+    } catch (e) {
+      console.warn("⚠ learner_attendance query failed");
+    }
 
-    const total_sessions = Number(totalSessionsResult.rows[0]?.total || 0);
-
-    /* ===============================
-       2. ATTENDANCE RECORDS
-       =============================== */
-    const attendanceResult = await pool.query(
-      `
-      SELECT
-        learner_email,
-        batch_no,
-        date,
-        session,
-        status
-      FROM learner_attendance
-      WHERE batch_no = $1
-        AND date <= CURRENT_DATE
-      ORDER BY date, session
-      `,
-      [batch_no]
-    );
-
-    /* ===============================
-       3. SAFE RESPONSE
-       =============================== */
     res.json({
-      attendance: attendanceResult.rows || [],
+      attendance,
       total_sessions,
     });
   } catch (err) {
-    console.error("🔥 learner-attendance API FAILED:", err.message);
-    res.status(500).json({
-      error: "Internal server error while fetching attendance",
-    });
+    console.error("🔥 attendance API hard failure:", err.message);
+    res.status(500).json({ error: "Attendance API failed" });
   }
 });
 
@@ -1417,41 +1414,49 @@ app.get("/api/course-planner-meta/:batchNo", async (req, res) => {
 
 // === Get Batch List ===
 app.get("/api/batches", async (req, res) => {
-  const domain = req.query.domain;
-
   try {
+    const { domain } = req.query;
+
     let query = supabase
       .from("course_planner_data")
-      .select("batch_no, date");
+      .select("batch_no, date")
+      .not("batch_no", "is", null)
+      .not("date", "is", null)
+      .order("date", { ascending: true });
 
+    // Optional domain filter
     if (domain) {
       query = query.eq("domain", domain);
     }
 
-    // Order by date ascending (start date)
-    query = query.order("date", { ascending: true });
-
     const { data, error } = await query;
 
-    if (error) throw error;
-
-    // Group by batch_no picking earliest date as start_date
-    const batchMap = {};
-    for (const row of data || []) {
-      if (!row.batch_no || !row.date) continue;
-      if (!batchMap[row.batch_no]) batchMap[row.batch_no] = row.date;
+    if (error) {
+      console.error("❌ Supabase error:", error.message);
+      return res.status(500).json({ error: "Failed to fetch batches" });
     }
 
-    // Format output array [{ batch_no, start_date }, ...]
-    const formatted = Object.entries(batchMap).map(([batch_no, date]) => ({
-      batch_no,
-      start_date: formatDate(date),
-    }));
+    // Map to keep earliest date per batch
+    const batchMap = {};
 
-    res.json(formatted);
+    for (const row of data) {
+      if (!batchMap[row.batch_no]) {
+        batchMap[row.batch_no] = row.date;
+      }
+    }
+
+    // Final formatted response
+    const response = Object.entries(batchMap).map(
+      ([batch_no, start_date]) => ({
+        batch_no,
+        start_date: formatDate(start_date),
+      })
+    );
+
+    res.json(response);
   } catch (err) {
-    console.error("❌ /api/batches error:", err.message);
-    res.status(500).json({ error: "Failed to fetch batches" });
+    console.error("🔥 /api/batches fatal error:", err);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
