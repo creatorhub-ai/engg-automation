@@ -644,53 +644,44 @@ app.get('/api/modules-by-date', async (req, res) => {
 
 
 // GET /api/learner-attendance - Fetch attendance by batch
-app.get('/api/learner-attendance', async (req, res) => {
+app.get("/api/learner-attendance", async (req, res) => {
+  const { batch_no } = req.query;
+  if (!batch_no) {
+    return res.status(400).json({ error: "batch_no is required" });
+  }
+
   try {
-    const { batch_no } = req.query;
-    
-    if (!batch_no) {
-      return res.status(400).json({ error: 'batch_no required' });
-    }
+    // 1️⃣ Attendance records
+    const attendanceResult = await pool.query(`
+      SELECT learner_email, date, session, status
+      FROM learner_attendance
+      WHERE batch_no = $1
+    `, [batch_no]);
 
-    console.log(`🔍 Processing batch: ${batch_no}`);
+    // 2️⃣ TOTAL sessions planned for batch
+    const totalSessionsResult = await pool.query(`
+      SELECT COUNT(DISTINCT session_date || '-' || session) AS total
+      FROM session_planner
+      WHERE batch_no = $1
+    `, [batch_no]);
 
-    // 1. Get TOTAL SESSIONS from course_planner_data (DISTINCT date entries)
-    const { data: plannerData, error: plannerError } = await supabase
-      .from("course_planner_data")
-      .select("id, date, batch_no")
-      .eq("batch_no", batch_no)
-      .order("date");
-
-    let totalSessions = 0;
-    if (!plannerError && plannerData) {
-      // Count DISTINCT dates = total sessions
-      const uniqueDates = [...new Set(plannerData.map(row => row.date))];
-      totalSessions = uniqueDates.length;
-      console.log(`📅 ${plannerData.length} planner rows → ${totalSessions} unique sessions`);
-    }
-
-    // 2. Get ATTENDANCE data
-    const { data: attendanceData, error: attendanceError } = await supabase
-      .from("learner_attendance")
-      .select("learner_email, batch_no, date, session, status")
-      .eq("batch_no", batch_no);
-
-    if (attendanceError) {
-      console.error("Attendance error:", attendanceError);
-      return res.status(500).json({ error: attendanceError.message });
-    }
-
-    console.log(`📊 ${attendanceData?.length || 0} attendance records`);
+    // 3️⃣ Sessions completed till TODAY
+    const completedSessionsResult = await pool.query(`
+      SELECT COUNT(DISTINCT session_date || '-' || session) AS completed
+      FROM session_planner
+      WHERE batch_no = $1
+        AND session_date <= CURRENT_DATE
+    `, [batch_no]);
 
     res.json({
-      attendance: attendanceData || [],
-      total_sessions: totalSessions,
-      planner_count: plannerData?.length || 0
+      attendance: attendanceResult.rows,
+      total_sessions: Number(totalSessionsResult.rows[0]?.total || 0),
+      sessions_completed: Number(completedSessionsResult.rows[0]?.completed || 0)
     });
 
   } catch (err) {
-    console.error("🚨 API Error:", err);
-    res.status(500).json({ error: 'Server error' });
+    console.error("Attendance API error:", err);
+    res.status(500).json({ error: "Failed to load attendance data" });
   }
 });
 
