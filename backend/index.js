@@ -1604,98 +1604,75 @@ app.get("/api/get-classroom-matrix", async (req, res) => {
 // SAVE classroom matrix (single JSON store in Supabase)
 app.post("/api/save-classroom-matrix", async (req, res) => {
   try {
-    const { occupancyRows, fullPlanRows, weeks } = req.body;
+    const { occupancyRows } = req.body;
 
-    console.log("Processing", occupancyRows?.length || 0, "rows");
-
-    if (!Array.isArray(occupancyRows) || occupancyRows.length === 0) {
-      return res.status(400).json({ error: "occupancyRows required" });
+    if (!Array.isArray(occupancyRows)) {
+      return res.status(400).json({ error: "Invalid payload" });
     }
+
+    const ROOM_CAPACITY = {
+      Ganga: 50,
+      Yamuna: 35,
+      Cauvery: 35,
+    };
 
     let inserted = 0;
     let updated = 0;
     let skipped = 0;
 
-    // Process each row (batch_no unique)
     for (const row of occupancyRows) {
       const batch_no = row.batch_no?.trim();
-      if (!batch_no || !row.classroom_name || !row.slot) {
+      if (!batch_no || row.classroom_name === "UNASSIGNED") {
         skipped++;
         continue;
       }
 
-      const occupancy_start = row.occupancy_start || row.a_start;
-      const occupancy_end = row.occupancy_end || row.a_end;
-      const enrolled = Number(row.enrolled) || 0;
+      const room = row.classroom_name.split(" ")[0];
+      const enrolled = Number(row.enrolled || 0);
 
-      if (!occupancy_start || !occupancy_end) {
+      if (enrolled > (ROOM_CAPACITY[room] || 0)) {
         skipped++;
-        continue;
+        continue; // ❌ capacity violation
       }
 
-      // 1. Check if batch_no already exists
-      const { data: existing } = await supabase
-        .from("classroom_occupancy")
-        .select("batch_no, occupancy_start, occupancy_end, enrolled, classroom_name, slot")
-        .eq("batch_no", batch_no)
-        .maybeSingle();
-
-      const updateData = {
+      const payload = {
         batch_no,
         classroom_name: row.classroom_name,
         slot: row.slot,
-        occupancy_start,
-        occupancy_end,
+        occupancy_start: row.occupancy_start,
+        occupancy_end: row.occupancy_end,
         enrolled,
-        class_room: row.classroom_name.split(" ")[0], // Ganga/Yamuna/Cauvery
+        class_room: room,
         shifts: row.slot === "morning" ? "Shift_1" : "Shift_2",
         updated_at: new Date().toISOString(),
       };
 
+      const { data: existing } = await supabase
+        .from("classroom_occupancy")
+        .select("batch_no")
+        .eq("batch_no", batch_no)
+        .maybeSingle();
+
       if (existing) {
-        // 2. UPDATE if dates/enrolled/classroom changed
-        const datesChanged =
-          existing.occupancy_start !== occupancy_start ||
-          existing.occupancy_end !== occupancy_end;
-        const enrolledChanged = existing.enrolled !== enrolled;
-        const roomChanged =
-          existing.classroom_name !== row.classroom_name ||
-          existing.slot !== row.slot;
-
-        if (datesChanged || enrolledChanged || roomChanged) {
-          const { error } = await supabase
-            .from("classroom_occupancy")
-            .update(updateData)
-            .eq("batch_no", batch_no);
-
-          if (!error) {
-            updated++;
-            console.log(`UPDATED ${batch_no}: dates=${datesChanged}, enrolled=${enrolledChanged}, room=${roomChanged}`);
-          }
-        } else {
-          skipped++;
-          console.log(`UNCHANGED ${batch_no}`);
-        }
-      } else {
-        // 3. INSERT new batch_no
-        const { error } = await supabase
+        await supabase
           .from("classroom_occupancy")
-          .insert(updateData);
-
-        if (!error) {
-          inserted++;
-          console.log(`INSERTED ${batch_no}`);
-        }
+          .update(payload)
+          .eq("batch_no", batch_no);
+        updated++;
+      } else {
+        await supabase
+          .from("classroom_occupancy")
+          .insert(payload);
+        inserted++;
       }
     }
 
     res.json({
       success: true,
       summary: { inserted, updated, skipped },
-      totalProcessed: occupancyRows.length,
     });
   } catch (err) {
-    console.error("save-classroom-matrix error:", err);
+    console.error(err);
     res.status(500).json({ error: err.message });
   }
 });

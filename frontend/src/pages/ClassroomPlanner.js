@@ -139,91 +139,76 @@ function planClassroomsForOffline(rows) {
     { name: "Yamuna", capacity: 35 },
     { name: "Cauvery", capacity: 35 },
   ];
-  const shifts = ["morning", "evening"];
 
-  const plans = [];
+  const shifts = ["morning", "evening"];
   const occupancyIndex = {};
+  const plans = [];
+
   const getKey = (room, slot) => `${room}|${slot}`;
 
   rows.forEach((originalRow) => {
     const row = normalizeRowKeys(originalRow);
 
     const course = row["COURSE"];
-    let mode = row["MODE"];
-    const aStartRaw = row["A.START DATE"];
-    const aEndRaw = row["A.DUE DATE"];
+    const mode = (row["MODE"] || "").toString().trim().toUpperCase();
 
-    const aStartDate = parseExcelDate(aStartRaw);
-    const aEndDate = parseExcelDate(aEndRaw);
-    const aStart = toIsoDateString(aStartDate);
-    const aEnd = toIsoDateString(aEndDate);
+    if (!course || mode !== "OFFLINE") return;
 
-    const capacity = Number(row["CAPACITY"] || 0);
     const enrolled = Number(row["ENROLLED"] || 0);
 
-    mode = typeof mode === "string" ? mode.trim().toUpperCase() : "";
+    const startDate = parseExcelDate(row["A.START DATE"]);
+    const endDate = parseExcelDate(row["A.DUE DATE"]);
 
-    if (!course || mode !== "OFFLINE" || !aStart || !aEnd) return;
+    if (!startDate || !endDate) return;
 
-    const hasSufficientCapacity = enrolled <= capacity || enrolled === 0;
-    const licenseNeeded = enrolled > capacity ? enrolled - capacity : 0;
+    const a_start = toIsoDateString(startDate);
+    const a_end = toIsoDateString(endDate);
 
-    let assignedRoom = (row["CLASS_ROOM"] || "").trim();
-    let assignedShiftRaw = (row["SHIFTS"] || "").trim();
+    // 🔴 ONLY rooms that can hold enrolled count
+    const eligibleRooms = classrooms.filter(
+      (r) => enrolled <= r.capacity
+    );
+
+    let assignedRoom = "";
     let slot = "";
+    let assigned = false;
 
-    if (assignedShiftRaw) {
-      slot = slotDisplayMap[assignedShiftRaw] || "morning";
-    }
+    for (const room of eligibleRooms) {
+      for (const s of shifts) {
+        const key = getKey(room.name, s);
+        if (!occupancyIndex[key]) occupancyIndex[key] = [];
 
-    if (!assignedRoom || !assignedShiftRaw) {
-      let candidateRooms;
-      if (capacity > 35) {
-        candidateRooms = classrooms.filter((c) => c.name === "Ganga");
-      } else {
-        candidateRooms = classrooms.filter((c) => c.name !== "Ganga");
-      }
+        const conflict = occupancyIndex[key].some((b) =>
+          isDateOverlap(a_start, a_end, b.start, b.end)
+        );
 
-      let found = false;
-      for (const room of candidateRooms) {
-        for (const s of shifts) {
-          const key = getKey(room.name, s);
-          if (!occupancyIndex[key]) occupancyIndex[key] = [];
-          const slotBookings = occupancyIndex[key];
+        if (!conflict) {
+          occupancyIndex[key].push({
+            start: a_start,
+            end: a_end,
+            course,
+          });
 
-          const overlap = slotBookings.some((b) =>
-            isDateOverlap(aStart, aEnd, b.start, b.end)
-          );
-          if (!overlap) {
-            assignedRoom = `${room.name} [${room.capacity}]`;
-            slot = s;
-            assignedShiftRaw = s === "morning" ? "Shift_1" : "Shift_2";
-            slotBookings.push({ start: aStart, end: aEnd, course });
-            found = true;
-            break;
-          }
+          assignedRoom = `${room.name} [${room.capacity}]`;
+          slot = s;
+          assigned = true;
+          break;
         }
-        if (found) break;
       }
-    } else {
-      const roomName = assignedRoom.split(" ")[0];
-      slot = slotDisplayMap[assignedShiftRaw] || "morning";
-      const key = getKey(roomName, slot);
-      if (!occupancyIndex[key]) occupancyIndex[key] = [];
-      occupancyIndex[key].push({ start: aStart, end: aEnd, course });
+      if (assigned) break;
     }
 
     plans.push({
       batch_no: course,
       mode,
-      a_start: aStart,
-      a_end: aEnd,
-      capacity,
       enrolled,
-      hasSufficientCapacity,
-      licenseNeeded,
-      classroom_name: assignedRoom || "",
-      slot,
+      capacity: enrolled, // logical batch capacity
+      hasSufficientCapacity: assigned,
+      licenseNeeded: 0,
+      classroom_name: assigned ? assignedRoom : "UNASSIGNED",
+      slot: assigned ? slot : "",
+      a_start,
+      a_end,
     });
   });
 
