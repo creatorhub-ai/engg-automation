@@ -643,6 +643,57 @@ app.get('/api/modules-by-date', async (req, res) => {
 });
 
 
+// GET /api/learner-attendance - Fetch attendance by batch
+app.get('/api/learner-attendance', async (req, res) => {
+  try {
+    const { batch_no } = req.query;
+    
+    if (!batch_no) {
+      return res.status(400).json({ error: 'batch_no required' });
+    }
+
+    console.log(`🔍 Processing batch: ${batch_no}`);
+
+    // 1. Get TOTAL SESSIONS from course_planner_data (DISTINCT date entries)
+    const { data: plannerData, error: plannerError } = await supabase
+      .from("course_planner_data")
+      .select("id, date, batch_no")
+      .eq("batch_no", batch_no)
+      .order("date");
+
+    let totalSessions = 0;
+    if (!plannerError && plannerData) {
+      // Count DISTINCT dates = total sessions
+      const uniqueDates = [...new Set(plannerData.map(row => row.date))];
+      totalSessions = uniqueDates.length;
+      console.log(`📅 ${plannerData.length} planner rows → ${totalSessions} unique sessions`);
+    }
+
+    // 2. Get ATTENDANCE data
+    const { data: attendanceData, error: attendanceError } = await supabase
+      .from("learner_attendance")
+      .select("learner_email, batch_no, date, session, status")
+      .eq("batch_no", batch_no);
+
+    if (attendanceError) {
+      console.error("Attendance error:", attendanceError);
+      return res.status(500).json({ error: attendanceError.message });
+    }
+
+    console.log(`📊 ${attendanceData?.length || 0} attendance records`);
+
+    res.json({
+      attendance: attendanceData || [],
+      total_sessions: totalSessions,
+      planner_count: plannerData?.length || 0
+    });
+
+  } catch (err) {
+    console.error("🚨 API Error:", err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 
 // Learners by batch (NO authMiddleware)
 app.get('/api/learners', async (req, res) => {
@@ -2702,7 +2753,6 @@ app.get('/api/classrooms', async (req, res) => {
   }
 });
 
-
 // API to get domains for dropdown selection
 app.get('/api/domains', async (req, res) => {
   try {
@@ -3367,91 +3417,76 @@ app.get('/apiperiods/:batchNo/:assessmentType', async (req, res) => {
   }
 });
 
-// 🔥 trainer_unavailability table endpoint - PERFECT MATCH
-app.post('/api/trainer-leaves', async (req, res) => {
-  try {
-    console.log('🔍 POST /api/trainer-leaves:', req.body);
-    
-    const {
-      trainer_email,
-      trainer_name,
-      domain,
-      start_date,
-      end_date,
-      reason,
-      batch_nos
-    } = req.body;
+app.post("/api/trainer-leaves", async (req, res) => {
+  const {
+    trainer_email,
+    trainer_name,
+    domain,
+    start_date,
+    end_date,
+    reason,
+    batch_nos,
+  } = req.body;
 
-    // Validation
-    if (!trainer_email || !start_date || !end_date) {
-      return res.status(400).json({ 
-        error: 'Missing required fields: trainer_email, start_date, end_date' 
-      });
-    }
-
-    const payload = {
-      trainer_email: trainer_email.trim().toLowerCase(),
-      trainer_name: trainer_name?.trim() || null,
-      domain: domain?.trim() || null,
-      start_date: start_date,
-      end_date: end_date,
-      reason: reason?.trim() || null,
-      batch_nos: batch_nos || null,
-      status: 'pending',
-      submitted_at: new Date().toISOString()
-    };
-
-    console.log('📤 Inserting:', payload);
-
-    const { data, error } = await supabase
-      .from('trainer_unavailability')
-      .insert([payload])
-      .select()
-      .single();
-
-    if (error) {
-      console.error('❌ Supabase error:', error);
-      return res.status(400).json({ error: error.message });
-    }
-
-    console.log('✅ Leave inserted:', data.id);
-    res.json({ 
-      success: true, 
-      data: data,
-      message: 'Leave request submitted successfully' 
-    });
-
-  } catch (err) {
-    console.error('🚨 CRASH:', err);
-    res.status(500).json({ error: 'Server error: ' + err.message });
+  if (!trainer_email || !start_date || !end_date) {
+    return res.status(400).json({ error: "Missing required fields" });
   }
-});
 
-// 🔥 Get trainer leaves (for dashboard)
-app.get('/api/trainer-leaves', async (req, res) => {
   try {
-    const { trainer_email } = req.query;
-    
-    let query = supabase
-      .from('trainer_unavailability')
-      .select('*')
-      .order('start_date', { ascending: false });
+    // 1️⃣ Fetch DISTINCT module names from course_planner_data
+    const moduleResult = await pool.query(
+      `
+      SELECT DISTINCT module_name
+      FROM course_planner_data
+      WHERE trainer_email = $1
+        AND date BETWEEN $2 AND $3
+        AND module_name IS NOT NULL
+      `,
+      [trainer_email, start_date, end_date]
+    );
 
-    if (trainer_email) {
-      query = query.eq('trainer_email', trainer_email);
-    }
+    // 2️⃣ Convert to comma-separated string
+    const moduleNames = moduleResult.rows
+      .map((r) => r.module_name)
+      .filter(Boolean);
 
-    const { data, error } = await query;
+    const moduleNameStr = moduleNames.join(", ");
 
-    if (error) {
-      console.error('❌ trainer-leaves error:', error);
-      return res.status(500).json({ error: error.message });
-    }
+    // 3️⃣ Insert leave record
+    await pool.query(
+      `
+      INSERT INTO trainer_unavailability
+      (
+        trainer_email,
+        trainer_name,
+        domain,
+        start_date,
+        end_date,
+        reason,
+        batch_nos,
+        module_name
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+      `,
+      [
+        trainer_email,
+        trainer_name,
+        domain,
+        start_date,
+        end_date,
+        reason,
+        batch_nos,
+        moduleNameStr,
+      ]
+    );
 
-    res.json(data || []);
+    res.json({
+      success: true,
+      module_name: moduleNameStr,
+    });
   } catch (err) {
-    console.error('🚨 trainer-leaves CRASH:', err);
-    res.status(500).json({ error: 'Server error' });
+    console.error("Error applying leave:", err);
+    res.status(500).json({ error: "Failed to apply leave" });
   }
 });
 
