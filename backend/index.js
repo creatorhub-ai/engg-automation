@@ -652,47 +652,72 @@ app.get("/api/learner-attendance", async (req, res) => {
   }
 
   try {
-    // 1️⃣ Attendance records
-    const attendanceResult = await pool.query(
-      `
-      SELECT learner_email, date, session, status
-      FROM learner_attendance
-      WHERE batch_no = $1
-      `,
-      [batch_no]
-    );
-
-    // 2️⃣ Total sessions for batch
-    const totalSessionsResult = await pool.query(
-      `
-      SELECT COUNT(*)::int AS total
+    /**
+     * STEP 1: Calculate sessions per day
+     * Each row = 1 session
+     */
+    const plannerQuery = `
+      SELECT
+        date,
+        COUNT(*) AS sessions
       FROM course_planner_data
       WHERE batch_no = $1
-      `,
-      [batch_no]
-    );
+      GROUP BY date
+    `;
 
-    // 3️⃣ Sessions completed till today
-    const completedSessionsResult = await pool.query(
-      `
-      SELECT COUNT(*)::int AS completed
+    const plannerResult = await pool.query(plannerQuery, [batch_no]);
+
+    let totalSessions = 0;
+    plannerResult.rows.forEach(r => {
+      totalSessions += Number(r.sessions);
+    });
+
+    /**
+     * STEP 2: Attendance data
+     */
+    const attendanceQuery = `
+      SELECT
+        learner_email,
+        batch_no,
+        date,
+        session,
+        status
+      FROM learner_attendance
+      WHERE batch_no = $1
+    `;
+
+    const attendanceResult = await pool.query(attendanceQuery, [batch_no]);
+
+    /**
+     * STEP 3: Completed sessions
+     * If planner has dates up to today
+     */
+    const completedSessionsQuery = `
+      SELECT
+        COUNT(*) AS completed_sessions
       FROM course_planner_data
       WHERE batch_no = $1
         AND date <= CURRENT_DATE
-      `,
-      [batch_no]
+    `;
+
+    const completedResult = await pool.query(completedSessionsQuery, [batch_no]);
+
+    const sessionsCompleted = Number(
+      completedResult.rows[0]?.completed_sessions || 0
     );
 
+    /**
+     * FINAL RESPONSE
+     */
     res.json({
       attendance: attendanceResult.rows,
-      total_sessions: totalSessionsResult.rows[0]?.total || 0,
-      sessions_completed: completedSessionsResult.rows[0]?.completed || 0
+      total_sessions: totalSessions,
+      sessions_completed: sessionsCompleted
     });
-
   } catch (err) {
-    console.error("❌ learner-attendance API error:", err.message);
+    console.error("Attendance API Error:", err);
     res.status(500).json({
-      error: "Failed to load attendance data"
+      error: "Failed to fetch attendance data"
     });
   }
 });
