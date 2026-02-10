@@ -1604,75 +1604,98 @@ app.get("/api/get-classroom-matrix", async (req, res) => {
 // SAVE classroom matrix (single JSON store in Supabase)
 app.post("/api/save-classroom-matrix", async (req, res) => {
   try {
-    const { occupancyRows } = req.body;
+    const { occupancyRows, fullPlanRows, weeks } = req.body;
 
-    if (!Array.isArray(occupancyRows)) {
-      return res.status(400).json({ error: "Invalid payload" });
+    console.log("Processing", occupancyRows?.length || 0, "rows");
+
+    if (!Array.isArray(occupancyRows) || occupancyRows.length === 0) {
+      return res.status(400).json({ error: "occupancyRows required" });
     }
-
-    const ROOM_CAPACITY = {
-      Ganga: 50,
-      Yamuna: 35,
-      Cauvery: 35,
-    };
 
     let inserted = 0;
     let updated = 0;
     let skipped = 0;
 
+    // Process each row (batch_no unique)
     for (const row of occupancyRows) {
       const batch_no = row.batch_no?.trim();
-      if (!batch_no || row.classroom_name === "UNASSIGNED") {
+      if (!batch_no || !row.classroom_name || !row.slot) {
         skipped++;
         continue;
       }
 
-      const room = row.classroom_name.split(" ")[0];
-      const enrolled = Number(row.enrolled || 0);
+      const occupancy_start = row.occupancy_start || row.a_start;
+      const occupancy_end = row.occupancy_end || row.a_end;
+      const enrolled = Number(row.enrolled) || 0;
 
-      if (enrolled > (ROOM_CAPACITY[room] || 0)) {
+      if (!occupancy_start || !occupancy_end) {
         skipped++;
-        continue; // ❌ capacity violation
+        continue;
       }
 
-      const payload = {
+      // 1. Check if batch_no already exists
+      const { data: existing } = await supabase
+        .from("classroom_occupancy")
+        .select("batch_no, occupancy_start, occupancy_end, enrolled, classroom_name, slot")
+        .eq("batch_no", batch_no)
+        .maybeSingle();
+
+      const updateData = {
         batch_no,
         classroom_name: row.classroom_name,
         slot: row.slot,
-        occupancy_start: row.occupancy_start,
-        occupancy_end: row.occupancy_end,
+        occupancy_start,
+        occupancy_end,
         enrolled,
-        class_room: room,
+        class_room: row.classroom_name.split(" ")[0], // Ganga/Yamuna/Cauvery
         shifts: row.slot === "morning" ? "Shift_1" : "Shift_2",
         updated_at: new Date().toISOString(),
       };
 
-      const { data: existing } = await supabase
-        .from("classroom_occupancy")
-        .select("batch_no")
-        .eq("batch_no", batch_no)
-        .maybeSingle();
-
       if (existing) {
-        await supabase
-          .from("classroom_occupancy")
-          .update(payload)
-          .eq("batch_no", batch_no);
-        updated++;
+        // 2. UPDATE if dates/enrolled/classroom changed
+        const datesChanged =
+          existing.occupancy_start !== occupancy_start ||
+          existing.occupancy_end !== occupancy_end;
+        const enrolledChanged = existing.enrolled !== enrolled;
+        const roomChanged =
+          existing.classroom_name !== row.classroom_name ||
+          existing.slot !== row.slot;
+
+        if (datesChanged || enrolledChanged || roomChanged) {
+          const { error } = await supabase
+            .from("classroom_occupancy")
+            .update(updateData)
+            .eq("batch_no", batch_no);
+
+          if (!error) {
+            updated++;
+            console.log(`UPDATED ${batch_no}: dates=${datesChanged}, enrolled=${enrolledChanged}, room=${roomChanged}`);
+          }
+        } else {
+          skipped++;
+          console.log(`UNCHANGED ${batch_no}`);
+        }
       } else {
-        await supabase
+        // 3. INSERT new batch_no
+        const { error } = await supabase
           .from("classroom_occupancy")
-          .insert(payload);
-        inserted++;
+          .insert(updateData);
+
+        if (!error) {
+          inserted++;
+          console.log(`INSERTED ${batch_no}`);
+        }
       }
     }
 
     res.json({
       success: true,
       summary: { inserted, updated, skipped },
+      totalProcessed: occupancyRows.length,
     });
   } catch (err) {
-    console.error(err);
+    console.error("save-classroom-matrix error:", err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -2730,79 +2753,6 @@ app.get('/api/classrooms', async (req, res) => {
   }
 });
 
-app.post("/api/classroom-occupancy/bulk", async (req, res) => {
-  const rows = req.body;
-
-  if (!Array.isArray(rows) || rows.length === 0) {
-    return res.status(400).json({ error: "No data provided" });
-  }
-
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
-
-    for (const r of rows) {
-      if (!r.batch_no || !r.occupancy_start || !r.occupancy_end) {
-        continue; // skip invalid rows
-      }
-
-      await client.query(
-        `
-        INSERT INTO classroom_occupancy (
-          batch_no,
-          occupancy_start,
-          occupancy_end,
-          enrolled,
-          class_room,
-          shifts,
-          classroom_name,
-          slot,
-          created_at,
-          updated_at
-        )
-        VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW()
-        )
-        ON CONFLICT (batch_no)
-        DO UPDATE SET
-          occupancy_start = EXCLUDED.occupancy_start,
-          occupancy_end   = EXCLUDED.occupancy_end,
-          enrolled        = EXCLUDED.enrolled,
-          class_room      = EXCLUDED.class_room,
-          shifts          = EXCLUDED.shifts,
-          classroom_name  = EXCLUDED.classroom_name,
-          slot            = EXCLUDED.slot,
-          updated_at      = NOW()
-        `,
-        [
-          r.batch_no,
-          r.occupancy_start,
-          r.occupancy_end,
-          r.enrolled || null,
-          r.class_room || null,
-          r.shifts || null,
-          r.classroom_name || null,
-          r.slot || null,
-        ]
-      );
-    }
-
-    await client.query("COMMIT");
-
-    res.json({
-      success: true,
-      message: "Classroom occupancy saved successfully",
-      count: rows.length,
-    });
-  } catch (err) {
-    await client.query("ROLLBACK");
-    console.error(err);
-    res.status(500).json({ error: "Failed to save occupancy data" });
-  } finally {
-    client.release();
-  }
-});
 
 // API to get domains for dropdown selection
 app.get('/api/domains', async (req, res) => {
