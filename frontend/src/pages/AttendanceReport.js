@@ -131,10 +131,10 @@ export default function AttendanceReport({ token }) {
      SUMMARY
   ========================== */
   const summary = useMemo(() => {
-    const stats = {};
+  const stats = {};
 
-    attendanceData.forEach(row => {
-      const email = row.learner_email;
+  attendanceData.forEach(row => {
+    const email = row.learner_email;
       if (!email) return;
 
       if (!stats[email]) {
@@ -146,18 +146,18 @@ export default function AttendanceReport({ token }) {
           email,
           name: learner?.name || email.split("@")[0],
           present: 0,
-          attended: new Set(),
+          attendedSessions: new Set(),
         };
       }
 
-      const key = `${row.date}-${row.session}`;
+      const key = `${row.attendance_date}-${row.session_no}`;
 
       if (
-        row.status?.toUpperCase() === "P" ||
-        row.status === "Present"
+        row.attendance === "P" ||
+        row.attendance === "Present"
       ) {
-        if (!stats[email].attended.has(key)) {
-          stats[email].attended.add(key);
+        if (!stats[email].attendedSessions.has(key)) {
+          stats[email].attendedSessions.add(key);
           stats[email].present++;
         }
       }
@@ -169,16 +169,16 @@ export default function AttendanceReport({ token }) {
         totalSessions > 0 ? (l.present / totalSessions) * 100 : 0,
     }));
 
+    const avgAttendance =
+      learners.length > 0
+        ? learners.reduce((s, l) => s + l.percentage, 0) /
+          learners.length
+        : 0;
+
     return {
       learners: learners.sort((a, b) => b.percentage - a.percentage),
-      avgAttendance:
-        learners.length > 0
-          ? Math.round(
-              (learners.reduce((s, l) => s + l.percentage, 0) /
-                learners.length) *
-                10
-            ) / 10
-          : 0,
+      totalLearners: learners.length,
+      avgAttendance: Math.round(avgAttendance * 10) / 10,
     };
   }, [attendanceData, learnersData, totalSessions]);
 
