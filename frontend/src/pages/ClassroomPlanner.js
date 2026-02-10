@@ -4,8 +4,6 @@ import {
   Paper,
   Typography,
   Button,
-  Alert,
-  Fade,
   Box,
   Table,
   TableBody,
@@ -13,10 +11,6 @@ import {
   TableHead,
   TableRow,
   TableContainer,
-  Divider,
-  InputAdornment,
-  TextField,
-  CircularProgress,
   Chip,
   Dialog,
   DialogTitle,
@@ -26,6 +20,8 @@ import {
   Select,
   MenuItem,
   Stack,
+  CircularProgress,
+  Alert,
 } from "@mui/material";
 import * as XLSX from "xlsx";
 import ExcelJS from "exceljs";
@@ -51,23 +47,14 @@ const colorPalette = [
 ];
 
 /* ================= UTILS ================= */
-const slotDisplayMap = {
-  morning: "Morning",
-  evening: "Evening",
-  Shift_1: "Morning",
-  Shift_2: "Evening",
-};
-
 const parseExcelDate = (v) => {
   if (!v) return null;
   if (v instanceof Date) return v;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return new Date(v);
   if (/^\d{2}\.\d{2}\.\d{4}$/.test(v)) {
     const [d, m, y] = v.split(".");
     return new Date(`${y}-${m}-${d}`);
   }
-  const d = new Date(v);
-  return isNaN(d) ? null : d;
+  return new Date(v);
 };
 
 const toISO = (d) =>
@@ -115,75 +102,94 @@ export default function ClassroomPlanner() {
   const [plans, setPlans] = useState([]);
   const [weeks, setWeeks] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [processingStatus, setProcessingStatus] = useState("");
   const [error, setError] = useState("");
-
   const [yearFilter, setYearFilter] = useState("ALL");
   const [batchFilter, setBatchFilter] = useState("ALL");
   const [showUnassigned, setShowUnassigned] = useState(false);
 
-  /* ---------- LOAD SAVED MATRIX ---------- */
-  const loadExistingMatrix = useCallback(async () => {
+  /* ---------- LOAD MATRIX ---------- */
+  const loadMatrix = useCallback(async () => {
+    setLoading(true);
     try {
-      setLoading(true);
       const res = await fetch(`${API_BASE}/api/get-classroom-matrix`);
-      if (!res.ok) return;
-
       const { occupancyRows } = await res.json();
-      const mapped = occupancyRows.map((r) => ({
-        batch_no: r.batch_no,
-        classroom_name: r.classroom_name,
-        slot: r.slot,
-        a_start: r.occupancy_start,
-        a_end: r.occupancy_end,
-      }));
 
-      setPlans(mapped);
+      setPlans(
+        occupancyRows.map((r) => ({
+          batch_no: r.batch_no,
+          classroom_name: r.classroom_name,
+          slot: r.slot,
+          a_start: r.occupancy_start,
+          a_end: r.occupancy_end,
+        }))
+      );
 
-      if (mapped.length) {
-        const allDates = mapped.flatMap((p) => [p.a_start, p.a_end]);
-        setWeeks(getWeeksInRange(Math.min(...allDates.map(Date.parse)), Math.max(...allDates.map(Date.parse))));
-      }
+      const dates = occupancyRows.flatMap((r) => [
+        r.occupancy_start,
+        r.occupancy_end,
+      ]);
+      setWeeks(getWeeksInRange(Math.min(...dates), Math.max(...dates)));
     } catch (e) {
-      console.error(e);
+      setError("Failed to load matrix");
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    loadExistingMatrix();
-  }, [loadExistingMatrix]);
+    loadMatrix();
+  }, [loadMatrix]);
+
+  /* ---------- FILE UPLOAD ---------- */
+  const handleUpload = async (file) => {
+    setLoading(true);
+    try {
+      const wb = XLSX.read(await file.arrayBuffer());
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet);
+
+      const payload = rows.map((r) => ({
+        batch_no: r.COURSE,
+        occupancy_start: toISO(parseExcelDate(r["A.START DATE"])),
+        occupancy_end: toISO(parseExcelDate(r["A.DUE DATE"])),
+        enrolled: r.ENROLLED || null,
+        classroom_name: r.CLASS_ROOM || null,
+        slot:
+          r.SHIFTS?.toLowerCase() === "shift_2"
+            ? "evening"
+            : "morning",
+      }));
+
+      await fetch(`${API_BASE}/api/classroom-occupancy/bulk`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      await loadMatrix();
+    } catch (e) {
+      setError("Upload failed");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   /* ---------- FILTERS ---------- */
-  const years = useMemo(() => {
-    const ys = new Set();
-    weeks.forEach((w) => ys.add(w.year));
-    return ["ALL", ...Array.from(ys).sort()];
-  }, [weeks]);
+  const years = ["ALL", ...new Set(weeks.map((w) => w.year))];
+  const batches = ["ALL", ...new Set(plans.map((p) => p.batch_no))];
 
-  const batches = useMemo(
-    () => ["ALL", ...new Set(plans.map((p) => p.batch_no))],
-    [plans]
-  );
-
-  const filteredPlans = useMemo(() => {
-    return plans.filter((p) => {
-      if (batchFilter !== "ALL" && p.batch_no !== batchFilter) return false;
-      if (
-        yearFilter !== "ALL" &&
-        !weeks.some(
+  const filteredPlans = plans.filter(
+    (p) =>
+      (batchFilter === "ALL" || p.batch_no === batchFilter) &&
+      (yearFilter === "ALL" ||
+        weeks.some(
           (w) =>
             w.year === yearFilter &&
-            isOverlap(p.a_start, p.a_end, toISO(w.start), toISO(w.end))
-        )
-      )
-        return false;
-      return true;
-    });
-  }, [plans, batchFilter, yearFilter, weeks]);
+            isOverlap(p.a_start, p.a_end, w.start, w.end)
+        ))
+  );
 
-  /* ---------- MATRIX BUILD ---------- */
+  /* ---------- MATRIX ---------- */
   const classrooms = [...new Set(filteredPlans.map((p) => p.classroom_name))];
   const slots = ["morning", "evening"];
 
@@ -203,13 +209,10 @@ export default function ClassroomPlanner() {
         )
           return;
 
-        if (
-          !isOverlap(p.a_start, p.a_end, toISO(w.start), toISO(w.end))
-        )
-          return;
+        if (!isOverlap(p.a_start, p.a_end, w.start, w.end)) return;
 
         const key = `${p.classroom_name}|${p.slot}`;
-        if (!occ[key][w.key]) occ[key][w.key] = [];
+        occ[key][w.key] ??= [];
 
         if (occ[key][w.key].length === 0) {
           occ[key][w.key].push(p.batch_no);
@@ -223,23 +226,68 @@ export default function ClassroomPlanner() {
     return { matrix: occ, unassigned: un };
   }, [filteredPlans, weeks, classrooms, slots, yearFilter]);
 
-  const batchColors = useMemo(() => getBatchColorMap(plans), [plans]);
+  const batchColors = getBatchColorMap(plans);
+
+  /* ---------- EXPORT ---------- */
+  const exportExcel = async () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Matrix");
+
+    ws.addRow(["Classroom", "Slot", ...weeks.map((w) => `${w.year} W${w.weekNum}`)]);
+
+    classrooms.forEach((c) =>
+      slots.forEach((s) => {
+        const row = ws.addRow([
+          c,
+          s,
+          ...weeks.map(
+            (w) => matrix[`${c}|${s}`][w.key]?.[0] || ""
+          ),
+        ]);
+
+        row.eachCell((cell, i) => {
+          const batch = cell.value;
+          if (batch && batchColors[batch]) {
+            cell.fill = {
+              type: "pattern",
+              pattern: "solid",
+              fgColor: { argb: batchColors[batch].replace("#", "FF") },
+            };
+          }
+        });
+      })
+    );
+
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf]);
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "classroom_matrix.xlsx";
+    a.click();
+  };
 
   /* ================= UI ================= */
   return (
-    <Box sx={{ maxWidth: "98vw", mx: "auto", my: 4 }}>
-      <Paper sx={{ p: 3, mb: 3 }}>
+    <Box sx={{ maxWidth: "98vw", mx: "auto", my: 3 }}>
+      <Paper sx={{ p: 3 }}>
         <Typography variant="h4" gutterBottom>
-          Classroom Occupancy Matrix
+          Classroom Allocation Matrix
         </Typography>
 
         <Stack direction="row" spacing={2} mb={2}>
+          <Button variant="contained" component="label">
+            Upload Excel
+            <input hidden type="file" onChange={(e) => handleUpload(e.target.files[0])} />
+          </Button>
+
+          <Button variant="outlined" onClick={exportExcel}>
+            Export
+          </Button>
+
           <FormControl size="small">
             <Select value={yearFilter} onChange={(e) => setYearFilter(e.target.value)}>
               {years.map((y) => (
-                <MenuItem key={y} value={y}>
-                  {y}
-                </MenuItem>
+                <MenuItem key={y} value={y}>{y}</MenuItem>
               ))}
             </Select>
           </FormControl>
@@ -247,19 +295,20 @@ export default function ClassroomPlanner() {
           <FormControl size="small">
             <Select value={batchFilter} onChange={(e) => setBatchFilter(e.target.value)}>
               {batches.map((b) => (
-                <MenuItem key={b} value={b}>
-                  {b}
-                </MenuItem>
+                <MenuItem key={b} value={b}>{b}</MenuItem>
               ))}
             </Select>
           </FormControl>
 
-          <Button color="warning" variant="contained" onClick={() => setShowUnassigned(true)}>
+          <Button color="warning" onClick={() => setShowUnassigned(true)}>
             Unassigned
           </Button>
         </Stack>
 
-        <TableContainer sx={{ maxHeight: 450 }}>
+        {loading && <CircularProgress />}
+        {error && <Alert severity="error">{error}</Alert>}
+
+        <TableContainer sx={{ maxHeight: 500 }}>
           <Table stickyHeader size="small">
             <TableHead>
               <TableRow>
@@ -279,9 +328,8 @@ export default function ClassroomPlanner() {
               {classrooms.map((c) =>
                 slots.map((s) => (
                   <TableRow key={`${c}-${s}`}>
-                    <TableCell fontWeight="bold">{c}</TableCell>
-                    <TableCell>{slotDisplayMap[s]}</TableCell>
-
+                    <TableCell>{c}</TableCell>
+                    <TableCell>{s}</TableCell>
                     {weeks
                       .filter((w) => yearFilter === "ALL" || w.year === yearFilter)
                       .map((w) => (
@@ -294,7 +342,6 @@ export default function ClassroomPlanner() {
                               sx={{
                                 backgroundColor: batchColors[b],
                                 fontWeight: 600,
-                                cursor: "pointer",
                               }}
                             />
                           ))}
@@ -304,36 +351,27 @@ export default function ClassroomPlanner() {
                 ))
               )}
 
-              {/* UNASSIGNED ROW */}
               <TableRow sx={{ bgcolor: "#fff3e0" }}>
-                <TableCell colSpan={2} fontWeight="bold">
-                  UNASSIGNED
-                </TableCell>
-                {weeks
-                  .filter((w) => yearFilter === "ALL" || w.year === yearFilter)
-                  .map((w) => (
-                    <TableCell key={w.key} align="center">
-                      {(unassigned[w.key] || []).map((b) => (
-                        <Chip key={b} label={b} color="error" size="small" />
-                      ))}
-                    </TableCell>
-                  ))}
+                <TableCell colSpan={2}>UNASSIGNED</TableCell>
+                {weeks.map((w) => (
+                  <TableCell key={w.key}>
+                    {(unassigned[w.key] || []).map((b) => (
+                      <Chip key={b} label={b} color="error" size="small" />
+                    ))}
+                  </TableCell>
+                ))}
               </TableRow>
             </TableBody>
           </Table>
         </TableContainer>
       </Paper>
 
-      {/* UNASSIGNED POPUP */}
-      <Dialog open={showUnassigned} onClose={() => setShowUnassigned(false)} fullWidth maxWidth="sm">
+      <Dialog open={showUnassigned} onClose={() => setShowUnassigned(false)}>
         <DialogTitle>Unassigned Batches</DialogTitle>
         <DialogContent>
-          {Object.values(unassigned)
-            .flat()
-            .filter((v, i, a) => a.indexOf(v) === i)
-            .map((b) => (
-              <Chip key={b} label={b} color="error" sx={{ mr: 1, mb: 1 }} />
-            ))}
+          {[...new Set(Object.values(unassigned).flat())].map((b) => (
+            <Chip key={b} label={b} color="error" sx={{ m: 0.5 }} />
+          ))}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setShowUnassigned(false)}>Close</Button>

@@ -2730,6 +2730,80 @@ app.get('/api/classrooms', async (req, res) => {
   }
 });
 
+app.post("/api/classroom-occupancy/bulk", async (req, res) => {
+  const rows = req.body;
+
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return res.status(400).json({ error: "No data provided" });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    for (const r of rows) {
+      if (!r.batch_no || !r.occupancy_start || !r.occupancy_end) {
+        continue; // skip invalid rows
+      }
+
+      await client.query(
+        `
+        INSERT INTO classroom_occupancy (
+          batch_no,
+          occupancy_start,
+          occupancy_end,
+          enrolled,
+          class_room,
+          shifts,
+          classroom_name,
+          slot,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW()
+        )
+        ON CONFLICT (batch_no)
+        DO UPDATE SET
+          occupancy_start = EXCLUDED.occupancy_start,
+          occupancy_end   = EXCLUDED.occupancy_end,
+          enrolled        = EXCLUDED.enrolled,
+          class_room      = EXCLUDED.class_room,
+          shifts          = EXCLUDED.shifts,
+          classroom_name  = EXCLUDED.classroom_name,
+          slot            = EXCLUDED.slot,
+          updated_at      = NOW()
+        `,
+        [
+          r.batch_no,
+          r.occupancy_start,
+          r.occupancy_end,
+          r.enrolled || null,
+          r.class_room || null,
+          r.shifts || null,
+          r.classroom_name || null,
+          r.slot || null,
+        ]
+      );
+    }
+
+    await client.query("COMMIT");
+
+    res.json({
+      success: true,
+      message: "Classroom occupancy saved successfully",
+      count: rows.length,
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error(err);
+    res.status(500).json({ error: "Failed to save occupancy data" });
+  } finally {
+    client.release();
+  }
+});
+
 // API to get domains for dropdown selection
 app.get('/api/domains', async (req, res) => {
   try {
