@@ -1,13 +1,29 @@
 import React, { useEffect, useState, useMemo } from "react";
 import axios from "axios";
 import {
-  Box, Paper, Typography, FormControl, InputLabel, Select, MenuItem,
-  Table, TableHead, TableBody, TableRow, TableCell, TableContainer,
-  CircularProgress, Alert, Grid, Card, CardContent, Chip,
-  Dialog, DialogTitle, DialogContent
+  Box,
+  Paper,
+  Typography,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  Table,
+  TableHead,
+  TableBody,
+  TableRow,
+  TableCell,
+  TableContainer,
+  CircularProgress,
+  Alert,
+  Chip,
+  Dialog,
+  DialogTitle,
+  DialogContent
 } from "@mui/material";
 
-const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
+const API_BASE =
+  process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 
 export default function AttendanceReport({ user, token }) {
   const [batches, setBatches] = useState([]);
@@ -15,7 +31,7 @@ export default function AttendanceReport({ user, token }) {
   const [attendanceData, setAttendanceData] = useState([]);
   const [learnersData, setLearnersData] = useState([]);
   const [totalSessions, setTotalSessions] = useState(0);
-  const [sessionsCompleted, setSessionsCompleted] = useState(0); // ✅ NEW
+  const [sessionsCompleted, setSessionsCompleted] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [selectedLearner, setSelectedLearner] = useState(null);
@@ -23,25 +39,37 @@ export default function AttendanceReport({ user, token }) {
 
   const headers = { Authorization: `Bearer ${token}` };
 
-  // Load batches
+  /* ==============================
+     LOAD BATCHES
+     ============================== */
   useEffect(() => {
     const fetchBatches = async () => {
       try {
         const { data } = await axios.get(`${API_BASE}/api/batches`, { headers });
+
         const batchList = Array.isArray(data)
-          ? data.map(b => String(b.batch_no || b.batchNo || b)).filter(Boolean)
+          ? data
+              .map(b => String(b.batch_no || b.batchNo || b))
+              .filter(Boolean)
           : [];
+
         const uniqueBatches = [...new Set(batchList)].sort();
         setBatches(uniqueBatches);
-        if (uniqueBatches.length > 0) setBatchNo(uniqueBatches[0]);
+
+        if (uniqueBatches.length > 0) {
+          setBatchNo(uniqueBatches[0]);
+        }
       } catch (err) {
         console.error("Failed to load batches:", err);
       }
     };
+
     fetchBatches();
   }, [token]);
 
-  // Load attendance + session counts
+  /* ==============================
+     LOAD ATTENDANCE + SESSION COUNTS
+     ============================== */
   useEffect(() => {
     if (!batchNo) return;
 
@@ -63,11 +91,11 @@ export default function AttendanceReport({ user, token }) {
           attendance,
           total_sessions,
           sessions_completed
-        } = attendanceRes.data;
+        } = attendanceRes.data || {};
 
         setAttendanceData(attendance || []);
         setTotalSessions(total_sessions || 0);
-        setSessionsCompleted(sessions_completed || 0); // ✅ IMPORTANT
+        setSessionsCompleted(sessions_completed || 0);
 
         const learnersRes = await axios.get(`${API_BASE}/api/learners`, {
           params: { batch_no: batchNo },
@@ -77,13 +105,16 @@ export default function AttendanceReport({ user, token }) {
 
         const mappedLearners = (learnersRes.data || [])
           .map(l => ({
-            name: l.name || l.learner_name || l.email?.split("@")[0] || "Unknown",
+            name:
+              l.name ||
+              l.learner_name ||
+              l.email?.split("@")[0] ||
+              "Unknown",
             email: l.email || l.learner_email
           }))
           .filter(l => l.email);
 
         setLearnersData(mappedLearners);
-
       } catch (err) {
         console.error("API Error:", err);
         setError(err.response?.data?.error || err.message);
@@ -99,12 +130,15 @@ export default function AttendanceReport({ user, token }) {
     fetchData();
   }, [batchNo, token]);
 
-  // Attendance summary (BASED ON SESSIONS COMPLETED)
+  /* ==============================
+     ATTENDANCE SUMMARY
+     ============================== */
   const summary = useMemo(() => {
     const stats = {};
 
     attendanceData.forEach(row => {
       const email = row.learner_email;
+      if (!email) return;
 
       if (!stats[email]) {
         const learner = learnersData.find(
@@ -115,7 +149,6 @@ export default function AttendanceReport({ user, token }) {
           name: learner?.name || email.split("@")[0],
           email,
           present: 0,
-          totalSessions: sessionsCompleted,
           attendedSessions: new Set()
         };
       }
@@ -123,7 +156,7 @@ export default function AttendanceReport({ user, token }) {
       const sessionKey = `${row.date}-${row.session}`;
 
       if (
-        (row.status?.toUpperCase() === "P" || row.status === "Present") &&
+        row.status?.toUpperCase() === "P" &&
         !stats[email].attendedSessions.has(sessionKey)
       ) {
         stats[email].attendedSessions.add(sessionKey);
@@ -134,13 +167,9 @@ export default function AttendanceReport({ user, token }) {
     const learners = Object.values(stats);
 
     const avgAttendance =
-      learners.length > 0
+      learners.length > 0 && sessionsCompleted > 0
         ? learners.reduce(
-            (sum, l) =>
-              sum +
-              (sessionsCompleted > 0
-                ? (l.present / sessionsCompleted) * 100
-                : 0),
+            (sum, l) => sum + (l.present / sessionsCompleted) * 100,
             0
           ) / learners.length
         : 0;
@@ -159,6 +188,9 @@ export default function AttendanceReport({ user, token }) {
     setDetailDialogOpen(true);
   };
 
+  /* ==============================
+     UI STATES
+     ============================== */
   if (loading) {
     return (
       <Box sx={{ display: "flex", justifyContent: "center", minHeight: 400 }}>
@@ -171,21 +203,34 @@ export default function AttendanceReport({ user, token }) {
     return <Alert severity="error">{error}</Alert>;
   }
 
+  /* ==============================
+     RENDER
+     ============================== */
   return (
     <Box sx={{ maxWidth: 1600, p: 3 }}>
       <Paper sx={{ p: 4 }}>
         <Typography variant="h4" align="center" gutterBottom>
           📊 Attendance Report – {batchNo}
-          <Typography variant="h6" component="span" sx={{ ml: 2, color: "text.secondary" }}>
+          <Typography
+            variant="h6"
+            component="span"
+            sx={{ ml: 2, color: "text.secondary" }}
+          >
             ({sessionsCompleted} / {totalSessions} Sessions Completed)
           </Typography>
         </Typography>
 
         <FormControl sx={{ minWidth: 250, mb: 3 }}>
           <InputLabel>Batch</InputLabel>
-          <Select value={batchNo} label="Batch" onChange={e => setBatchNo(e.target.value)}>
+          <Select
+            value={batchNo}
+            label="Batch"
+            onChange={e => setBatchNo(e.target.value)}
+          >
             {batches.map(b => (
-              <MenuItem key={b} value={b}>{b}</MenuItem>
+              <MenuItem key={b} value={b}>
+                {b}
+              </MenuItem>
             ))}
           </Select>
         </FormControl>
@@ -198,7 +243,9 @@ export default function AttendanceReport({ user, token }) {
                 <TableCell>#</TableCell>
                 <TableCell>Learner</TableCell>
                 <TableCell>Email</TableCell>
-                <TableCell align="right">Present / {sessionsCompleted}</TableCell>
+                <TableCell align="right">
+                  Present / {sessionsCompleted}
+                </TableCell>
                 <TableCell align="right">%</TableCell>
               </TableRow>
             </TableHead>
@@ -210,7 +257,12 @@ export default function AttendanceReport({ user, token }) {
                     : 0;
 
                 return (
-                  <TableRow key={l.email} onClick={() => handleLearnerClick(l)}>
+                  <TableRow
+                    key={l.email}
+                    hover
+                    sx={{ cursor: "pointer" }}
+                    onClick={() => handleLearnerClick(l)}
+                  >
                     <TableCell>{i + 1}</TableCell>
                     <TableCell>{l.name}</TableCell>
                     <TableCell>{l.email}</TableCell>
@@ -219,8 +271,11 @@ export default function AttendanceReport({ user, token }) {
                       <Chip
                         label={`${percentage.toFixed(1)}%`}
                         color={
-                          percentage >= 80 ? "success" :
-                          percentage >= 60 ? "warning" : "error"
+                          percentage >= 80
+                            ? "success"
+                            : percentage >= 60
+                            ? "warning"
+                            : "error"
                         }
                       />
                     </TableCell>
@@ -232,7 +287,10 @@ export default function AttendanceReport({ user, token }) {
         </TableContainer>
 
         {/* DETAILS DIALOG */}
-        <Dialog open={detailDialogOpen} onClose={() => setDetailDialogOpen(false)}>
+        <Dialog
+          open={detailDialogOpen}
+          onClose={() => setDetailDialogOpen(false)}
+        >
           <DialogTitle>{selectedLearner?.name}</DialogTitle>
           <DialogContent>
             {selectedLearner && (
@@ -242,8 +300,11 @@ export default function AttendanceReport({ user, token }) {
                 <Typography>
                   Attendance:{" "}
                   {sessionsCompleted > 0
-                    ? ((selectedLearner.present / sessionsCompleted) * 100).toFixed(1)
-                    : 0}
+                    ? (
+                        (selectedLearner.present / sessionsCompleted) *
+                        100
+                      ).toFixed(1)
+                    : "0.0"}
                   %
                 </Typography>
               </>

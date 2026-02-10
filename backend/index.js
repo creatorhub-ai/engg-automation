@@ -646,42 +646,54 @@ app.get('/api/modules-by-date', async (req, res) => {
 // GET /api/learner-attendance - Fetch attendance by batch
 app.get("/api/learner-attendance", async (req, res) => {
   const { batch_no } = req.query;
+
   if (!batch_no) {
     return res.status(400).json({ error: "batch_no is required" });
   }
 
   try {
     // 1️⃣ Attendance records
-    const attendanceResult = await pool.query(`
+    const attendanceResult = await pool.query(
+      `
       SELECT learner_email, date, session, status
       FROM learner_attendance
       WHERE batch_no = $1
-    `, [batch_no]);
+      `,
+      [batch_no]
+    );
 
-    // 2️⃣ TOTAL sessions planned for batch
-    const totalSessionsResult = await pool.query(`
-      SELECT COUNT(DISTINCT session_date || '-' || session) AS total
-      FROM session_planner
+    // 2️⃣ Total sessions for batch
+    const totalSessionsResult = await pool.query(
+      `
+      SELECT COUNT(*)::int AS total
+      FROM course_planner_data
       WHERE batch_no = $1
-    `, [batch_no]);
+      `,
+      [batch_no]
+    );
 
-    // 3️⃣ Sessions completed till TODAY
-    const completedSessionsResult = await pool.query(`
-      SELECT COUNT(DISTINCT session_date || '-' || session) AS completed
-      FROM session_planner
+    // 3️⃣ Sessions completed till today
+    const completedSessionsResult = await pool.query(
+      `
+      SELECT COUNT(*)::int AS completed
+      FROM course_planner_data
       WHERE batch_no = $1
-        AND session_date <= CURRENT_DATE
-    `, [batch_no]);
+        AND date <= CURRENT_DATE
+      `,
+      [batch_no]
+    );
 
     res.json({
       attendance: attendanceResult.rows,
-      total_sessions: Number(totalSessionsResult.rows[0]?.total || 0),
-      sessions_completed: Number(completedSessionsResult.rows[0]?.completed || 0)
+      total_sessions: totalSessionsResult.rows[0]?.total || 0,
+      sessions_completed: completedSessionsResult.rows[0]?.completed || 0
     });
 
   } catch (err) {
-    console.error("Attendance API error:", err);
-    res.status(500).json({ error: "Failed to load attendance data" });
+    console.error("❌ learner-attendance API error:", err.message);
+    res.status(500).json({
+      error: "Failed to load attendance data"
+    });
   }
 });
 
