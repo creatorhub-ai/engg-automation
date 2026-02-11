@@ -97,47 +97,49 @@ export default function AttendanceReport({ user, token }) {
   // ================= CALCULATION =================
   const summary = useMemo(() => {
 
-  const today = new Date().toISOString().split("T")[0];
+    const stats = {};
 
-  // ✅ Start from learners_data (SOURCE OF TRUTH)
-  const learners = learnersData.map(learner => {
+    attendanceData.forEach(row => {
 
-    // Get this learner's attendance records
-    const learnerAttendance = attendanceData.filter(row =>
-      row.learner_email?.toLowerCase() === learner.email?.toLowerCase()
-      && row.date <= today
-    );
+      // ✅ Ignore future attendance records
+      const today = new Date().toISOString().split("T")[0];
+      if (row.date > today) return;
 
-    // Count present sessions (unique date + session)
-    const uniquePresent = new Set();
+      const email = row.learner_email;
+      if (!stats[email]) {
 
-    learnerAttendance.forEach(row => {
+        const learner = learnersData.find(l =>
+          l.email?.toLowerCase() === email?.toLowerCase()
+        );
+
+        stats[email] = {
+          name: learner?.name || email.split('@')[0],
+          email,
+          present: 0
+        };
+      }
+
       if (row.status?.toUpperCase() === "P" || row.status === "Present") {
-        uniquePresent.add(`${row.date}-${row.session}`);
+        stats[email].present++;
       }
     });
 
+    const learners = Object.values(stats);
+
+    const avgAttendance =
+      learners.length > 0
+        ? learners.reduce((sum, l) =>
+            sum + (sessionsTillToday > 0 ? (l.present / sessionsTillToday) * 100 : 0),
+            0
+          ) / learners.length
+        : 0;
+
     return {
-      name: learner.name,   // ✅ ALWAYS from learners_data.name
-      email: learner.email,
-      present: uniquePresent.size
+      learners,
+      avgAttendance: Math.round(avgAttendance * 10) / 10
     };
-  });
 
-  const avgAttendance =
-    learners.length > 0
-      ? learners.reduce((sum, l) =>
-          sum + (sessionsTillToday > 0 ? (l.present / sessionsTillToday) * 100 : 0),
-          0
-        ) / learners.length
-      : 0;
-
-  return {
-    learners,
-    avgAttendance: Math.round(avgAttendance * 10) / 10
-  };
-
-}, [attendanceData, learnersData, sessionsTillToday]);
+  }, [attendanceData, learnersData, sessionsTillToday]);
 
   // ================= UI =================
   if (loading) {
@@ -173,13 +175,13 @@ export default function AttendanceReport({ user, token }) {
           <Table>
             <TableHead>
               <TableRow>
-                <TableCell>#</TableCell>
+                <TableCell>S. No</TableCell>
                 <TableCell>Learner</TableCell>
                 <TableCell>Email</TableCell>
                 <TableCell align="right">
                   Present / {sessionsTillToday}
                 </TableCell>
-                <TableCell align="right">%</TableCell>
+                <TableCell align="right">Percentage %</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
