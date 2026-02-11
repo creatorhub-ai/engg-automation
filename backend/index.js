@@ -644,81 +644,53 @@ app.get('/api/modules-by-date', async (req, res) => {
 
 
 // GET /api/learner-attendance - Fetch attendance by batch
-app.get("/api/learner-attendance", async (req, res) => {
-  const { batch_no } = req.query;
-
-  if (!batch_no) {
-    return res.status(400).json({ error: "batch_no is required" });
-  }
-
+app.get('/api/learner-attendance', async (req, res) => {
   try {
-    /**
-     * STEP 1: Calculate sessions per day
-     * Each row = 1 session
-     */
-    const plannerQuery = `
-      SELECT
-        date,
-        COUNT(*) AS sessions
-      FROM course_planner_data
-      WHERE batch_no = $1
-      GROUP BY date
-    `;
+    const { batch_no } = req.query;
+    
+    if (!batch_no) {
+      return res.status(400).json({ error: 'batch_no required' });
+    }
 
-    const plannerResult = await pool.query(plannerQuery, [batch_no]);
+    console.log(`🔍 Processing batch: ${batch_no}`);
+
+    // 1. Get TOTAL SESSIONS from course_planner_data (DISTINCT date entries)
+    const { data: plannerData, error: plannerError } = await supabase
+      .from("course_planner_data")
+      .select("id, date, batch_no")
+      .eq("batch_no", batch_no)
+      .order("date");
 
     let totalSessions = 0;
-    plannerResult.rows.forEach(r => {
-      totalSessions += Number(r.sessions);
-    });
+    if (!plannerError && plannerData) {
+      // Count DISTINCT dates = total sessions
+      const uniqueDates = [...new Set(plannerData.map(row => row.date))];
+      totalSessions = uniqueDates.length;
+      console.log(`📅 ${plannerData.length} planner rows → ${totalSessions} unique sessions`);
+    }
 
-    /**
-     * STEP 2: Attendance data
-     */
-    const attendanceQuery = `
-      SELECT
-        learner_email,
-        batch_no,
-        date,
-        session,
-        status
-      FROM learner_attendance
-      WHERE batch_no = $1
-    `;
+    // 2. Get ATTENDANCE data
+    const { data: attendanceData, error: attendanceError } = await supabase
+      .from("learner_attendance")
+      .select("learner_email, batch_no, date, session, status")
+      .eq("batch_no", batch_no);
 
-    const attendanceResult = await pool.query(attendanceQuery, [batch_no]);
+    if (attendanceError) {
+      console.error("Attendance error:", attendanceError);
+      return res.status(500).json({ error: attendanceError.message });
+    }
 
-    /**
-     * STEP 3: Completed sessions
-     * If planner has dates up to today
-     */
-    const completedSessionsQuery = `
-      SELECT
-        COUNT(*) AS completed_sessions
-      FROM course_planner_data
-      WHERE batch_no = $1
-        AND date <= CURRENT_DATE
-    `;
+    console.log(`📊 ${attendanceData?.length || 0} attendance records`);
 
-    const completedResult = await pool.query(completedSessionsQuery, [batch_no]);
-
-    const sessionsCompleted = Number(
-      completedResult.rows[0]?.completed_sessions || 0
-    );
-
-    /**
-     * FINAL RESPONSE
-     */
     res.json({
-      attendance: attendanceResult.rows,
+      attendance: attendanceData || [],
       total_sessions: totalSessions,
-      sessions_completed: sessionsCompleted
+      planner_count: plannerData?.length || 0
     });
+
   } catch (err) {
-    console.error("Attendance API Error:", err);
-    res.status(500).json({
-      error: "Failed to fetch attendance data"
-    });
+    console.error("🚨 API Error:", err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
