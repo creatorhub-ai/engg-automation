@@ -654,22 +654,36 @@ app.get('/api/learner-attendance', async (req, res) => {
 
     console.log(`🔍 Processing batch: ${batch_no}`);
 
-    // 1. Get TOTAL SESSIONS from course_planner_data (DISTINCT date entries)
+    const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+
+    // 1️⃣ Get ALL sessions for batch
     const { data: plannerData, error: plannerError } = await supabase
       .from("course_planner_data")
-      .select("id, date, batch_no")
+      .select("date, batch_no")
       .eq("batch_no", batch_no)
       .order("date");
 
-    let totalSessions = 0;
-    if (!plannerError && plannerData) {
-      // Count DISTINCT dates = total sessions
-      const uniqueDates = [...new Set(plannerData.map(row => row.date))];
-      totalSessions = uniqueDates.length;
-      console.log(`📅 ${plannerData.length} planner rows → ${totalSessions} unique sessions`);
+    if (plannerError) {
+      console.error("Planner error:", plannerError);
+      return res.status(500).json({ error: plannerError.message });
     }
 
-    // 2. Get ATTENDANCE data
+    let totalBatchSessions = 0;
+    let sessionsTillToday = 0;
+
+    if (plannerData) {
+      const uniqueDates = [...new Set(plannerData.map(row => row.date))];
+      totalBatchSessions = uniqueDates.length;
+
+      // ✅ Count only sessions till today
+      const pastDates = uniqueDates.filter(date => date <= today);
+      sessionsTillToday = pastDates.length;
+
+      console.log(`📅 Total Batch Sessions: ${totalBatchSessions}`);
+      console.log(`📅 Sessions Till Today (${today}): ${sessionsTillToday}`);
+    }
+
+    // 2️⃣ Get ATTENDANCE data
     const { data: attendanceData, error: attendanceError } = await supabase
       .from("learner_attendance")
       .select("learner_email, batch_no, date, session, status")
@@ -684,8 +698,8 @@ app.get('/api/learner-attendance', async (req, res) => {
 
     res.json({
       attendance: attendanceData || [],
-      total_sessions: totalSessions,
-      planner_count: plannerData?.length || 0
+      total_batch_sessions: totalBatchSessions,
+      sessions_till_today: sessionsTillToday
     });
 
   } catch (err) {
