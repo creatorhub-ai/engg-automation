@@ -97,58 +97,49 @@ export default function AttendanceReport({ user, token }) {
   // ================= CALCULATION =================
   const summary = useMemo(() => {
 
-  const today = new Date().toISOString().split("T")[0];
+    const stats = {};
 
-  const stats = {};
+    attendanceData.forEach(row => {
 
-  // ✅ Initialize from learnersData (SOURCE OF TRUTH)
-  learnersData.forEach(learner => {
+      // ✅ Ignore future attendance records
+      const today = new Date().toISOString().split("T")[0];
+      if (row.date > today) return;
 
-    if (!learner.email) return;
+      const email = row.learner_email;
+      if (!stats[email]) {
 
-    const normalizedEmail = learner.email.trim().toLowerCase();
+        const learner = learnersData.find(l =>
+          l.email?.toLowerCase() === email?.toLowerCase()
+        );
 
-    stats[normalizedEmail] = {
-      name: learner.name,   // ALWAYS from learners_data.name
-      email: learner.email,
-      present: 0
+        stats[email] = {
+          name: learner?.name || email.split('@')[0],
+          email,
+          present: 0
+        };
+      }
+
+      if (row.status?.toUpperCase() === "P" || row.status === "Present") {
+        stats[email].present++;
+      }
+    });
+
+    const learners = Object.values(stats);
+
+    const avgAttendance =
+      learners.length > 0
+        ? learners.reduce((sum, l) =>
+            sum + (sessionsTillToday > 0 ? (l.present / sessionsTillToday) * 100 : 0),
+            0
+          ) / learners.length
+        : 0;
+
+    return {
+      learners,
+      avgAttendance: Math.round(avgAttendance * 10) / 10
     };
-  });
 
-  // ✅ Process attendance records
-  attendanceData.forEach(row => {
-
-    if (!row.learner_email || !row.date) return;
-
-    if (row.date > today) return;
-
-    const normalizedEmail = row.learner_email.trim().toLowerCase();
-
-    if (!stats[normalizedEmail]) return;
-
-    if (row.status?.toUpperCase() === "P" || row.status === "Present") {
-      stats[normalizedEmail].present++;
-    }
-
-  });
-
-  const learners = Object.values(stats);
-
-  const avgAttendance =
-    learners.length > 0
-      ? learners.reduce((sum, l) =>
-          sum + (sessionsTillToday > 0 ? (l.present / sessionsTillToday) * 100 : 0),
-          0
-        ) / learners.length
-      : 0;
-
-  return {
-    learners,
-    avgAttendance: Math.round(avgAttendance * 10) / 10
-  };
-
-}, [attendanceData, learnersData, sessionsTillToday]);
-
+  }, [attendanceData, learnersData, sessionsTillToday]);
 
   // ================= UI =================
   if (loading) {
