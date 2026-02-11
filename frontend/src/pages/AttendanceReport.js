@@ -97,49 +97,56 @@ export default function AttendanceReport({ user, token }) {
   // ================= CALCULATION =================
   const summary = useMemo(() => {
 
-    const stats = {};
+  const today = new Date().toISOString().split("T")[0];
 
-    attendanceData.forEach(row => {
+  const stats = {};
 
-      // ✅ Ignore future attendance records
-      const today = new Date().toISOString().split("T")[0];
-      if (row.date > today) return;
+  // ✅ START from learnersData (so name always comes from learners_data table)
+  learnersData.forEach(learner => {
 
-      const email = row.learner_email;
-      if (!stats[email]) {
-
-        const learner = learnersData.find(l =>
-          l.email?.toLowerCase() === email?.toLowerCase()
-        );
-
-        stats[email] = {
-          name: learner?.name || email.split('@')[0],
-          email,
-          present: 0
-        };
-      }
-
-      if (row.status?.toUpperCase() === "P" || row.status === "Present") {
-        stats[email].present++;
-      }
-    });
-
-    const learners = Object.values(stats);
-
-    const avgAttendance =
-      learners.length > 0
-        ? learners.reduce((sum, l) =>
-            sum + (sessionsTillToday > 0 ? (l.present / sessionsTillToday) * 100 : 0),
-            0
-          ) / learners.length
-        : 0;
-
-    return {
-      learners,
-      avgAttendance: Math.round(avgAttendance * 10) / 10
+    stats[learner.email] = {
+      name: learner.name, // ✅ ALWAYS from learners_data.name
+      email: learner.email,
+      present: 0
     };
+  });
 
-  }, [attendanceData, learnersData, sessionsTillToday]);
+  // ✅ Now process attendance
+  attendanceData.forEach(row => {
+
+    if (!row.learner_email) return;
+
+    // Ignore future records
+    if (row.date > today) return;
+
+    const email = row.learner_email;
+
+    // Only count if learner exists in learnersData
+    if (!stats[email]) return;
+
+    if (row.status?.toUpperCase() === "P" || row.status === "Present") {
+      stats[email].present++;
+    }
+
+  });
+
+  const learners = Object.values(stats);
+
+  const avgAttendance =
+    learners.length > 0
+      ? learners.reduce((sum, l) =>
+          sum + (sessionsTillToday > 0 ? (l.present / sessionsTillToday) * 100 : 0),
+          0
+        ) / learners.length
+      : 0;
+
+  return {
+    learners,
+    avgAttendance: Math.round(avgAttendance * 10) / 10
+  };
+
+}, [attendanceData, learnersData, sessionsTillToday]);
+
 
   // ================= UI =================
   if (loading) {
