@@ -101,31 +101,33 @@ export default function AttendanceReport({ user, token }) {
 
   const stats = {};
 
-  // ✅ START from learnersData (so name always comes from learners_data table)
+  // ✅ Initialize from learnersData (SOURCE OF TRUTH)
   learnersData.forEach(learner => {
 
-    stats[learner.email] = {
-      name: learner.name, // ✅ ALWAYS from learners_data.name
+    if (!learner.email) return;
+
+    const normalizedEmail = learner.email.trim().toLowerCase();
+
+    stats[normalizedEmail] = {
+      name: learner.name,   // ALWAYS from learners_data.name
       email: learner.email,
       present: 0
     };
   });
 
-  // ✅ Now process attendance
+  // ✅ Process attendance records
   attendanceData.forEach(row => {
 
-    if (!row.learner_email) return;
+    if (!row.learner_email || !row.date) return;
 
-    // Ignore future records
     if (row.date > today) return;
 
-    const email = row.learner_email;
+    const normalizedEmail = row.learner_email.trim().toLowerCase();
 
-    // Only count if learner exists in learnersData
-    if (!stats[email]) return;
+    if (!stats[normalizedEmail]) return;
 
     if (row.status?.toUpperCase() === "P" || row.status === "Present") {
-      stats[email].present++;
+      stats[normalizedEmail].present++;
     }
 
   });
