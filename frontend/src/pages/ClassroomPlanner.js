@@ -159,17 +159,42 @@ function planClassroomsForOffline(rows) {
     const aEnd = toIsoDateString(aEndDate);
 
     const enrolled = Number(row["ENROLLED"] || 0);
+    const batchCapacity = Number(row["CAPACITY"] || 0);
 
     mode = typeof mode === "string" ? mode.trim().toUpperCase() : "";
 
     if (!course || mode !== "OFFLINE" || !aStart || !aEnd) return;
+
+    // ❌ RULE 1: enrolled should not exceed batch capacity
+    if (enrolled > batchCapacity) {
+      plans.push({
+        batch_no: course,
+        mode,
+        a_start: aStart,
+        a_end: aEnd,
+        enrolled,
+        capacity: batchCapacity,
+        classroom_name: "",
+        slot: "",
+        isAllocated: false,
+      });
+
+      unallocated.push({
+        batch_no: course,
+        enrolled,
+        a_start: aStart,
+        a_end: aEnd,
+      });
+
+      return;
+    }
 
     let allocated = false;
     let assignedRoom = "";
     let assignedSlot = "";
 
     for (const room of classrooms) {
-      // ✅ STRICT CAPACITY CHECK
+      // ❌ RULE 2: enrolled should not exceed classroom capacity
       if (enrolled > room.capacity) continue;
 
       for (const slot of shifts) {
@@ -213,6 +238,7 @@ function planClassroomsForOffline(rows) {
       a_start: aStart,
       a_end: aEnd,
       enrolled,
+      capacity: batchCapacity,
       classroom_name: assignedRoom,
       slot: assignedSlot,
       isAllocated: allocated,
@@ -300,7 +326,7 @@ export default function ClassroomPlanner() {
 
       setPlans(normalizedPlans);
 
-      // ✅ NEW: Recompute unallocated batches after reload
+      // ✅ Extract unallocated batches after reload
       const unallocated = normalizedPlans.filter(
         (p) => !p.classroom_name || !p.slot
       );
@@ -664,18 +690,15 @@ export default function ClassroomPlanner() {
     setError("");
 
     try {
-      const occupancyRows = plans
-        .filter((p) => p.batch_no && p.classroom_name && p.slot && p.a_start && p.a_end)
-        .map((p) => ({
-          batch_no: p.batch_no.trim(),
-          classroom_name: p.classroom_name,
-          slot: p.slot,
-          occupancy_start: p.a_start,
-          occupancy_end: p.a_end,
-          enrolled: p.enrolled || 0,
-          a_start: p.a_start,
-          a_end: p.a_end,
-        }));
+      const occupancyRows = plans.map((p) => ({
+        batch_no: p.batch_no?.trim(),
+        classroom_name: p.classroom_name || null,
+        slot: p.slot || null,
+        occupancy_start: p.a_start,
+        occupancy_end: p.a_end,
+        enrolled: p.enrolled || 0,
+        capacity: p.capacity || 0,
+      }));
 
       if (!occupancyRows.length) {
         throw new Error("No valid rows to save.");
