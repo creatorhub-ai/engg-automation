@@ -699,7 +699,8 @@ app.get('/api/learner-attendance', async (req, res) => {
     res.json({
       attendance: attendanceData || [],
       total_batch_sessions: totalBatchSessions,
-      sessions_till_today: sessionsTillToday
+      sessions_till_today: sessionsTillToday,
+      planner_dates: plannerData?.map(p => p.date) || []   // ✅ ADD THIS
     });
 
   } catch (err) {

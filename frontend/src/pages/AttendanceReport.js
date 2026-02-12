@@ -15,13 +15,12 @@ export default function AttendanceReport({ user, token }) {
 
   const [attendanceData, setAttendanceData] = useState([]);
   const [learnersData, setLearnersData] = useState([]);
-  const [coursePlannerDates, setCoursePlannerDates] = useState([]); // ✅ NEW
+  const [plannerDates, setPlannerDates] = useState([]); // ✅ FIXED
 
   const [totalBatchSessions, setTotalBatchSessions] = useState(0);
   const [sessionsTillToday, setSessionsTillToday] = useState(0);
 
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
 
   const [selectedLearner, setSelectedLearner] = useState(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
@@ -31,20 +30,17 @@ export default function AttendanceReport({ user, token }) {
   // ================= LOAD BATCHES =================
   useEffect(() => {
     const fetchBatches = async () => {
-      try {
-        const { data } = await axios.get(`${API_BASE}/api/batches`, { headers });
-        const batchList = Array.isArray(data)
-          ? data.map(b => String(b.batch_no || b)).filter(Boolean)
-          : [];
+      const { data } = await axios.get(`${API_BASE}/api/batches`, { headers });
 
-        const uniqueBatches = [...new Set(batchList)].sort();
-        setBatches(uniqueBatches);
-        if (uniqueBatches.length > 0) setBatchNo(uniqueBatches[0]);
+      const batchList = Array.isArray(data)
+        ? data.map(b => String(b.batch_no || b)).filter(Boolean)
+        : [];
 
-      } catch (err) {
-        console.error("Failed to load batches:", err);
-      }
+      const unique = [...new Set(batchList)].sort();
+      setBatches(unique);
+      if (unique.length > 0) setBatchNo(unique[0]);
     };
+
     fetchBatches();
   }, [token]);
 
@@ -54,49 +50,39 @@ export default function AttendanceReport({ user, token }) {
 
     const fetchData = async () => {
       setLoading(true);
-      setError("");
 
       try {
-        // Attendance
-        const attendanceRes = await axios.get(`${API_BASE}/api/learner-attendance`, {
-          params: { batch_no: batchNo },
-          headers
-        });
+        const attendanceRes = await axios.get(
+          `${API_BASE}/api/learner-attendance`,
+          { params: { batch_no: batchNo }, headers }
+        );
 
         const {
           attendance,
           total_batch_sessions,
-          sessions_till_today
+          sessions_till_today,
+          planner_dates
         } = attendanceRes.data;
 
         setAttendanceData(attendance || []);
         setTotalBatchSessions(total_batch_sessions || 0);
         setSessionsTillToday(sessions_till_today || 0);
+        setPlannerDates(planner_dates || []);   // ✅ FROM SAME API
 
-        // Learners
-        const learnersRes = await axios.get(`${API_BASE}/api/learners`, {
-          params: { batch_no: batchNo },
-          headers
-        });
+        const learnersRes = await axios.get(
+          `${API_BASE}/api/learners`,
+          { params: { batch_no: batchNo }, headers }
+        );
 
         setLearnersData(learnersRes.data || []);
 
-        // ✅ Course Planner Dates
-        const plannerRes = await axios.get(`${API_BASE}/api/course-planner`, {
-          params: { batch_no: batchNo },
-          headers
-        });
-
-        const plannerDates = plannerRes.data?.map(d => d.date).filter(Boolean) || [];
-        setCoursePlannerDates(plannerDates);
-
       } catch (err) {
-        setError("Failed to load data");
+        console.error(err);
         setAttendanceData([]);
+        setLearnersData([]);
+        setPlannerDates([]);
         setTotalBatchSessions(0);
         setSessionsTillToday(0);
-        setLearnersData([]);
-        setCoursePlannerDates([]);
       } finally {
         setLoading(false);
       }
@@ -112,8 +98,7 @@ export default function AttendanceReport({ user, token }) {
     const stats = {};
 
     attendanceData.forEach(row => {
-      if (!row.learner_email || !row.date) return;
-      if (row.date > today) return;
+      if (!row.learner_email || row.date > today) return;
 
       const email = row.learner_email.trim().toLowerCase();
 
@@ -125,7 +110,8 @@ export default function AttendanceReport({ user, token }) {
         };
       }
 
-      if (row.status?.toUpperCase() === "P" || row.status?.toUpperCase() === "PRESENT") {
+      if (row.status?.toUpperCase() === "P" ||
+          row.status?.toUpperCase() === "PRESENT") {
         stats[email].present++;
       }
     });
@@ -143,27 +129,24 @@ export default function AttendanceReport({ user, token }) {
 
   }, [attendanceData, learnersData]);
 
-  // ================= DAY CALCULATION (UPDATED LOGIC) =================
+  // ================= DAY CALCULATION =================
   const calculateLearnerDetails = (learnerEmail) => {
 
     const today = new Date().toISOString().split("T")[0];
     const email = learnerEmail.trim().toLowerCase();
 
-    // ✅ DISTINCT DATES FROM COURSE PLANNER
-    const distinctDates = [...new Set(coursePlannerDates)];
+    const distinctDates = [...new Set(plannerDates)];
     const totalBatchDays = distinctDates.length;
-
     const totalDaysTillToday = distinctDates.filter(d => d <= today).length;
 
-    const learnerAttendance = attendanceData.filter(row =>
-      row.learner_email?.trim().toLowerCase() === email &&
-      row.date <= today
+    const learnerAttendance = attendanceData.filter(r =>
+      r.learner_email?.trim().toLowerCase() === email &&
+      r.date <= today
     );
 
-    const presentDates = new Set();
+    let presentDays = 0;
 
     distinctDates.forEach(date => {
-
       if (date > today) return;
 
       const sessionsOfDay = learnerAttendance.filter(r => r.date === date);
@@ -171,28 +154,27 @@ export default function AttendanceReport({ user, token }) {
       if (sessionsOfDay.length === 0) return;
 
       const absentSessions = sessionsOfDay.filter(r =>
-        !(r.status?.toUpperCase() === "P" || r.status?.toUpperCase() === "PRESENT")
+        !(r.status?.toUpperCase() === "P" ||
+          r.status?.toUpperCase() === "PRESENT")
       ).length;
 
-      // ✅ RULE: If absent >= 2 → Day Absent
-      if (absentSessions < 2) {
-        presentDates.add(date);
-      }
+      if (absentSessions < 2) presentDays++;
     });
 
     return {
       totalBatchSessions,
       sessionsTillToday,
-      sessionsPresent: summary.learners.find(l => l.email === learnerEmail)?.present || 0,
+      sessionsPresent:
+        summary.learners.find(l => l.email === learnerEmail)?.present || 0,
       totalBatchDays,
       totalDaysTillToday,
-      presentDays: presentDates.size
+      presentDays
     };
   };
 
   if (loading) {
     return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', mt: 5 }}>
+      <Box sx={{ display: "flex", justifyContent: "center", mt: 5 }}>
         <CircularProgress />
       </Box>
     );
@@ -226,7 +208,9 @@ export default function AttendanceReport({ user, token }) {
                 <TableCell>S. No</TableCell>
                 <TableCell>Learner</TableCell>
                 <TableCell>Email</TableCell>
-                <TableCell align="right">Present / {sessionsTillToday}</TableCell>
+                <TableCell align="right">
+                  Present / {sessionsTillToday}
+                </TableCell>
                 <TableCell align="right">Percentage %</TableCell>
               </TableRow>
             </TableHead>
