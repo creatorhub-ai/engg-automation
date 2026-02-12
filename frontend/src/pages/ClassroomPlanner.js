@@ -139,9 +139,11 @@ function planClassroomsForOffline(rows) {
     { name: "Yamuna", capacity: 35 },
     { name: "Cauvery", capacity: 35 },
   ];
-  const shifts = ["morning", "evening"];
 
+  const shifts = ["morning", "evening"];
   const plans = [];
+  const unallocated = [];
+
   const occupancyIndex = {};
   const getKey = (room, slot) => `${room}|${slot}`;
 
@@ -150,67 +152,59 @@ function planClassroomsForOffline(rows) {
 
     const course = row["COURSE"];
     let mode = row["MODE"];
-    const aStartRaw = row["A.START DATE"];
-    const aEndRaw = row["A.DUE DATE"];
+    const aStartDate = parseExcelDate(row["A.START DATE"]);
+    const aEndDate = parseExcelDate(row["A.DUE DATE"]);
 
-    const aStartDate = parseExcelDate(aStartRaw);
-    const aEndDate = parseExcelDate(aEndRaw);
     const aStart = toIsoDateString(aStartDate);
     const aEnd = toIsoDateString(aEndDate);
 
-    const capacity = Number(row["CAPACITY"] || 0);
     const enrolled = Number(row["ENROLLED"] || 0);
 
     mode = typeof mode === "string" ? mode.trim().toUpperCase() : "";
 
     if (!course || mode !== "OFFLINE" || !aStart || !aEnd) return;
 
-    const hasSufficientCapacity = enrolled <= capacity || enrolled === 0;
-    const licenseNeeded = enrolled > capacity ? enrolled - capacity : 0;
+    let allocated = false;
+    let assignedRoom = "";
+    let assignedSlot = "";
 
-    let assignedRoom = (row["CLASS_ROOM"] || "").trim();
-    let assignedShiftRaw = (row["SHIFTS"] || "").trim();
-    let slot = "";
+    for (const room of classrooms) {
+      // ✅ STRICT CAPACITY CHECK
+      if (enrolled > room.capacity) continue;
 
-    if (assignedShiftRaw) {
-      slot = slotDisplayMap[assignedShiftRaw] || "morning";
+      for (const slot of shifts) {
+        const key = getKey(room.name, slot);
+        if (!occupancyIndex[key]) occupancyIndex[key] = [];
+
+        const overlap = occupancyIndex[key].some((b) =>
+          isDateOverlap(aStart, aEnd, b.start, b.end)
+        );
+
+        if (!overlap) {
+          assignedRoom = `${room.name} [${room.capacity}]`;
+          assignedSlot = slot;
+
+          occupancyIndex[key].push({
+            start: aStart,
+            end: aEnd,
+            course,
+          });
+
+          allocated = true;
+          break;
+        }
+      }
+
+      if (allocated) break;
     }
 
-    if (!assignedRoom || !assignedShiftRaw) {
-      let candidateRooms;
-      if (capacity > 35) {
-        candidateRooms = classrooms.filter((c) => c.name === "Ganga");
-      } else {
-        candidateRooms = classrooms.filter((c) => c.name !== "Ganga");
-      }
-
-      let found = false;
-      for (const room of candidateRooms) {
-        for (const s of shifts) {
-          const key = getKey(room.name, s);
-          if (!occupancyIndex[key]) occupancyIndex[key] = [];
-          const slotBookings = occupancyIndex[key];
-
-          const overlap = slotBookings.some((b) =>
-            isDateOverlap(aStart, aEnd, b.start, b.end)
-          );
-          if (!overlap) {
-            assignedRoom = `${room.name} [${room.capacity}]`;
-            slot = s;
-            assignedShiftRaw = s === "morning" ? "Shift_1" : "Shift_2";
-            slotBookings.push({ start: aStart, end: aEnd, course });
-            found = true;
-            break;
-          }
-        }
-        if (found) break;
-      }
-    } else {
-      const roomName = assignedRoom.split(" ")[0];
-      slot = slotDisplayMap[assignedShiftRaw] || "morning";
-      const key = getKey(roomName, slot);
-      if (!occupancyIndex[key]) occupancyIndex[key] = [];
-      occupancyIndex[key].push({ start: aStart, end: aEnd, course });
+    if (!allocated) {
+      unallocated.push({
+        batch_no: course,
+        enrolled,
+        a_start: aStart,
+        a_end: aEnd,
+      });
     }
 
     plans.push({
@@ -218,16 +212,14 @@ function planClassroomsForOffline(rows) {
       mode,
       a_start: aStart,
       a_end: aEnd,
-      capacity,
       enrolled,
-      hasSufficientCapacity,
-      licenseNeeded,
-      classroom_name: assignedRoom || "",
-      slot,
+      classroom_name: assignedRoom,
+      slot: assignedSlot,
+      isAllocated: allocated,
     });
   });
 
-  return plans;
+  return { plans, unallocated };
 }
 
 function getBatchColorMap(allMatrixTable) {
@@ -268,6 +260,7 @@ export default function ClassroomPlanner() {
   const [saving, setSaving] = useState(false);
   const [licenses, setLicenses] = useState([]);
   const [licenseError, setLicenseError] = useState("");
+  const [unallocatedBatches, setUnallocatedBatches] = useState([]);
 
   // ✅ FIX: hoisted so it is accessible to handleSaveMatrix + useEffect
   const loadExistingMatrix = useCallback(async () => {
@@ -347,7 +340,13 @@ export default function ClassroomPlanner() {
   }, [loadExistingMatrix]);
 
   const classrooms = useMemo(
-    () => [...new Set(plans.map((p) => p.classroom_name).filter(Boolean))],
+    () =>
+      [...new Set(
+        plans
+          .filter((p) => p.isAllocated)
+          .map((p) => p.classroom_name)
+          .filter(Boolean)
+      )],
     [plans]
   );
   const slots = ["morning", "evening"];
@@ -451,8 +450,19 @@ export default function ClassroomPlanner() {
       });
 
       setProcessingStatus("Processing OFFLINE batches...");
-      const offlinePlans = planClassroomsForOffline(rows);
+      const { plans: offlinePlans, unallocated } =
+        planClassroomsForOffline(rows);
+
       setPlans(offlinePlans);
+
+      if (unallocated.length > 0) {
+        alert(
+          `${unallocated.length} batch(es) could not be allocated due to capacity/date conflicts.`
+        );
+        setUnallocatedBatches(unallocated);
+      } else {
+        setUnallocatedBatches([]);
+      }
 
       if (!offlinePlans.length) {
         setError(
@@ -909,7 +919,7 @@ export default function ClassroomPlanner() {
                     <TableCell>Slot</TableCell>
                     {weeks.map((w, idx) => (
                       <TableCell key={idx} align="center">
-                        {w.month} W{w.weekNum}
+                        {w.month} {w.year} W{w.weekNum}
                       </TableCell>
                     ))}
                   </TableRow>
@@ -973,6 +983,34 @@ export default function ClassroomPlanner() {
           </>
         )}
       </Paper>
+      {unallocatedBatches.length > 0 && (
+        <Paper elevation={3} sx={{ p: 3, mt: 4 }}>
+          <Typography variant="h6" color="error" gutterBottom>
+            Unallocated Batches
+          </Typography>
+
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Batch</TableCell>
+                <TableCell>Enrolled</TableCell>
+                <TableCell>Start Date</TableCell>
+                <TableCell>End Date</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {unallocatedBatches.map((u) => (
+                <TableRow key={u.batch_no}>
+                  <TableCell>{u.batch_no}</TableCell>
+                  <TableCell>{u.enrolled}</TableCell>
+                  <TableCell>{u.a_start}</TableCell>
+                  <TableCell>{u.a_end}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Paper>
+      )}
     </Box>
   );
 }

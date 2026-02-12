@@ -1651,7 +1651,13 @@ app.post("/api/save-classroom-matrix", async (req, res) => {
     // Process each row (batch_no unique)
     for (const row of occupancyRows) {
       const batch_no = row.batch_no?.trim();
-      if (!batch_no || !row.classroom_name || !row.slot) {
+      if (
+        !batch_no ||
+        !row.classroom_name ||
+        !row.slot ||
+        !row.occupancy_start ||
+        !row.occupancy_end
+      ) {
         skipped++;
         continue;
       }
