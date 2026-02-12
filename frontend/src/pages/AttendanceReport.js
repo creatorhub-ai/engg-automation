@@ -15,7 +15,7 @@ export default function AttendanceReport({ user, token }) {
 
   const [attendanceData, setAttendanceData] = useState([]);
   const [learnersData, setLearnersData] = useState([]);
-  const [plannerDates, setPlannerDates] = useState([]); // ✅ FIXED
+  const [plannerDates, setPlannerDates] = useState([]);
 
   const [totalBatchSessions, setTotalBatchSessions] = useState(0);
   const [sessionsTillToday, setSessionsTillToday] = useState(0);
@@ -67,7 +67,14 @@ export default function AttendanceReport({ user, token }) {
         setAttendanceData(attendance || []);
         setTotalBatchSessions(total_batch_sessions || 0);
         setSessionsTillToday(sessions_till_today || 0);
-        setPlannerDates(planner_dates || []);   // ✅ FROM SAME API
+
+        // ✅ IMPORTANT FIX HERE
+        // Extract only date strings (handle object or string safely)
+        const cleanedPlannerDates = (planner_dates || []).map(d =>
+          typeof d === "string" ? d : d.date
+        );
+
+        setPlannerDates(cleanedPlannerDates);
 
         const learnersRes = await axios.get(
           `${API_BASE}/api/learners`,
@@ -129,14 +136,17 @@ export default function AttendanceReport({ user, token }) {
 
   }, [attendanceData, learnersData]);
 
-  // ================= DAY CALCULATION =================
+  // ================= DAY CALCULATION (FIXED) =================
   const calculateLearnerDetails = (learnerEmail) => {
 
     const today = new Date().toISOString().split("T")[0];
     const email = learnerEmail.trim().toLowerCase();
 
+    // ✅ Remove duplicates correctly
     const distinctDates = [...new Set(plannerDates)];
+
     const totalBatchDays = distinctDates.length;
+
     const totalDaysTillToday = distinctDates.filter(d => d <= today).length;
 
     const learnerAttendance = attendanceData.filter(r =>
@@ -144,22 +154,15 @@ export default function AttendanceReport({ user, token }) {
       r.date <= today
     );
 
-    let presentDays = 0;
-
-    distinctDates.forEach(date => {
-      if (date > today) return;
-
-      const sessionsOfDay = learnerAttendance.filter(r => r.date === date);
-
-      if (sessionsOfDay.length === 0) return;
-
-      const absentSessions = sessionsOfDay.filter(r =>
-        !(r.status?.toUpperCase() === "P" ||
-          r.status?.toUpperCase() === "PRESENT")
-      ).length;
-
-      if (absentSessions < 2) presentDays++;
-    });
+    // ✅ DISTINCT PRESENT DAYS
+    const presentDays = new Set(
+      learnerAttendance
+        .filter(r =>
+          r.status?.toUpperCase() === "P" ||
+          r.status?.toUpperCase() === "PRESENT"
+        )
+        .map(r => r.date)
+    ).size;
 
     return {
       totalBatchSessions,
