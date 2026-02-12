@@ -49,7 +49,7 @@ export default function AttendanceReport({ user, token }) {
     fetchBatches();
   }, [token]);
 
-  // ================= LOAD ATTENDANCE =================
+  // ================= LOAD DATA =================
   useEffect(() => {
     if (!batchNo) return;
 
@@ -94,30 +94,29 @@ export default function AttendanceReport({ user, token }) {
     fetchData();
   }, [batchNo, token]);
 
-  // ================= CALCULATION =================
+  // ================= SUMMARY =================
   const summary = useMemo(() => {
 
+    const today = new Date().toISOString().split("T")[0];
     const stats = {};
 
-    attendanceData.forEach(row => {
+    learnersData.forEach(learner => {
+      if (!learner.email) return;
+      const email = learner.email.trim().toLowerCase();
 
-      // ✅ Ignore future attendance records
-      const today = new Date().toISOString().split("T")[0];
+      stats[email] = {
+        name: learner.name,
+        email: learner.email,
+        present: 0
+      };
+    });
+
+    attendanceData.forEach(row => {
+      if (!row.learner_email || !row.date) return;
       if (row.date > today) return;
 
-      const email = row.learner_email;
-      if (!stats[email]) {
-
-        const learner = learnersData.find(l =>
-          l.email?.toLowerCase() === email?.toLowerCase()
-        );
-
-        stats[email] = {
-          name: learner?.name || email.split('@')[0],
-          email,
-          present: 0
-        };
-      }
+      const email = row.learner_email.trim().toLowerCase();
+      if (!stats[email]) return;
 
       if (row.status?.toUpperCase() === "P" || row.status === "Present") {
         stats[email].present++;
@@ -140,6 +139,57 @@ export default function AttendanceReport({ user, token }) {
     };
 
   }, [attendanceData, learnersData, sessionsTillToday]);
+
+  // ================= DAY CALCULATION FUNCTION =================
+  const calculateLearnerDetails = (learnerEmail) => {
+
+    const today = new Date().toISOString().split("T")[0];
+
+    const email = learnerEmail.trim().toLowerCase();
+
+    const learnerAttendance = attendanceData.filter(row =>
+      row.learner_email?.trim().toLowerCase() === email
+    );
+
+    const allDates = [...new Set(attendanceData.map(r => r.date))];
+    const totalBatchDays = allDates.length;
+    const totalDaysTillToday = allDates.filter(d => d <= today).length;
+
+    let presentDays = 0;
+
+    allDates.forEach(date => {
+
+      if (date > today) return;
+
+      const sessionsOfDay = learnerAttendance.filter(r => r.date === date);
+
+      if (sessionsOfDay.length === 0) return;
+
+      const totalSessionsInDay = attendanceData.filter(r => r.date === date).length;
+      const absentSessions = sessionsOfDay.filter(r =>
+        !(r.status?.toUpperCase() === "P" || r.status === "Present")
+      ).length;
+
+      // ✅ RULE: If absent ≥ 2 sessions → Day Absent
+      if (absentSessions < 2) {
+        presentDays++;
+      }
+
+    });
+
+    const sessionsPresent = summary.learners.find(
+      l => l.email === learnerEmail
+    )?.present || 0;
+
+    return {
+      totalBatchSessions,
+      sessionsTillToday,
+      sessionsPresent,
+      totalBatchDays,
+      totalDaysTillToday,
+      presentDays
+    };
+  };
 
   // ================= UI =================
   if (loading) {
@@ -178,9 +228,7 @@ export default function AttendanceReport({ user, token }) {
                 <TableCell>S. No</TableCell>
                 <TableCell>Learner</TableCell>
                 <TableCell>Email</TableCell>
-                <TableCell align="right">
-                  Present / {sessionsTillToday}
-                </TableCell>
+                <TableCell align="right">Present / {sessionsTillToday}</TableCell>
                 <TableCell align="right">Percentage %</TableCell>
               </TableRow>
             </TableHead>
@@ -192,7 +240,14 @@ export default function AttendanceReport({ user, token }) {
                     : 0;
 
                 return (
-                  <TableRow key={learner.email}>
+                  <TableRow
+                    key={learner.email}
+                    sx={{ cursor: "pointer" }}
+                    onClick={() => {
+                      setSelectedLearner(learner);
+                      setDetailDialogOpen(true);
+                    }}
+                  >
                     <TableCell>{index + 1}</TableCell>
                     <TableCell>{learner.name}</TableCell>
                     <TableCell>{learner.email}</TableCell>
@@ -208,6 +263,38 @@ export default function AttendanceReport({ user, token }) {
             </TableBody>
           </Table>
         </TableContainer>
+
+        {/* ================= DETAIL DIALOG ================= */}
+        <Dialog
+          open={detailDialogOpen}
+          onClose={() => setDetailDialogOpen(false)}
+          maxWidth="sm"
+          fullWidth
+        >
+          <DialogTitle>
+            Attendance Details - {selectedLearner?.name}
+          </DialogTitle>
+
+          <DialogContent>
+            {selectedLearner && (() => {
+              const details = calculateLearnerDetails(selectedLearner.email);
+
+              return (
+                <Box sx={{ mt: 2 }}>
+                  <Typography><strong>Total Batch Sessions:</strong> {details.totalBatchSessions}</Typography>
+                  <Typography><strong>Sessions Till Today:</strong> {details.sessionsTillToday}</Typography>
+                  <Typography><strong>Sessions Present:</strong> {details.sessionsPresent}</Typography>
+
+                  <Box sx={{ mt: 3 }} />
+
+                  <Typography><strong>Total Batch Days:</strong> {details.totalBatchDays}</Typography>
+                  <Typography><strong>Days Till Today:</strong> {details.totalDaysTillToday}</Typography>
+                  <Typography><strong>Days Present:</strong> {details.presentDays}</Typography>
+                </Box>
+              );
+            })()}
+          </DialogContent>
+        </Dialog>
 
       </Paper>
     </Box>
