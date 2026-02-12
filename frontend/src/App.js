@@ -29,6 +29,7 @@ import TrainerAssignmentDashboard from "./pages/TrainerAssignmentDashboard";
 import MarksDashboard from "./pages/MarksDashboard";
 import MarkEntryDashboard from "./pages/MarkEntryDashboard";
 import TrainerParentDashboard from "./pages/TrainerParentDashboard";
+import ClassroomMatrixDashboard from "./pages/ClassroomMatrixDashboard";
 
 const roleMenus = {
   admin: [
@@ -53,6 +54,7 @@ const roleMenus = {
     { text: "Manager Leave Dashboard", path: "/holiday-upload" },
     { text: "Trainer Assignment Dashboard", path: "/trainer-assignment" },
     { text: "Marks Dashboard", path: "/marks/entry" },
+    { text: "Classroom Occupancy", path: "/classroom-matrix" },
   ],
   manager: [
     { text: "Home", path: "/home" },
@@ -167,6 +169,8 @@ function getComponentForPath(path, login) {
       return <TrainerAssignmentDashboard user={login} />;
     case "/marks/entry":
       return <MarkEntryDashboard user={login} />;
+    case "/classroom-matrix":
+      return <ClassroomMatrixDashboard user={login} />;
     default:
       return <div>Page not found</div>;
   }

@@ -51,6 +51,7 @@ const ICON_MAP = {
 const MENUS_BY_ROLE = {
   admin: [
     { id: 1, name: "Classroom Planner", path: "/classroom-planner" },
+    { id: 16, name: "Classroom Occupancy", path: "/classroom-matrix" },
     { id: 2, name: "Internal Communication", path: "/internal" },
     { id: 3, name: "Home", path: "/home" },
     { id: 15, name: "Trainer Dashboards", path: "/trainer-dashboard" },
