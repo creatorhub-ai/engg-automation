@@ -308,6 +308,7 @@ export default function ClassroomPlanner() {
         setProcessingStatus("No saved matrix found.");
         setPlans([]);
         setWeeks([]);
+        setUnallocatedBatches([]);
         return;
       }
 
@@ -318,14 +319,14 @@ export default function ClassroomPlanner() {
         setProcessingStatus("No saved data.");
         setPlans([]);
         setWeeks([]);
+        setUnallocatedBatches([]);
         return;
       }
 
-      // Map to plans format
       const normalizedPlans = occupancyRows.map((r) => ({
         batch_no: r.batch_no,
-        classroom_name: r.classroom_name,
-        slot: r.slot,
+        classroom_name: r.classroom_name || "",
+        slot: r.slot || "",
         a_start: r.occupancy_start,
         a_end: r.occupancy_end,
         enrolled: r.enrolled || 0,
@@ -333,12 +334,16 @@ export default function ClassroomPlanner() {
         mode: "OFFLINE",
       }));
 
-      setPlans(normalizedPlans);
+      // ✅ IMPORTANT FIX
+      const allocated = normalizedPlans.filter(
+        (p) => p.classroom_name && p.slot
+      );
 
-      // ✅ Extract unallocated batches after reload
       const unallocated = normalizedPlans.filter(
         (p) => !p.classroom_name || !p.slot
       );
+
+      setPlans(allocated);
 
       setUnallocatedBatches(
         unallocated.map((p) => ({
@@ -349,8 +354,10 @@ export default function ClassroomPlanner() {
         }))
       );
 
-      // Compute weeks from dates
-      const allDates = normalizedPlans.flatMap((p) => [p.a_start, p.a_end]).filter(Boolean);
+      const allDates = normalizedPlans
+        .flatMap((p) => [p.a_start, p.a_end])
+        .filter(Boolean);
+
       if (allDates.length) {
         const start = allDates.reduce((a, b) => (a < b ? a : b));
         const end = allDates.reduce((a, b) => (a > b ? a : b));
@@ -503,16 +510,17 @@ export default function ClassroomPlanner() {
       const { plans: offlinePlans, unallocated } =
         planClassroomsForOffline(rows);
 
-      setPlans(offlinePlans);
+      // ✅ Separate immediately
+      const allocated = offlinePlans.filter(
+        (p) => p.classroom_name && p.slot
+      );
 
-      if (unallocated.length > 0) {
-        alert(
-          `${unallocated.length} batch(es) could not be allocated due to capacity/date conflicts.`
-        );
-        setUnallocatedBatches(unallocated);
-      } else {
-        setUnallocatedBatches([]);
-      }
+      const unallocatedOnly = offlinePlans.filter(
+        (p) => !p.classroom_name || !p.slot
+      );
+
+      setPlans(allocated);
+      setUnallocatedBatches(unallocatedOnly);
 
       if (!offlinePlans.length) {
         setError(
@@ -690,16 +698,31 @@ export default function ClassroomPlanner() {
 
   // Save to backend using API_BASE
   const handleSaveMatrix = async () => {
-    if (!plans.length) {
-      setError("No matrix to save. Upload a file first.");
+    if (!plans.length && !unallocatedBatches.length) {
+      setError("No matrix to save.");
       return;
     }
+
     setSaving(true);
     setSaveStatus("");
     setError("");
 
     try {
-      const occupancyRows = plans.map((p) => ({
+      // ✅ Combine BOTH allocated + unallocated
+      const allRows = [
+        ...plans,
+        ...unallocatedBatches.map((u) => ({
+          batch_no: u.batch_no,
+          classroom_name: null,
+          slot: null,
+          a_start: u.a_start,
+          a_end: u.a_end,
+          enrolled: u.enrolled,
+          capacity: 0,
+        })),
+      ];
+
+      const occupancyRows = allRows.map((p) => ({
         batch_no: p.batch_no?.trim(),
         classroom_name: p.classroom_name || null,
         slot: p.slot || null,
@@ -709,16 +732,10 @@ export default function ClassroomPlanner() {
         capacity: p.capacity || 0,
       }));
 
-      if (!occupancyRows.length) {
-        throw new Error("No valid rows to save.");
-      }
-
-      const payload = { occupancyRows };
-
       const res = await fetch(`${API_BASE}/api/save-classroom-matrix`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ occupancyRows }),
       });
 
       const data = await res.json();
@@ -732,7 +749,6 @@ export default function ClassroomPlanner() {
         `✅ ${inserted || 0} NEW + ${updated || 0} UPDATED + ${skipped || 0} unchanged`
       );
 
-      // ✅ FIXED: now loadExistingMatrix is in scope
       await loadExistingMatrix();
     } catch (err) {
       console.error("Save error:", err);
