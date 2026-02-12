@@ -97,48 +97,66 @@ export default function AttendanceReport({ user, token }) {
   // ================= SUMMARY =================
   const summary = useMemo(() => {
 
-    const today = new Date().toISOString().split("T")[0];
-    const stats = {};
+  const today = new Date().toISOString().split("T")[0];
+  const stats = {};
 
-    learnersData.forEach(learner => {
-      if (!learner.email) return;
-      const email = learner.email.trim().toLowerCase();
+  // ✅ Step 1: Build from attendance first (so rows always exist)
+  attendanceData.forEach(row => {
 
+    if (!row.learner_email || !row.date) return;
+    if (row.date > today) return;
+
+    const email = row.learner_email.trim().toLowerCase();
+
+    if (!stats[email]) {
       stats[email] = {
-        name: learner.name,
-        email: learner.email,
+        name: "",
+        email: row.learner_email,
         present: 0
       };
-    });
+    }
 
-    attendanceData.forEach(row => {
-      if (!row.learner_email || !row.date) return;
-      if (row.date > today) return;
+    if (
+      row.status?.toUpperCase() === "P" ||
+      row.status?.toUpperCase() === "PRESENT"
+    ) {
+      stats[email].present++;
+    }
 
-      const email = row.learner_email.trim().toLowerCase();
-      if (!stats[email]) return;
+  });
 
-      if (row.status?.toUpperCase() === "P" || row.status === "Present") {
-        stats[email].present++;
-      }
-    });
+  // ✅ Step 2: Attach name from learnersData
+  Object.keys(stats).forEach(emailKey => {
 
-    const learners = Object.values(stats);
+    const learner = learnersData.find(
+      l => l.email?.trim().toLowerCase() === emailKey
+    );
 
-    const avgAttendance =
-      learners.length > 0
-        ? learners.reduce((sum, l) =>
-            sum + (sessionsTillToday > 0 ? (l.present / sessionsTillToday) * 100 : 0),
-            0
-          ) / learners.length
-        : 0;
+    if (learner) {
+      stats[emailKey].name = learner.name;
+    } else {
+      // fallback if learner not found
+      stats[emailKey].name = emailKey.split("@")[0];
+    }
 
-    return {
-      learners,
-      avgAttendance: Math.round(avgAttendance * 10) / 10
-    };
+  });
 
-  }, [attendanceData, learnersData, sessionsTillToday]);
+  const learners = Object.values(stats);
+
+  const avgAttendance =
+    learners.length > 0
+      ? learners.reduce((sum, l) =>
+          sum + (sessionsTillToday > 0 ? (l.present / sessionsTillToday) * 100 : 0),
+          0
+        ) / learners.length
+      : 0;
+
+  return {
+    learners,
+    avgAttendance: Math.round(avgAttendance * 10) / 10
+  };
+
+}, [attendanceData, learnersData, sessionsTillToday]);
 
   // ================= DAY CALCULATION FUNCTION =================
   const calculateLearnerDetails = (learnerEmail) => {
