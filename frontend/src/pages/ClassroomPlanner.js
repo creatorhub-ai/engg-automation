@@ -300,6 +300,20 @@ export default function ClassroomPlanner() {
 
       setPlans(normalizedPlans);
 
+      // ✅ NEW: Recompute unallocated batches after reload
+      const unallocated = normalizedPlans.filter(
+        (p) => !p.classroom_name || !p.slot
+      );
+
+      setUnallocatedBatches(
+        unallocated.map((p) => ({
+          batch_no: p.batch_no,
+          enrolled: p.enrolled,
+          a_start: p.a_start,
+          a_end: p.a_end,
+        }))
+      );
+
       // Compute weeks from dates
       const allDates = normalizedPlans.flatMap((p) => [p.a_start, p.a_end]).filter(Boolean);
       if (allDates.length) {
@@ -341,12 +355,13 @@ export default function ClassroomPlanner() {
 
   const classrooms = useMemo(
     () =>
-      [...new Set(
-        plans
-          .filter((p) => p.isAllocated)
-          .map((p) => p.classroom_name)
-          .filter(Boolean)
-      )],
+      [
+        ...new Set(
+          plans
+            .filter((p) => p.classroom_name && p.slot)
+            .map((p) => p.classroom_name)
+        ),
+      ],
     [plans]
   );
   const slots = ["morning", "evening"];
