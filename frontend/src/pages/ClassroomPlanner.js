@@ -102,9 +102,18 @@ function getWeeksInRange(start, end) {
 }
 
 function isDateOverlap(start1, end1, start2, end2) {
-  return !(
-    new Date(end1) < new Date(start2) || new Date(start1) > new Date(end2)
-  );
+  const s1 = new Date(start1);
+  const e1 = new Date(end1);
+  const s2 = new Date(start2);
+  const e2 = new Date(end2);
+
+  // If either is invalid, treat as overlap (safety)
+  if (isNaN(s1) || isNaN(e1) || isNaN(s2) || isNaN(e2)) {
+    return true;
+  }
+
+  // Proper overlap formula
+  return s1 <= e2 && s2 <= e1;
 }
 
 // Trim header names from XLSX (ex: "MODE " -> "MODE")
@@ -210,8 +219,8 @@ function planClassroomsForOffline(rows) {
           assignedSlot = slot;
 
           occupancyIndex[key].push({
-            start: aStart,
-            end: aEnd,
+            start: new Date(aStart).toISOString(),
+            end: new Date(aEnd).toISOString(),
             course,
           });
 
