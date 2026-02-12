@@ -751,6 +751,23 @@ app.get('/api/learners', async (req, res) => {
   }
 });
 
+// get the internal users details from the table
+app.get("/api/internal-users", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("internal_users")
+      .select("name, email")
+      .eq("is_active", true);
+
+    if (error) throw error;
+
+    res.json(data);
+  } catch (err) {
+    console.error("Internal Users Fetch Error:", err);
+    res.status(500).json({ error: "Failed to fetch internal users" });
+  }
+});
+
 // 🔥 CRITICAL: learners_data table endpoints
 app.get('/api/learners-data', async (req, res) => {
   try {
