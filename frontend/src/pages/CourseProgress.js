@@ -166,13 +166,40 @@ export default function CourseProgress() {
       return (
         <span key={index}>
           <Tooltip
+            arrow
+            placement="right"
+            componentsProps={{
+              tooltip: {
+                sx: {
+                  backgroundColor: "#1e1e1e",   // Dark background
+                  color: "#ffffff",             // White text
+                  fontSize: "0.85rem",
+                  padding: "12px",
+                  borderRadius: "10px",
+                  boxShadow: "0px 4px 12px rgba(0,0,0,0.3)"
+                }
+              },
+              arrow: {
+                sx: {
+                  color: "#1e1e1e"
+                }
+              }
+            }}
             title={
               details ? (
                 <Box>
-                  <Typography variant="body2"><strong>Email:</strong></Typography>
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                    Email:
+                  </Typography>
+
                   <Typography
                     variant="body2"
-                    sx={{ color: "blue", cursor: "pointer" }}
+                    sx={{
+                      color: "#4fc3f7", // Light blue for visibility
+                      cursor: "pointer",
+                      textDecoration: "underline",
+                      "&:hover": { color: "#81d4fa" }
+                    }}
                     onClick={(e) => {
                       e.stopPropagation();
                       window.location.href = `mailto:${details.email}`;
@@ -181,18 +208,31 @@ export default function CourseProgress() {
                     {details.email}
                   </Typography>
 
-                  <Typography variant="body2" sx={{ mt: 1 }}>
-                    <strong>Phone:</strong> {details.phone}
+                  <Typography
+                    variant="body2"
+                    sx={{ mt: 1, fontWeight: 600 }}
+                  >
+                    Phone:
+                  </Typography>
+
+                  <Typography variant="body2">
+                    {details.phone}
                   </Typography>
                 </Box>
               ) : "No details found"
             }
-            arrow
           >
-            <span style={{ textDecoration: "underline", cursor: "pointer" }}>
+            <span
+              style={{
+                textDecoration: "underline",
+                cursor: "pointer",
+                fontWeight: 500
+              }}
+            >
               {name}
             </span>
           </Tooltip>
+
           {index !== trainerNames.length - 1 && ", "}
         </span>
       );
