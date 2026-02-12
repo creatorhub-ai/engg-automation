@@ -3,8 +3,7 @@ import axios from "axios";
 import {
   Box, Paper, Typography, FormControl, InputLabel, Select, MenuItem,
   Table, TableHead, TableBody, TableRow, TableCell, TableContainer,
-  CircularProgress, Alert, Grid, Card, CardContent, Chip,
-  Dialog, DialogTitle, DialogContent
+  CircularProgress, Dialog, DialogTitle, DialogContent
 } from "@mui/material";
 
 const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
@@ -16,6 +15,7 @@ export default function AttendanceReport({ user, token }) {
 
   const [attendanceData, setAttendanceData] = useState([]);
   const [learnersData, setLearnersData] = useState([]);
+  const [coursePlannerDates, setCoursePlannerDates] = useState([]); // ✅ NEW
 
   const [totalBatchSessions, setTotalBatchSessions] = useState(0);
   const [sessionsTillToday, setSessionsTillToday] = useState(0);
@@ -33,7 +33,6 @@ export default function AttendanceReport({ user, token }) {
     const fetchBatches = async () => {
       try {
         const { data } = await axios.get(`${API_BASE}/api/batches`, { headers });
-
         const batchList = Array.isArray(data)
           ? data.map(b => String(b.batch_no || b)).filter(Boolean)
           : [];
@@ -58,6 +57,7 @@ export default function AttendanceReport({ user, token }) {
       setError("");
 
       try {
+        // Attendance
         const attendanceRes = await axios.get(`${API_BASE}/api/learner-attendance`, {
           params: { batch_no: batchNo },
           headers
@@ -73,6 +73,7 @@ export default function AttendanceReport({ user, token }) {
         setTotalBatchSessions(total_batch_sessions || 0);
         setSessionsTillToday(sessions_till_today || 0);
 
+        // Learners
         const learnersRes = await axios.get(`${API_BASE}/api/learners`, {
           params: { batch_no: batchNo },
           headers
@@ -80,12 +81,22 @@ export default function AttendanceReport({ user, token }) {
 
         setLearnersData(learnersRes.data || []);
 
+        // ✅ Course Planner Dates
+        const plannerRes = await axios.get(`${API_BASE}/api/course-planner`, {
+          params: { batch_no: batchNo },
+          headers
+        });
+
+        const plannerDates = plannerRes.data?.map(d => d.date).filter(Boolean) || [];
+        setCoursePlannerDates(plannerDates);
+
       } catch (err) {
         setError("Failed to load data");
         setAttendanceData([]);
         setTotalBatchSessions(0);
         setSessionsTillToday(0);
         setLearnersData([]);
+        setCoursePlannerDates([]);
       } finally {
         setLoading(false);
       }
@@ -97,85 +108,61 @@ export default function AttendanceReport({ user, token }) {
   // ================= SUMMARY =================
   const summary = useMemo(() => {
 
-  const today = new Date().toISOString().split("T")[0];
-  const stats = {};
+    const today = new Date().toISOString().split("T")[0];
+    const stats = {};
 
-  // ✅ Step 1: Build from attendance first (so rows always exist)
-  attendanceData.forEach(row => {
+    attendanceData.forEach(row => {
+      if (!row.learner_email || !row.date) return;
+      if (row.date > today) return;
 
-    if (!row.learner_email || !row.date) return;
-    if (row.date > today) return;
+      const email = row.learner_email.trim().toLowerCase();
 
-    const email = row.learner_email.trim().toLowerCase();
+      if (!stats[email]) {
+        stats[email] = {
+          name: "",
+          email: row.learner_email,
+          present: 0
+        };
+      }
 
-    if (!stats[email]) {
-      stats[email] = {
-        name: "",
-        email: row.learner_email,
-        present: 0
-      };
-    }
+      if (row.status?.toUpperCase() === "P" || row.status?.toUpperCase() === "PRESENT") {
+        stats[email].present++;
+      }
+    });
 
-    if (
-      row.status?.toUpperCase() === "P" ||
-      row.status?.toUpperCase() === "PRESENT"
-    ) {
-      stats[email].present++;
-    }
+    Object.keys(stats).forEach(emailKey => {
+      const learner = learnersData.find(
+        l => l.email?.trim().toLowerCase() === emailKey
+      );
+      stats[emailKey].name = learner?.name || emailKey.split("@")[0];
+    });
 
-  });
+    return {
+      learners: Object.values(stats)
+    };
 
-  // ✅ Step 2: Attach name from learnersData
-  Object.keys(stats).forEach(emailKey => {
+  }, [attendanceData, learnersData]);
 
-    const learner = learnersData.find(
-      l => l.email?.trim().toLowerCase() === emailKey
-    );
-
-    if (learner) {
-      stats[emailKey].name = learner.name;
-    } else {
-      // fallback if learner not found
-      stats[emailKey].name = emailKey.split("@")[0];
-    }
-
-  });
-
-  const learners = Object.values(stats);
-
-  const avgAttendance =
-    learners.length > 0
-      ? learners.reduce((sum, l) =>
-          sum + (sessionsTillToday > 0 ? (l.present / sessionsTillToday) * 100 : 0),
-          0
-        ) / learners.length
-      : 0;
-
-  return {
-    learners,
-    avgAttendance: Math.round(avgAttendance * 10) / 10
-  };
-
-}, [attendanceData, learnersData, sessionsTillToday]);
-
-  // ================= DAY CALCULATION FUNCTION =================
+  // ================= DAY CALCULATION (UPDATED LOGIC) =================
   const calculateLearnerDetails = (learnerEmail) => {
 
     const today = new Date().toISOString().split("T")[0];
-
     const email = learnerEmail.trim().toLowerCase();
 
+    // ✅ DISTINCT DATES FROM COURSE PLANNER
+    const distinctDates = [...new Set(coursePlannerDates)];
+    const totalBatchDays = distinctDates.length;
+
+    const totalDaysTillToday = distinctDates.filter(d => d <= today).length;
+
     const learnerAttendance = attendanceData.filter(row =>
-      row.learner_email?.trim().toLowerCase() === email
+      row.learner_email?.trim().toLowerCase() === email &&
+      row.date <= today
     );
 
-    const allDates = [...new Set(attendanceData.map(r => r.date))];
-    const totalBatchDays = allDates.length;
-    const totalDaysTillToday = allDates.filter(d => d <= today).length;
+    const presentDates = new Set();
 
-    let presentDays = 0;
-
-    allDates.forEach(date => {
+    distinctDates.forEach(date => {
 
       if (date > today) return;
 
@@ -183,33 +170,26 @@ export default function AttendanceReport({ user, token }) {
 
       if (sessionsOfDay.length === 0) return;
 
-      const totalSessionsInDay = attendanceData.filter(r => r.date === date).length;
       const absentSessions = sessionsOfDay.filter(r =>
-        !(r.status?.toUpperCase() === "P" || r.status === "Present")
+        !(r.status?.toUpperCase() === "P" || r.status?.toUpperCase() === "PRESENT")
       ).length;
 
-      // ✅ RULE: If absent ≥ 2 sessions → Day Absent
+      // ✅ RULE: If absent >= 2 → Day Absent
       if (absentSessions < 2) {
-        presentDays++;
+        presentDates.add(date);
       }
-
     });
-
-    const sessionsPresent = summary.learners.find(
-      l => l.email === learnerEmail
-    )?.present || 0;
 
     return {
       totalBatchSessions,
       sessionsTillToday,
-      sessionsPresent,
+      sessionsPresent: summary.learners.find(l => l.email === learnerEmail)?.present || 0,
       totalBatchDays,
       totalDaysTillToday,
-      presentDays
+      presentDays: presentDates.size
     };
   };
 
-  // ================= UI =================
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', mt: 5 }}>
@@ -252,6 +232,7 @@ export default function AttendanceReport({ user, token }) {
             </TableHead>
             <TableBody>
               {summary.learners.map((learner, index) => {
+
                 const percentage =
                   sessionsTillToday > 0
                     ? (learner.present / sessionsTillToday) * 100
@@ -282,7 +263,6 @@ export default function AttendanceReport({ user, token }) {
           </Table>
         </TableContainer>
 
-        {/* ================= DETAIL DIALOG ================= */}
         <Dialog
           open={detailDialogOpen}
           onClose={() => setDetailDialogOpen(false)}
