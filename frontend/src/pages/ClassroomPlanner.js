@@ -395,48 +395,70 @@ export default function ClassroomPlanner() {
     loadLicenses();
   }, [loadExistingMatrix]);
 
-  const classrooms = useMemo(
-    () =>
-      [
-        ...new Set(
-          plans
-            .filter((p) => p.classroom_name && p.slot)
-            .map((p) => p.classroom_name)
-        ),
-      ],
-    [plans]
-  );
+  const classrooms = useMemo(() => {
+    const allocatedRooms = [
+      ...new Set(
+        plans
+          .filter((p) => p.classroom_name && p.slot)
+          .map((p) => p.classroom_name)
+      ),
+    ];
+
+    if (unallocatedBatches.length > 0) {
+      allocatedRooms.push("UNALLOCATED");
+    }
+
+    return allocatedRooms;
+  }, [plans, unallocatedBatches]);
   const slots = ["morning", "evening"];
 
   const table = useMemo(() => {
     const t = [];
+
     classrooms.forEach((room) => {
-      slots.forEach((slot) => {
+      const roomSlots = room === "UNALLOCATED" ? ["-"] : slots;
+
+      roomSlots.forEach((slot) => {
         const row = [room, slot];
+
         weeks.forEach((week) => {
           const weekStart = week.weekStart;
           const weekEnd = new Date(weekStart);
           weekEnd.setDate(weekEnd.getDate() + 6);
+
           const startIso = weekStart.toISOString().slice(0, 10);
           const endIso = weekEnd.toISOString().slice(0, 10);
 
-          const batches = plans
-            .filter(
-              (p) =>
-                p.classroom_name === room &&
-                p.slot === slot &&
-                isDateOverlap(p.a_start, p.a_end, startIso, endIso)
-            )
-            .map((p) => p.batch_no)
-            .filter(Boolean);
+          let batches = [];
 
-          row.push(batches);
+          if (room === "UNALLOCATED") {
+            // 🔥 Only check unallocated list
+            batches = unallocatedBatches
+              .filter((p) =>
+                isDateOverlap(p.a_start, p.a_end, startIso, endIso)
+              )
+              .map((p) => p.batch_no);
+          } else {
+            // Normal allocated logic
+            batches = plans
+              .filter(
+                (p) =>
+                  p.classroom_name === room &&
+                  p.slot === slot &&
+                  isDateOverlap(p.a_start, p.a_end, startIso, endIso)
+              )
+              .map((p) => p.batch_no);
+          }
+
+          row.push(batches.filter(Boolean));
         });
+
         t.push(row);
       });
     });
+
     return t;
-  }, [classrooms, slots, weeks, plans]);
+  }, [classrooms, slots, weeks, plans, unallocatedBatches]);
 
   const batchColorMap = useMemo(() => getBatchColorMap(table), [table]);
 
@@ -989,7 +1011,15 @@ export default function ClassroomPlanner() {
                 </TableHead>
                 <TableBody>
                   {table.map((row, idx) => (
-                    <TableRow key={idx} hover>
+                    <TableRow
+                      key={idx}
+                      hover
+                      sx={
+                        row[0] === "UNALLOCATED"
+                          ? { backgroundColor: "#fff3f3" }
+                          : {}
+                      }
+                    >
                       {row.map((cell, jdx) =>
                         jdx < 2 ? (
                           <TableCell
