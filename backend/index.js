@@ -3260,31 +3260,39 @@ app.get("/api/available-trainers", async (req, res) => {
 });
 
 // 3. POST available trainers by schedule
+// 3. POST available trainers by schedule (FIXED)
 app.post("/api/available-trainers-by-schedule", async (req, res) => {
   try {
-    const { trainer_email, domain, start_date, end_date } = req.body;
+    const { trainer_email, domain } = req.body;
 
-    console.log("🔎 Checking availability:", {
-      trainer_email,
-      domain,
-      start_date,
-      end_date
-    });
+    console.log("🔎 Checking availability for domain:", domain);
 
-    // Get trainers in same domain except unavailable trainer
-    const { data: trainers, error } = await supabase
-      .from("trainers")   // ⚠️ make sure this table name is correct
-      .select("trainer_name, trainer_email, batch_no")
+    // Get distinct trainers from course_planner_data
+    const { data, error } = await supabase
+      .from("course_planner_data")
+      .select("trainer_email, trainer_name, batch_no")
       .eq("domain", domain)
       .neq("trainer_email", trainer_email);
 
     if (error) {
-      console.error("Trainer fetch error:", error);
+      console.error("Supabase error:", error.message);
       return res.status(500).json({ error: error.message });
     }
 
+    if (!data || data.length === 0) {
+      return res.json({ trainers: [] });
+    }
+
+    // Remove duplicates (important)
+    const uniqueTrainers = Object.values(
+      data.reduce((acc, trainer) => {
+        acc[trainer.trainer_email] = trainer;
+        return acc;
+      }, {})
+    );
+
     res.json({
-      trainers: (trainers || []).map(t => ({
+      trainers: uniqueTrainers.map(t => ({
         name: t.trainer_name,
         email: t.trainer_email,
         batch_no: t.batch_no
@@ -3292,7 +3300,7 @@ app.post("/api/available-trainers-by-schedule", async (req, res) => {
     });
 
   } catch (err) {
-    console.error("Availability error:", err);
+    console.error("Availability crash:", err);
     res.status(500).json({ error: err.message });
   }
 });
