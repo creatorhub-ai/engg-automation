@@ -1645,7 +1645,7 @@ app.get("/api/get-classroom-matrix", async (req, res) => {
 // SAVE classroom matrix (single JSON store in Supabase)
 app.post("/api/save-classroom-matrix", async (req, res) => {
   try {
-    const { occupancyRows, fullPlanRows, weeks } = req.body;
+    const { occupancyRows } = req.body;
 
     console.log("Processing", occupancyRows?.length || 0, "rows");
 
@@ -1657,59 +1657,57 @@ app.post("/api/save-classroom-matrix", async (req, res) => {
     let updated = 0;
     let skipped = 0;
 
-    // Process each row (batch_no unique)
     for (const row of occupancyRows) {
       const batch_no = row.batch_no?.trim();
-      if (
-        !batch_no ||
-        !row.classroom_name ||
-        !row.slot ||
-        !row.occupancy_start ||
-        !row.occupancy_end
-      ) {
+
+      if (!batch_no || !row.occupancy_start || !row.occupancy_end) {
         skipped++;
         continue;
       }
 
-      const occupancy_start = row.occupancy_start || row.a_start;
-      const occupancy_end = row.occupancy_end || row.a_end;
+      const occupancy_start = row.occupancy_start;
+      const occupancy_end = row.occupancy_end;
       const enrolled = Number(row.enrolled) || 0;
 
-      if (!occupancy_start || !occupancy_end) {
-        skipped++;
-        continue;
-      }
-
-      // 1. Check if batch_no already exists
-      const { data: existing } = await supabase
-        .from("classroom_occupancy")
-        .select("batch_no, occupancy_start, occupancy_end, enrolled, classroom_name, slot")
-        .eq("batch_no", batch_no)
-        .maybeSingle();
+      // 🔥 Allow NULL classroom & slot (for unallocated)
+      const classroom_name = row.classroom_name || null;
+      const slot = row.slot || null;
 
       const updateData = {
         batch_no,
-        classroom_name: row.classroom_name,
-        slot: row.slot,
+        classroom_name,
+        slot,
         occupancy_start,
         occupancy_end,
         enrolled,
-        class_room: row.classroom_name.split(" ")[0], // Ganga/Yamuna/Cauvery
-        shifts: row.slot === "morning" ? "Shift_1" : "Shift_2",
+        class_room: classroom_name
+          ? classroom_name.split(" ")[0]
+          : null,
+        shifts:
+          slot === "morning"
+            ? "Shift_1"
+            : slot === "evening"
+            ? "Shift_2"
+            : null,
         updated_at: new Date().toISOString(),
       };
 
-      if (existing) {
-        // 2. UPDATE if dates/enrolled/classroom changed
-        const datesChanged =
-          existing.occupancy_start !== occupancy_start ||
-          existing.occupancy_end !== occupancy_end;
-        const enrolledChanged = existing.enrolled !== enrolled;
-        const roomChanged =
-          existing.classroom_name !== row.classroom_name ||
-          existing.slot !== row.slot;
+      // Check existing
+      const { data: existing } = await supabase
+        .from("classroom_occupancy")
+        .select("*")
+        .eq("batch_no", batch_no)
+        .maybeSingle();
 
-        if (datesChanged || enrolledChanged || roomChanged) {
+      if (existing) {
+        const changed =
+          existing.occupancy_start !== occupancy_start ||
+          existing.occupancy_end !== occupancy_end ||
+          existing.enrolled !== enrolled ||
+          existing.classroom_name !== classroom_name ||
+          existing.slot !== slot;
+
+        if (changed) {
           const { error } = await supabase
             .from("classroom_occupancy")
             .update(updateData)
@@ -1717,14 +1715,14 @@ app.post("/api/save-classroom-matrix", async (req, res) => {
 
           if (!error) {
             updated++;
-            console.log(`UPDATED ${batch_no}: dates=${datesChanged}, enrolled=${enrolledChanged}, room=${roomChanged}`);
+            console.log(`UPDATED ${batch_no}`);
+          } else {
+            console.error("Update error:", error);
           }
         } else {
           skipped++;
-          console.log(`UNCHANGED ${batch_no}`);
         }
       } else {
-        // 3. INSERT new batch_no
         const { error } = await supabase
           .from("classroom_occupancy")
           .insert(updateData);
@@ -1732,6 +1730,8 @@ app.post("/api/save-classroom-matrix", async (req, res) => {
         if (!error) {
           inserted++;
           console.log(`INSERTED ${batch_no}`);
+        } else {
+          console.error("Insert error:", error);
         }
       }
     }
