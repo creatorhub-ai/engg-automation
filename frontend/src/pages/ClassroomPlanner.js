@@ -343,7 +343,8 @@ export default function ClassroomPlanner() {
         (p) => !p.classroom_name || !p.slot
       );
 
-      setPlans(allocated);
+      // ✅ FIX: keep ALL plans in state
+      setPlans(normalizedPlans);
 
       setUnallocatedBatches(
         unallocated.map((p) => ({
@@ -541,7 +542,9 @@ export default function ClassroomPlanner() {
         (p) => !p.classroom_name || !p.slot
       );
 
-      setPlans(allocated);
+      // ✅ FIX: keep all plans
+      setPlans(offlinePlans);
+
       setUnallocatedBatches(unallocatedOnly);
 
       if (!offlinePlans.length) {
@@ -986,7 +989,7 @@ export default function ClassroomPlanner() {
             <CircularProgress />
             <Typography sx={{ ml: 2 }}>Generating matrix...</Typography>
           </Box>
-        ) : !plans.length ? (
+        ) : !plans.length && !unallocatedBatches.length ? (
           <Alert severity="info">
             Upload a file with OFFLINE batches or rely on auto-loaded data to see the classroom
             occupancy matrix.
