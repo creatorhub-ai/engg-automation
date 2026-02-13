@@ -35,40 +35,34 @@ function TrainerAssignmentDashboard() {
   const fetchUnavailability = useCallback(async () => {
     setStatus("Querying trainer_unavailability table...");
     setLoading(true);
-    
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
 
+    try {
       const response = await fetch(`${API_BASE}/api/trainer-unavailability`, {
-        method: 'GET',
+        method: "GET",
         headers: {
-          'Accept': 'application/json',
-          'Cache-Control': 'no-cache'
-        },
-        signal: controller.signal
+          "Accept": "application/json"
+        }
       });
 
-      clearTimeout(timeoutId);
-
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        throw new Error(`HTTP ${response.status}`);
       }
 
       const data = await response.json();
-      
+
       if (Array.isArray(data)) {
         setLeaves(data);
-        setStatus(`✅ SUCCESS: Loaded ${data.length} records from trainer_unavailability table`);
+        setStatus(`✅ SUCCESS: Loaded ${data.length} records`);
         showToast(`Loaded ${data.length} trainer records`, "success");
       } else {
         setLeaves([]);
-        setStatus("⚠️ No data found in trainer_unavailability table");
-        showToast("No data found in trainer_unavailability table", "warning");
+        setStatus("⚠️ No data found");
+        showToast("No data found", "warning");
       }
+
     } catch (error) {
       console.error("💥 API ERROR:", error.message);
-      setStatus(`❌ Failed: ${error.name} - ${error.message}`);
+      setStatus(`❌ Failed: ${error.message}`);
       showToast(`Failed: ${error.message}`, "error");
       setLeaves([]);
     } finally {
@@ -103,8 +97,7 @@ function TrainerAssignmentDashboard() {
       const response = await fetch(`${API_BASE}/api/available-trainers-by-schedule`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           trainer_email: leave.trainer_email,  // Exclude this trainer

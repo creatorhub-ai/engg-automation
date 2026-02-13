@@ -99,6 +99,15 @@ app.use((req, res, next) => {
   next();
 });
 
+app.use(cors({
+  origin: [
+    "https://engg-automation-r1ke.onrender.com",
+    "http://localhost:3000"
+  ],
+  methods: ["GET", "POST", "PUT", "DELETE"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+}));
+
 // =====================================================
 // Body Parser
 // =====================================================
