@@ -103,7 +103,9 @@ function TrainerAssignmentDashboard() {
           trainer_email: leave.trainer_email,
           domain: leave.domain,
           start_date: leave.start_date,
-          end_date: leave.end_date
+          end_date: leave.end_date,
+          start_time: leave.start_time || "13:30:00",
+          end_time: leave.end_time || "19:30:00"
         })
       });
 

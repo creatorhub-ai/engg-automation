@@ -3259,45 +3259,90 @@ app.get("/api/available-trainers", async (req, res) => {
   }
 });
 
-// 3. POST available trainers by schedule
-// 3. POST available trainers by schedule (FIXED)
+// 3. POST available trainers by schedule (DATE + TIME CONFLICT CHECK)
 app.post("/api/available-trainers-by-schedule", async (req, res) => {
   try {
-    const { trainer_email, domain } = req.body;
+    const {
+      trainer_email,
+      domain,
+      start_date,
+      end_date,
+      start_time,
+      end_time
+    } = req.body;
 
-    console.log("🔎 Checking availability for domain:", domain);
+    console.log("🔎 Checking availability:", {
+      trainer_email,
+      domain,
+      start_date,
+      end_date,
+      start_time,
+      end_time
+    });
 
-    // Get distinct trainers from course_planner_data
-    const { data, error } = await supabase
+    // 1️⃣ Get all trainers in same domain except unavailable trainer
+    const { data: allTrainers, error: trainerError } = await supabase
       .from("course_planner_data")
       .select("trainer_email, trainer_name, batch_no")
       .eq("domain", domain)
       .neq("trainer_email", trainer_email);
 
-    if (error) {
-      console.error("Supabase error:", error.message);
-      return res.status(500).json({ error: error.message });
+    if (trainerError) {
+      console.error("Trainer fetch error:", trainerError.message);
+      return res.status(500).json({ error: trainerError.message });
     }
 
-    if (!data || data.length === 0) {
+    if (!allTrainers || allTrainers.length === 0) {
       return res.json({ trainers: [] });
     }
 
-    // Remove duplicates (important)
+    // Remove duplicate trainers
     const uniqueTrainers = Object.values(
-      data.reduce((acc, trainer) => {
-        acc[trainer.trainer_email] = trainer;
+      allTrainers.reduce((acc, t) => {
+        acc[t.trainer_email] = t;
         return acc;
       }, {})
     );
 
-    res.json({
-      trainers: uniqueTrainers.map(t => ({
-        name: t.trainer_name,
-        email: t.trainer_email,
-        batch_no: t.batch_no
-      }))
-    });
+    const availableTrainers = [];
+
+    // 2️⃣ Check each trainer for conflicts
+    for (const trainer of uniqueTrainers) {
+      const { data: sessions, error: sessionError } = await supabase
+        .from("course_planner_data")
+        .select("date, start_time, end_time")
+        .eq("trainer_email", trainer.trainer_email)
+        .gte("date", start_date)
+        .lte("date", end_date);
+
+      if (sessionError) {
+        console.error("Session error:", sessionError.message);
+        continue;
+      }
+
+      let hasConflict = false;
+
+      for (const session of sessions || []) {
+        // TIME OVERLAP CHECK
+        if (
+          session.start_time < end_time &&
+          session.end_time > start_time
+        ) {
+          hasConflict = true;
+          break;
+        }
+      }
+
+      if (!hasConflict) {
+        availableTrainers.push({
+          name: trainer.trainer_name,
+          email: trainer.trainer_email,
+          batch_no: trainer.batch_no
+        });
+      }
+    }
+
+    res.json({ trainers: availableTrainers });
 
   } catch (err) {
     console.error("Availability crash:", err);
