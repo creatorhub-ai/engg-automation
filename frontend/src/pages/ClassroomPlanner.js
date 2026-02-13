@@ -147,6 +147,7 @@ function planClassroomsForOffline(rows) {
     { name: "Ganga", capacity: 50 },
     { name: "Yamuna", capacity: 35 },
     { name: "Cauvery", capacity: 35 },
+    { name: "Bhavani", capacity: 35 },
   ];
 
   const shifts = ["morning", "evening"];
