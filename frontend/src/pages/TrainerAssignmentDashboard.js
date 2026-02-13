@@ -93,33 +93,34 @@ function TrainerAssignmentDashboard() {
   const fetchAvailableTrainers = useCallback(async (leave) => {
     try {
       setAvailabilityLoading(true);
-      
+
       const response = await fetch(`${API_BASE}/api/available-trainers-by-schedule`, {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json'
+          "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          trainer_email: leave.trainer_email,  // Exclude this trainer
+          trainer_email: leave.trainer_email,
           domain: leave.domain,
           start_date: leave.start_date,
-          end_date: leave.end_date,
-          start_time: leave.start_time || "1:30 PM",  // Default batch time
-          end_time: leave.end_time || "7:30 PM"
+          end_date: leave.end_date
         })
       });
 
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
       const data = await response.json();
-      
-      if (data.trainers && data.trainers.length > 0) {
+
+      if (data.trainers?.length > 0) {
         setAvailableTrainers(data.trainers);
-        showToast(`${data.trainers.length} available trainers found for ${leave.domain} domain`, "success");
+        showToast(`${data.trainers.length} available trainers found`, "success");
       } else {
         setAvailableTrainers([]);
-        showToast("Consult the Manager for further process - No available trainers", "warning");
+        showToast("Consult the Manager - No available trainers", "warning");
       }
+
     } catch (error) {
       console.error("Available trainers error:", error);
       setAvailableTrainers([]);
@@ -178,15 +179,17 @@ function TrainerAssignmentDashboard() {
       return;
     }
 
+    // 🔥 RESET EVERYTHING FIRST
+    setSelectedTrainer("");
+    setSelectedTopics([]);
+    setTopics([]);
+    setAvailableTrainers([]);
+
     setSelectedLeave(leave);
-    
-    // Load topics first
-    await fetchTopics(leave.id);
-    
-    // NEW: Load available trainers based on schedule availability
-    await fetchAvailableTrainers(leave);
-    
     setAssignDialogOpen(true);
+
+    await fetchTopics(leave.id);
+    await fetchAvailableTrainers(leave);
   };
 
   // 🔥 INITIAL LOAD
@@ -356,7 +359,14 @@ function TrainerAssignmentDashboard() {
       {/* ASSIGN TOPICS DIALOG - UPDATED */}
       <Dialog 
         open={assignDialogOpen} 
-        onClose={() => setAssignDialogOpen(false)}
+        oonClose={() => {
+          setAssignDialogOpen(false);
+          setSelectedLeave(null);
+          setSelectedTrainer("");
+          setSelectedTopics([]);
+          setTopics([]);
+          setAvailableTrainers([]);
+        }}
         maxWidth="md"
         fullWidth
         PaperProps={{ sx: { height: '70vh' } }}

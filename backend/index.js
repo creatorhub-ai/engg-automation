@@ -3259,6 +3259,44 @@ app.get("/api/available-trainers", async (req, res) => {
   }
 });
 
+// 3. POST available trainers by schedule
+app.post("/api/available-trainers-by-schedule", async (req, res) => {
+  try {
+    const { trainer_email, domain, start_date, end_date } = req.body;
+
+    console.log("🔎 Checking availability:", {
+      trainer_email,
+      domain,
+      start_date,
+      end_date
+    });
+
+    // Get trainers in same domain except unavailable trainer
+    const { data: trainers, error } = await supabase
+      .from("trainers")   // ⚠️ make sure this table name is correct
+      .select("trainer_name, trainer_email, batch_no")
+      .eq("domain", domain)
+      .neq("trainer_email", trainer_email);
+
+    if (error) {
+      console.error("Trainer fetch error:", error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.json({
+      trainers: (trainers || []).map(t => ({
+        name: t.trainer_name,
+        email: t.trainer_email,
+        batch_no: t.batch_no
+      }))
+    });
+
+  } catch (err) {
+    console.error("Availability error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 4. POST assign - SAFE
 app.post("/api/assign-topics-to-trainer", async (req, res) => {
   try {
