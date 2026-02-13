@@ -156,11 +156,43 @@ function planClassroomsForOffline(rows) {
   const occupancyIndex = {};
   const getKey = (room, slot) => `${room}|${slot}`;
 
-  rows.forEach((originalRow) => {
-    const row = normalizeRowKeys(originalRow);
+  // ✅ STEP 1: Normalize and FILTER only valid OFFLINE rows first
+  const filteredRows = rows
+    .map(normalizeRowKeys)
+    .filter((row) => {
+      const mode =
+        typeof row["MODE"] === "string"
+          ? row["MODE"].trim().toUpperCase()
+          : "";
 
+      const aStart = parseExcelDate(row["A.START DATE"]);
+      const aEnd = parseExcelDate(row["A.DUE DATE"]);
+
+      return (
+        row["COURSE"] &&
+        mode === "OFFLINE" &&
+        aStart &&
+        aEnd
+      );
+    });
+
+  // ✅ STEP 2: SORT BY START DATE (earliest first)
+  filteredRows.sort((a, b) => {
+    const dateA = parseExcelDate(a["A.START DATE"]);
+    const dateB = parseExcelDate(b["A.START DATE"]);
+
+    const diff = dateA - dateB;
+    if (diff !== 0) return diff;
+
+    // If same start date → stable alphabetical order
+    return (a["COURSE"] || "").localeCompare(b["COURSE"] || "");
+  });
+
+  // ✅ STEP 3: Allocation happens in sorted order
+  filteredRows.forEach((row) => {
     const course = row["COURSE"];
-    let mode = row["MODE"];
+    const mode = "OFFLINE";
+
     const aStartDate = parseExcelDate(row["A.START DATE"]);
     const aEndDate = parseExcelDate(row["A.DUE DATE"]);
 
@@ -169,10 +201,6 @@ function planClassroomsForOffline(rows) {
 
     const enrolled = Number(row["ENROLLED"] || 0);
     const batchCapacity = Number(row["CAPACITY"] || 0);
-
-    mode = typeof mode === "string" ? mode.trim().toUpperCase() : "";
-
-    if (!course || mode !== "OFFLINE" || !aStart || !aEnd) return;
 
     // ❌ RULE 1: enrolled should not exceed batch capacity
     if (enrolled > batchCapacity) {
@@ -203,7 +231,6 @@ function planClassroomsForOffline(rows) {
     let assignedSlot = "";
 
     for (const room of classrooms) {
-      // ❌ RULE 2: enrolled should not exceed classroom capacity
       if (enrolled > room.capacity) continue;
 
       for (const slot of shifts) {
