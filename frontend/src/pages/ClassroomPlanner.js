@@ -358,7 +358,7 @@ export default function ClassroomPlanner() {
         a_start: r.occupancy_start,
         a_end: r.occupancy_end,
         enrolled: r.enrolled || 0,
-        capacity: r.capacity || 35,
+        capacity: r.capacity || r.enrolled || 0,
         mode: "OFFLINE",
       }));
 
@@ -513,15 +513,15 @@ export default function ClassroomPlanner() {
     return domainLicenses.map((lic) => {
       const licenseCount = Number(lic.count || 0);
 
-      // 🔥 Required license is classroom capacity
-      const requiredLicenses = Number(classroomCapacity || 0);
+      // ✅ Required should be max of enrolled or classroom capacity
+      const requiredLicenses = Math.max(
+        Number(enrolled || 0),
+        Number(classroomCapacity || 0)
+      );
 
-      // 🔥 If enrolled > capacity, extra licenses required
       const additionalNeeded = Math.max(
         0,
-        enrolled > classroomCapacity
-          ? enrolled - licenseCount
-          : requiredLicenses - licenseCount
+        requiredLicenses - licenseCount
       );
 
       return {
@@ -818,7 +818,7 @@ export default function ClassroomPlanner() {
         occupancy_start: p.a_start,
         occupancy_end: p.a_end,
         enrolled: p.enrolled || 0,
-        capacity: p.capacity || 0,
+        capacity: p.capacity || p.enrolled || 0,
       }));
 
       const res = await fetch(`${API_BASE}/api/save-classroom-matrix`, {
