@@ -499,22 +499,35 @@ export default function ClassroomPlanner() {
     return m;
   }, [plans]);
 
-  // License mapping
-  const getLicenseInfoForBatch = (batchNo, enrolled) => {
+  // 🔥 NEW: License based on CLASSROOM CAPACITY
+  const getLicenseInfoForBatch = (batchNo, classroomCapacity, enrolled) => {
     const domain = getDomainFromCourse(batchNo);
     if (!domain || !Array.isArray(licenses)) return [];
 
     const domainLicenses = licenses.filter(
       (l) => (l.domain || "").toString().toUpperCase() === domain
     );
+
     if (!domainLicenses.length) return [];
 
     return domainLicenses.map((lic) => {
-      const count = Number(lic.count || 0);
-      const additionalNeeded = Math.max(0, enrolled - count);
+      const licenseCount = Number(lic.count || 0);
+
+      // 🔥 Required license is classroom capacity
+      const requiredLicenses = Number(classroomCapacity || 0);
+
+      // 🔥 If enrolled > capacity, extra licenses required
+      const additionalNeeded = Math.max(
+        0,
+        enrolled > classroomCapacity
+          ? enrolled - licenseCount
+          : requiredLicenses - licenseCount
+      );
+
       return {
         license_name: lic.license_name,
-        count,
+        count: licenseCount,
+        required: requiredLicenses,
         additional_needed: additionalNeeded,
       };
     });
@@ -522,14 +535,26 @@ export default function ClassroomPlanner() {
 
   const handleBatchClick = (batch) => {
     if (!batch) return;
+
     const base = batchDetailMap[batch] || null;
     if (!base) {
       setSelectedBatch(null);
       return;
     }
-    const learnerCount = base.enrolled || base.capacity || 0;
-    const licenseInfo = getLicenseInfoForBatch(base.batch_no, learnerCount);
-    setSelectedBatch({ ...base, licenseInfo });
+
+    const classroomCapacity = base.capacity || 0;
+    const enrolled = base.enrolled || 0;
+
+    const licenseInfo = getLicenseInfoForBatch(
+      base.batch_no,
+      classroomCapacity,
+      enrolled
+    );
+
+    setSelectedBatch({
+      ...base,
+      licenseInfo,
+    });
   };
 
   const handleFileUpload = async (e) => {
@@ -706,6 +731,17 @@ export default function ClassroomPlanner() {
       };
 
       plans.forEach((p) => {
+        const licenseInfo = getLicenseInfoForBatch(
+          p.batch_no,
+          p.capacity,
+          p.enrolled
+        );
+
+        const totalShortage = licenseInfo.reduce(
+          (sum, l) => sum + (l.additional_needed || 0),
+          0
+        );
+
         plansSheet.addRow([
           p.batch_no,
           p.mode,
@@ -713,8 +749,8 @@ export default function ClassroomPlanner() {
           p.a_end,
           p.capacity,
           p.enrolled,
-          p.hasSufficientCapacity ? "YES" : "NO",
-          p.licenseNeeded,
+          totalShortage === 0 ? "YES" : "NO",
+          totalShortage,
           p.classroom_name,
           p.slot,
         ]);
@@ -1135,6 +1171,79 @@ export default function ClassroomPlanner() {
           </Table>
         </Paper>
       )}
+      {/* ================= LICENSE REQUIREMENT SECTION ================= */}
+      <Paper elevation={3} sx={{ p: 3, mt: 4 }}>
+        <Typography variant="h6" color="primary" gutterBottom>
+          License Requirement Summary
+        </Typography>
+
+        {(() => {
+          const licenseIssues = [];
+
+          plans.forEach((p) => {
+            if (!p.batch_no) return;
+
+            const licenseInfo = getLicenseInfoForBatch(
+              p.batch_no,
+              p.capacity,
+              p.enrolled
+            );
+
+            const shortages = licenseInfo.filter(
+              (l) => l.additional_needed > 0
+            );
+
+            if (shortages.length > 0) {
+              licenseIssues.push({
+                batch_no: p.batch_no,
+                shortages,
+              });
+            }
+          });
+
+          if (licenseIssues.length === 0) {
+            return (
+              <Alert severity="success">
+                ✅ License is sufficient for all batches.
+              </Alert>
+            );
+          }
+
+          return (
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Batch</TableCell>
+                  <TableCell>License</TableCell>
+                  <TableCell>Available</TableCell>
+                  <TableCell>Required (Capacity)</TableCell>
+                  <TableCell>Additional Needed</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {licenseIssues.map((issue) =>
+                  issue.shortages.map((lic, idx) => (
+                    <TableRow
+                      key={`${issue.batch_no}-${idx}`}
+                      sx={{ backgroundColor: "#fff3f3" }}
+                    >
+                      <TableCell sx={{ fontWeight: "bold", color: "error.main" }}>
+                        {issue.batch_no}
+                      </TableCell>
+                      <TableCell>{lic.license_name}</TableCell>
+                      <TableCell>{lic.count}</TableCell>
+                      <TableCell>{lic.required}</TableCell>
+                      <TableCell sx={{ color: "error.main", fontWeight: 600 }}>
+                        {lic.additional_needed}
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          );
+        })()}
+      </Paper>
     </Box>
   );
 }
