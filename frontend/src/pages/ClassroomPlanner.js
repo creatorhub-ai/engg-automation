@@ -582,29 +582,49 @@ export default function ClassroomPlanner() {
         raw: false,
       });
 
-      setProcessingStatus("Processing OFFLINE batches...");
+      // ===============================
+      // STEP 1: CALL TRAINER ASSIGNMENT API
+      // ===============================
+      setProcessingStatus("Assigning trainers...");
+
       const trainerRes = await fetch(`${API_BASE}/api/plan-with-trainers`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rows })
+        body: JSON.stringify({ rows }),
       });
 
+      if (!trainerRes.ok) {
+        const errorText = await trainerRes.text();
+        throw new Error(errorText || "Trainer planning failed");
+      }
+
       const trainerData = await trainerRes.json();
-      const trainerPlannedRows = trainerData.plannedRows;
 
-      // ✅ Separate immediately
-      const allocated = offlinePlans.filter(
-        (p) => p.classroom_name && p.slot
-      );
+      // Backend returns assignedRows (as per fixed backend)
+      const rowsWithTrainers = trainerData.assignedRows || rows;
 
-      const unallocatedOnly = offlinePlans.filter(
-        (p) => !p.classroom_name || !p.slot
-      );
+      // ===============================
+      // STEP 2: CLASSROOM ALLOCATION
+      // ===============================
+      setProcessingStatus("Allocating classrooms...");
 
-      // ✅ FIX: keep all plans
+      const { plans: offlinePlans, unallocated } =
+        planClassroomsForOffline(rowsWithTrainers);
+
+      // ===============================
+      // STEP 3: UPDATE STATE
+      // ===============================
+
       setPlans(offlinePlans);
 
-      setUnallocatedBatches(unallocatedOnly);
+      setUnallocatedBatches(
+        unallocated.map((u) => ({
+          batch_no: u.batch_no,
+          enrolled: u.enrolled,
+          a_start: u.a_start,
+          a_end: u.a_end,
+        }))
+      );
 
       if (!offlinePlans.length) {
         setError(
@@ -616,15 +636,30 @@ export default function ClassroomPlanner() {
           if (p.a_start) allDates.push(p.a_start);
           if (p.a_end) allDates.push(p.a_end);
         });
-        const matrixStart = allDates.reduce((a, b) => (a < b ? a : b));
-        const matrixEnd = allDates.reduce((a, b) => (a > b ? a : b));
-        const w = getWeeksInRange(matrixStart, matrixEnd);
-        setWeeks(w);
-        setProcessingStatus(`Completed! Planned ${offlinePlans.length} OFFLINE batches.`);
+
+        if (allDates.length > 0) {
+          const matrixStart = allDates.reduce((a, b) =>
+            a < b ? a : b
+          );
+          const matrixEnd = allDates.reduce((a, b) =>
+            a > b ? a : b
+          );
+
+          const w = getWeeksInRange(matrixStart, matrixEnd);
+          setWeeks(w);
+        }
+
+        setProcessingStatus(
+          `Completed! Planned ${offlinePlans.length} OFFLINE batches.`
+        );
       }
     } catch (err) {
       console.error("File processing error:", err);
-      setError(`Failed to process file: ${err.message || "Invalid file format"}`);
+      setError(
+        `Failed to process file: ${
+          err.message || "Invalid file format"
+        }`
+      );
     } finally {
       setLoading(false);
     }

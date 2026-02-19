@@ -1806,52 +1806,62 @@ app.post("/api/plan-with-trainers", async (req, res) => {
     const { rows } = req.body;
 
     if (!rows || !Array.isArray(rows)) {
-      return res.status(400).json({ error: "Invalid input rows" });
+      return res.status(400).json({ error: "Invalid rows input" });
     }
 
-    // 1️⃣ Load trainer_domain
-    const trainerData = await pool.query(`
-      SELECT trainer_name, trainer_email, trainer_domain, domain_handling, module_name
-      FROM trainer_domain
-    `);
+    // SAFETY: check tables exist
+    const trainerRes = await supabase
+      .from("trainer_domain")
+      .select("*");
 
-    // 2️⃣ Load module template
-    const templateData = await pool.query(`
-      SELECT domain, module_name, module_type
-      FROM course_module_template
-    `);
+    if (trainerRes.error) {
+      console.error("Trainer table error:", trainerRes.error);
+      return res.status(500).json({ error: trainerRes.error.message });
+    }
 
-    // 3️⃣ Load existing planner data (to check availability)
-    const existingData = await pool.query(`
-      SELECT batch_no, trainer_name, date
-      FROM course_planner_data
-      WHERE mode = 'offline'
-    `);
+    const templateRes = await supabase
+      .from("course_module_template")
+      .select("*");
 
-    const existingAssignments = existingData.rows;
+    if (templateRes.error) {
+      console.error("Template table error:", templateRes.error);
+      return res.status(500).json({ error: templateRes.error.message });
+    }
 
-    const plannedRows = [];
+    const existingRes = await supabase
+      .from("course_planner_data")
+      .select("trainer_name, batch_no, date, mode")
+      .eq("mode", "offline");
+
+    if (existingRes.error) {
+      console.error("Planner table error:", existingRes.error);
+      return res.status(500).json({ error: existingRes.error.message });
+    }
+
+    const trainers = trainerRes.data || [];
+    const templates = templateRes.data || [];
+    const existingAssignments = existingRes.data || [];
+
+    const assignedRows = [];
 
     for (const row of rows) {
 
       if ((row.mode || "").toLowerCase() !== "offline") {
+        assignedRows.push(row);
         continue;
       }
 
       const batchDomain = row.domain;
       const moduleName = row.module_name;
-      const batchNo = row.batch_no;
-      const startDate = row.date;
-      const endDate = row.date; // row wise
+      const currentDate = row.date;
 
-      const template = templateData.rows.find(
-        t =>
-          t.domain === batchDomain &&
-          t.module_name.toLowerCase() === moduleName.toLowerCase()
+      const template = templates.find(t =>
+        t.domain === batchDomain &&
+        t.module_name?.toLowerCase() === moduleName?.toLowerCase()
       );
 
       if (!template) {
-        plannedRows.push({
+        assignedRows.push({
           ...row,
           trainer_status: "NOT_AVAILABLE"
         });
@@ -1860,65 +1870,48 @@ app.post("/api/plan-with-trainers", async (req, res) => {
 
       const moduleType = template.module_type;
 
-      // 🎯 ELIGIBLE TRAINERS LOGIC
-
-      let eligibleTrainers = trainerData.rows.filter(tr =>
-        tr.module_name.toLowerCase() === moduleName.toLowerCase()
+      let eligible = trainers.filter(t =>
+        t.module_name?.toLowerCase() === moduleName?.toLowerCase()
       );
 
       if (moduleType === "CORE_THEORY" || moduleType === "CORE_LAB") {
-        eligibleTrainers = eligibleTrainers.filter(
-          tr => tr.trainer_domain === batchDomain
+        eligible = eligible.filter(
+          t => t.trainer_domain === batchDomain
         );
       } else {
-        eligibleTrainers = eligibleTrainers.filter(
-          tr => tr.domain_handling === batchDomain
+        eligible = eligible.filter(
+          t => t.domain_handling === batchDomain
         );
       }
 
-      // 🚫 Remove busy trainers
-      eligibleTrainers = eligibleTrainers.filter(tr => {
+      eligible = eligible.filter(tr => {
         return !existingAssignments.some(ex =>
           ex.trainer_name === tr.trainer_name &&
-          isDateOverlap(ex.date, ex.date, startDate, endDate)
+          ex.date === currentDate
         );
       });
 
-      // 🧠 PRIORITY: Trainer who finished earlier
-      eligibleTrainers.sort((a, b) => {
-        const lastA = existingAssignments
-          .filter(e => e.trainer_name === a.trainer_name)
-          .sort((x, y) => new Date(y.date) - new Date(x.date))[0];
-
-        const lastB = existingAssignments
-          .filter(e => e.trainer_name === b.trainer_name)
-          .sort((x, y) => new Date(y.date) - new Date(x.date))[0];
-
-        return new Date(lastA?.date || 0) - new Date(lastB?.date || 0);
-      });
-
-      if (eligibleTrainers.length === 0) {
-        plannedRows.push({
+      if (eligible.length === 0) {
+        assignedRows.push({
           ...row,
+          trainer_name: null,
           trainer_status: "NOT_AVAILABLE"
         });
       } else {
-        const selected = eligibleTrainers[0];
-
-        plannedRows.push({
+        assignedRows.push({
           ...row,
-          trainer_name: selected.trainer_name,
-          trainer_email: selected.trainer_email,
+          trainer_name: eligible[0].trainer_name,
+          trainer_email: eligible[0].trainer_email,
           trainer_status: "ASSIGNED"
         });
       }
     }
 
-    res.json({ plannedRows });
+    res.json({ assignedRows });
 
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Trainer assignment failed" });
+    console.error("PLAN TRAINER ERROR:", err);
+    res.status(500).json({ error: err.message });
   }
 });
 
