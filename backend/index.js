@@ -438,8 +438,8 @@ function generateSoftSkillSummaryEmail(topics, trainerEmail) {
 
 // Helper: checks if two date ranges overlap (inclusive)
 function isDateOverlap(start1, end1, start2, end2) {
-  // All dates as YYYY-MM-DD
-  return !(new Date(end1) < new Date(start2) || new Date(start1) > new Date(end2));
+  return new Date(start1) <= new Date(end2) &&
+         new Date(start2) <= new Date(end1);
 }
 
 // Tools: you need a 'tools' column in classroom_occupancy or separate table if you want to restrict by required tools.
@@ -1669,9 +1669,12 @@ app.post("/api/save-classroom-matrix", async (req, res) => {
       const occupancy_end = row.occupancy_end;
       const enrolled = Number(row.enrolled) || 0;
 
-      // 🔥 Allow NULL classroom & slot (for unallocated)
       const classroom_name = row.classroom_name || null;
       const slot = row.slot || null;
+
+      const trainer_name = row.trainer_name || null;
+      const trainer_email = row.trainer_email || null;
+      const trainer_status = row.trainer_status || "NOT_AVAILABLE";
 
       const updateData = {
         batch_no,
@@ -1692,7 +1695,10 @@ app.post("/api/save-classroom-matrix", async (req, res) => {
         updated_at: new Date().toISOString(),
       };
 
-      // Check existing
+      // ===============================
+      // 1️⃣ CLASSROOM OCCUPANCY (UNCHANGED)
+      // ===============================
+
       const { data: existing } = await supabase
         .from("classroom_occupancy")
         .select("*")
@@ -1734,6 +1740,26 @@ app.post("/api/save-classroom-matrix", async (req, res) => {
           console.error("Insert error:", error);
         }
       }
+
+      // ===============================
+      // 2️⃣ TRAINER UPDATE (NEW ADDITION)
+      // ===============================
+
+      // Update all offline rows of this batch
+      const { error: trainerError } = await supabase
+        .from("course_planner_data")
+        .update({
+          trainer_name,
+          trainer_email,
+          trainer_status,
+          classroom_name,
+        })
+        .eq("batch_no", batch_no)
+        .eq("mode", "offline");
+
+      if (trainerError) {
+        console.error("Trainer update error:", trainerError);
+      }
     }
 
     res.json({
@@ -1741,9 +1767,158 @@ app.post("/api/save-classroom-matrix", async (req, res) => {
       summary: { inserted, updated, skipped },
       totalProcessed: occupancyRows.length,
     });
+
   } catch (err) {
     console.error("save-classroom-matrix error:", err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+
+
+//get the trainers for the mapping to the batches
+app.get("/api/trainer-mapping-data", async (req, res) => {
+  try {
+    const trainerRes = await pool.query(`
+      SELECT trainer_name, trainer_email, trainer_domain, domain_handling, module_name
+      FROM trainer_domain
+    `);
+
+    const templateRes = await pool.query(`
+      SELECT domain, module_name, module_type
+      FROM course_module_template
+    `);
+
+    res.json({
+      trainers: trainerRes.rows,
+      templates: templateRes.rows,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch trainer mapping data" });
+  }
+});
+
+
+//TRAINER ASSIGNMENT + CLASSROOM FLOW
+app.post("/api/plan-with-trainers", async (req, res) => {
+  try {
+    const { rows } = req.body;
+
+    if (!rows || !Array.isArray(rows)) {
+      return res.status(400).json({ error: "Invalid input rows" });
+    }
+
+    // 1️⃣ Load trainer_domain
+    const trainerData = await pool.query(`
+      SELECT trainer_name, trainer_email, trainer_domain, domain_handling, module_name
+      FROM trainer_domain
+    `);
+
+    // 2️⃣ Load module template
+    const templateData = await pool.query(`
+      SELECT domain, module_name, module_type
+      FROM course_module_template
+    `);
+
+    // 3️⃣ Load existing planner data (to check availability)
+    const existingData = await pool.query(`
+      SELECT batch_no, trainer_name, date
+      FROM course_planner_data
+      WHERE mode = 'offline'
+    `);
+
+    const existingAssignments = existingData.rows;
+
+    const plannedRows = [];
+
+    for (const row of rows) {
+
+      if ((row.mode || "").toLowerCase() !== "offline") {
+        continue;
+      }
+
+      const batchDomain = row.domain;
+      const moduleName = row.module_name;
+      const batchNo = row.batch_no;
+      const startDate = row.date;
+      const endDate = row.date; // row wise
+
+      const template = templateData.rows.find(
+        t =>
+          t.domain === batchDomain &&
+          t.module_name.toLowerCase() === moduleName.toLowerCase()
+      );
+
+      if (!template) {
+        plannedRows.push({
+          ...row,
+          trainer_status: "NOT_AVAILABLE"
+        });
+        continue;
+      }
+
+      const moduleType = template.module_type;
+
+      // 🎯 ELIGIBLE TRAINERS LOGIC
+
+      let eligibleTrainers = trainerData.rows.filter(tr =>
+        tr.module_name.toLowerCase() === moduleName.toLowerCase()
+      );
+
+      if (moduleType === "CORE_THEORY" || moduleType === "CORE_LAB") {
+        eligibleTrainers = eligibleTrainers.filter(
+          tr => tr.trainer_domain === batchDomain
+        );
+      } else {
+        eligibleTrainers = eligibleTrainers.filter(
+          tr => tr.domain_handling === batchDomain
+        );
+      }
+
+      // 🚫 Remove busy trainers
+      eligibleTrainers = eligibleTrainers.filter(tr => {
+        return !existingAssignments.some(ex =>
+          ex.trainer_name === tr.trainer_name &&
+          isDateOverlap(ex.date, ex.date, startDate, endDate)
+        );
+      });
+
+      // 🧠 PRIORITY: Trainer who finished earlier
+      eligibleTrainers.sort((a, b) => {
+        const lastA = existingAssignments
+          .filter(e => e.trainer_name === a.trainer_name)
+          .sort((x, y) => new Date(y.date) - new Date(x.date))[0];
+
+        const lastB = existingAssignments
+          .filter(e => e.trainer_name === b.trainer_name)
+          .sort((x, y) => new Date(y.date) - new Date(x.date))[0];
+
+        return new Date(lastA?.date || 0) - new Date(lastB?.date || 0);
+      });
+
+      if (eligibleTrainers.length === 0) {
+        plannedRows.push({
+          ...row,
+          trainer_status: "NOT_AVAILABLE"
+        });
+      } else {
+        const selected = eligibleTrainers[0];
+
+        plannedRows.push({
+          ...row,
+          trainer_name: selected.trainer_name,
+          trainer_email: selected.trainer_email,
+          trainer_status: "ASSIGNED"
+        });
+      }
+    }
+
+    res.json({ plannedRows });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Trainer assignment failed" });
   }
 });
 

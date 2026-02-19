@@ -583,8 +583,14 @@ export default function ClassroomPlanner() {
       });
 
       setProcessingStatus("Processing OFFLINE batches...");
-      const { plans: offlinePlans, unallocated } =
-        planClassroomsForOffline(rows);
+      const trainerRes = await fetch(`${API_BASE}/api/plan-with-trainers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rows })
+      });
+
+      const trainerData = await trainerRes.json();
+      const trainerPlannedRows = trainerData.plannedRows;
 
       // ✅ Separate immediately
       const allocated = offlinePlans.filter(
