@@ -1829,22 +1829,24 @@ app.post("/api/plan-with-trainers", async (req, res) => {
     const templates = templateRes.data || [];
 
     const assignedRows = [];
-
-    // 🔥 Track trainer booking only within this upload
     const localBookings = {};
+
+    // 🔥 Normalization function
+    const normalize = (str) =>
+      (str || "")
+        .toString()
+        .toLowerCase()
+        .replace(/\s+/g, " ")
+        .trim();
 
     for (const originalRow of rows) {
 
-      // Normalize keys
       const row = {};
       Object.keys(originalRow).forEach(key => {
-        row[key.toLowerCase().trim()] =
-          typeof originalRow[key] === "string"
-            ? originalRow[key].trim()
-            : originalRow[key];
+        row[key.toLowerCase().trim()] = originalRow[key];
       });
 
-      const mode = (row.mode || "").toLowerCase();
+      const mode = normalize(row.mode);
 
       if (mode !== "offline") {
         assignedRows.push({
@@ -1855,8 +1857,8 @@ app.post("/api/plan-with-trainers", async (req, res) => {
         continue;
       }
 
-      const batchDomain = (row.domain || "").toLowerCase();
-      const moduleName = (row.module_name || row["module name"] || "").toLowerCase();
+      const batchDomain = normalize(row.domain);
+      const moduleName = normalize(row.module_name || row["module name"]);
       const currentDate = row.date;
 
       if (!batchDomain || !moduleName || !currentDate) {
@@ -1869,12 +1871,12 @@ app.post("/api/plan-with-trainers", async (req, res) => {
       }
 
       // ===============================
-      // FIND TEMPLATE
+      // FIND TEMPLATE (Flexible Match)
       // ===============================
 
       const template = templates.find(t =>
-        t.domain?.toLowerCase().trim() === batchDomain &&
-        t.module_name?.toLowerCase().trim() === moduleName
+        normalize(t.domain) === batchDomain &&
+        normalize(t.module_name) === moduleName
       );
 
       if (!template) {
@@ -1889,35 +1891,28 @@ app.post("/api/plan-with-trainers", async (req, res) => {
       const moduleType = template.module_type;
 
       // ===============================
-      // FIND ELIGIBLE TRAINERS
+      // FIND TRAINERS (Flexible Match)
       // ===============================
 
       let eligible = trainers.filter(t =>
-        t.module_name?.toLowerCase().trim() === moduleName
+        normalize(t.module_name) === moduleName
       );
 
       if (moduleType === "CORE_THEORY" || moduleType === "CORE_LAB") {
         eligible = eligible.filter(t =>
-          t.trainer_domain?.toLowerCase().trim() === batchDomain
+          normalize(t.trainer_domain) === batchDomain
         );
       } else {
         eligible = eligible.filter(t =>
-          t.domain_handling?.toLowerCase().trim() === batchDomain
+          normalize(t.domain_handling) === batchDomain
         );
       }
 
-      // ===============================
-      // REMOVE DUPLICATE IN SAME UPLOAD
-      // ===============================
-
+      // Remove duplicate booking within upload
       eligible = eligible.filter(tr => {
         const key = `${tr.trainer_name}_${currentDate}`;
         return !localBookings[key];
       });
-
-      // ===============================
-      // FINAL ASSIGNMENT
-      // ===============================
 
       if (eligible.length === 0) {
         assignedRows.push({
@@ -1926,15 +1921,14 @@ app.post("/api/plan-with-trainers", async (req, res) => {
           trainer_status: "NOT_AVAILABLE"
         });
       } else {
-        const selectedTrainer = eligible[0];
+        const selected = eligible[0];
 
-        const bookingKey = `${selectedTrainer.trainer_name}_${currentDate}`;
-        localBookings[bookingKey] = true;
+        localBookings[`${selected.trainer_name}_${currentDate}`] = true;
 
         assignedRows.push({
           ...originalRow,
-          trainer_name: selectedTrainer.trainer_name,
-          trainer_email: selectedTrainer.trainer_email,
+          trainer_name: selected.trainer_name,
+          trainer_email: selected.trainer_email,
           trainer_status: "ASSIGNED"
         });
       }
