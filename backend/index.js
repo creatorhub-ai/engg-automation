@@ -1809,7 +1809,10 @@ app.post("/api/plan-with-trainers", async (req, res) => {
       return res.status(400).json({ error: "Invalid rows input" });
     }
 
-    // SAFETY: check tables exist
+    // ===============================
+    // FETCH TABLES (UNCHANGED)
+    // ===============================
+
     const trainerRes = await supabase
       .from("trainer_domain")
       .select("*");
@@ -1844,25 +1847,51 @@ app.post("/api/plan-with-trainers", async (req, res) => {
 
     const assignedRows = [];
 
+    // ===============================
+    // MAIN LOOP
+    // ===============================
+
     for (const row of rows) {
 
-      if ((row.mode || "").toLowerCase() !== "offline") {
-        assignedRows.push(row);
+      // 🔥 FIX: Support both mode & MODE
+      const modeValue =
+        row.mode ||
+        row.MODE ||
+        "";
+
+      if (modeValue.toString().toLowerCase() !== "offline") {
+        assignedRows.push({
+          ...row,
+          trainer_name: null,
+          trainer_status: "NOT_REQUIRED"
+        });
         continue;
       }
 
-      const batchDomain = row.domain;
-      const moduleName = row.module_name;
-      const currentDate = row.date;
+      const batchDomain =
+        (row.domain || row.DOMAIN || "").toString().trim();
+
+      const moduleName =
+        (row.module_name || row["MODULE NAME"] || "")
+          .toString()
+          .trim();
+
+      const currentDate =
+        (row.date || row.DATE || "").toString().trim();
+
+      // ===============================
+      // FIND TEMPLATE
+      // ===============================
 
       const template = templates.find(t =>
-        t.domain === batchDomain &&
-        t.module_name?.toLowerCase() === moduleName?.toLowerCase()
+        t.domain?.toLowerCase().trim() === batchDomain.toLowerCase() &&
+        t.module_name?.toLowerCase().trim() === moduleName.toLowerCase()
       );
 
       if (!template) {
         assignedRows.push({
           ...row,
+          trainer_name: null,
           trainer_status: "NOT_AVAILABLE"
         });
         continue;
@@ -1870,26 +1899,42 @@ app.post("/api/plan-with-trainers", async (req, res) => {
 
       const moduleType = template.module_type;
 
+      // ===============================
+      // ELIGIBLE TRAINERS
+      // ===============================
+
       let eligible = trainers.filter(t =>
-        t.module_name?.toLowerCase() === moduleName?.toLowerCase()
+        t.module_name?.toLowerCase().trim() === moduleName.toLowerCase()
       );
 
       if (moduleType === "CORE_THEORY" || moduleType === "CORE_LAB") {
         eligible = eligible.filter(
-          t => t.trainer_domain === batchDomain
+          t =>
+            t.trainer_domain?.toLowerCase().trim() ===
+            batchDomain.toLowerCase()
         );
       } else {
         eligible = eligible.filter(
-          t => t.domain_handling === batchDomain
+          t =>
+            t.domain_handling?.toLowerCase().trim() ===
+            batchDomain.toLowerCase()
         );
       }
 
-      eligible = eligible.filter(tr => {
-        return !existingAssignments.some(ex =>
+      // ===============================
+      // REMOVE DOUBLE BOOKING
+      // ===============================
+
+      eligible = eligible.filter(tr =>
+        !existingAssignments.some(ex =>
           ex.trainer_name === tr.trainer_name &&
           ex.date === currentDate
-        );
-      });
+        )
+      );
+
+      // ===============================
+      // ASSIGN
+      // ===============================
 
       if (eligible.length === 0) {
         assignedRows.push({
@@ -1914,6 +1959,7 @@ app.post("/api/plan-with-trainers", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
 
 
 // ✅ GET holidays for current year (no query param needed)
