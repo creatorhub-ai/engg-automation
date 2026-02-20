@@ -489,6 +489,46 @@ export default function ClassroomPlanner() {
     return t;
   }, [classrooms, slots, weeks, plans, unallocatedBatches]);
 
+  // ================= TRAINER MATRIX =================
+
+  const trainers = useMemo(() => {
+    const unique = new Set(
+      plans.map((p) => p.trainer_name || "UNASSIGNED")
+    );
+    return Array.from(unique).sort();
+  }, [plans]);
+
+  const trainerTable = useMemo(() => {
+    const t = [];
+
+    trainers.forEach((trainer) => {
+      const row = [trainer];
+
+      weeks.forEach((week) => {
+        const weekStart = week.weekStart;
+        const weekEnd = new Date(weekStart);
+        weekEnd.setDate(weekEnd.getDate() + 6);
+
+        const startIso = weekStart.toISOString().slice(0, 10);
+        const endIso = weekEnd.toISOString().slice(0, 10);
+
+        const batches = plans
+          .filter(
+            (p) =>
+              (p.trainer_name || "UNASSIGNED") === trainer &&
+              isDateOverlap(p.a_start, p.a_end, startIso, endIso)
+          )
+          .map((p) => p.batch_no);
+
+        row.push(batches.filter(Boolean));
+      });
+
+      t.push(row);
+    });
+
+    return t;
+  }, [trainers, weeks, plans]);
+
   const batchColorMap = useMemo(() => getBatchColorMap(table), [table]);
 
   const batchDetailMap = useMemo(() => {
@@ -498,6 +538,11 @@ export default function ClassroomPlanner() {
     });
     return m;
   }, [plans]);
+
+  const trainerBatchColorMap = useMemo(
+    () => getBatchColorMap(trainerTable),
+    [trainerTable]
+  );
 
   // 🔥 NEW: License based on CLASSROOM CAPACITY
   const getLicenseInfoForBatch = (batchNo, classroomCapacity, enrolled) => {
@@ -611,11 +656,23 @@ export default function ClassroomPlanner() {
       const { plans: offlinePlans, unallocated } =
         planClassroomsForOffline(rowsWithTrainers);
 
+      // 🔥 Merge trainer info into plans
+      const enrichedPlans = offlinePlans.map((p) => {
+        const original = rowsWithTrainers.find(
+          (r) => r["COURSE"] === p.batch_no
+        );
+
+        return {
+          ...p,
+          trainer_name: original?.trainer_name || "UNASSIGNED",
+        };
+      });
+
       // ===============================
       // STEP 3: UPDATE STATE
       // ===============================
 
-      setPlans(offlinePlans);
+      setPlans(enrichedPlans);
 
       setUnallocatedBatches(
         unallocated.map((u) => ({
@@ -1184,6 +1241,92 @@ export default function ClassroomPlanner() {
           </>
         )}
       </Paper>
+
+      {/* ================= TRAINER MATRIX ================= */}
+      <Paper elevation={3} sx={{ p: 4, borderRadius: 3, mt: 4 }}>
+        <Typography variant="h5" fontWeight="bold" mb={2}>
+          Trainer Allocation Matrix
+        </Typography>
+
+        {!plans.length ? (
+          <Alert severity="info">
+            Upload file to see trainer allocation.
+          </Alert>
+        ) : (
+          <TableContainer sx={{ maxHeight: 450 }}>
+            <Table size="small" stickyHeader>
+              <TableHead>
+                <TableRow>
+                  <TableCell>Trainer</TableCell>
+                  {weeks.map((w, idx) => (
+                    <TableCell key={idx} align="center">
+                      {w.month} {w.year} W{w.weekNum}
+                    </TableCell>
+                  ))}
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {trainerTable.map((row, idx) => (
+                  <TableRow
+                    key={idx}
+                    sx={
+                      row[0] === "UNASSIGNED"
+                        ? { backgroundColor: "#fff3f3" }
+                        : {}
+                    }
+                  >
+                    {row.map((cell, jdx) =>
+                      jdx === 0 ? (
+                        <TableCell
+                          key={jdx}
+                          sx={{ fontWeight: "bold", minWidth: 140 }}
+                        >
+                          {cell}
+                        </TableCell>
+                      ) : (
+                        <TableCell
+                          key={jdx}
+                          sx={{ textAlign: "center", p: 0.5 }}
+                        >
+                          <Box
+                            sx={{
+                              display: "flex",
+                              flexDirection: "column",
+                              alignItems: "center",
+                              gap: 0.25,
+                            }}
+                          >
+                            {Array.isArray(cell)
+                              ? cell.map((batch, bid) => (
+                                  <Chip
+                                    key={bid}
+                                    label={batch}
+                                    size="small"
+                                    sx={{
+                                      backgroundColor:
+                                        trainerBatchColorMap[batch] ||
+                                        "#e0e0e0",
+                                      fontWeight: 600,
+                                      cursor: "pointer",
+                                    }}
+                                    onClick={() =>
+                                      handleBatchClick(batch)
+                                    }
+                                  />
+                                ))
+                              : null}
+                          </Box>
+                        </TableCell>
+                      )
+                    )}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        )}
+      </Paper>
+
       {unallocatedBatches.length > 0 && (
         <Paper elevation={3} sx={{ p: 3, mt: 4 }}>
           <Typography variant="h6" color="error" gutterBottom>
