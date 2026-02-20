@@ -1809,16 +1809,11 @@ app.post("/api/plan-with-trainers", async (req, res) => {
       return res.status(400).json({ error: "Invalid rows input" });
     }
 
-    // ===============================
-    // FETCH TABLES (UNCHANGED)
-    // ===============================
-
     const trainerRes = await supabase
       .from("trainer_domain")
       .select("*");
 
     if (trainerRes.error) {
-      console.error("Trainer table error:", trainerRes.error);
       return res.status(500).json({ error: trainerRes.error.message });
     }
 
@@ -1827,17 +1822,15 @@ app.post("/api/plan-with-trainers", async (req, res) => {
       .select("*");
 
     if (templateRes.error) {
-      console.error("Template table error:", templateRes.error);
       return res.status(500).json({ error: templateRes.error.message });
     }
 
     const existingRes = await supabase
       .from("course_planner_data")
-      .select("trainer_name, batch_no, date, mode")
+      .select("trainer_name, date")
       .eq("mode", "offline");
 
     if (existingRes.error) {
-      console.error("Planner table error:", existingRes.error);
       return res.status(500).json({ error: existingRes.error.message });
     }
 
@@ -1847,52 +1840,55 @@ app.post("/api/plan-with-trainers", async (req, res) => {
 
     const assignedRows = [];
 
-    // ===============================
-    // MAIN LOOP
-    // ===============================
+    for (const originalRow of rows) {
 
-    for (const row of rows) {
+      // 🔥 NORMALIZE INPUT
+      const row = {};
+      Object.keys(originalRow).forEach(key => {
+        row[key.toLowerCase().trim()] =
+          typeof originalRow[key] === "string"
+            ? originalRow[key].trim()
+            : originalRow[key];
+      });
 
-      // 🔥 FIX: Support both mode & MODE
-      const modeValue =
-        row.mode ||
-        row.MODE ||
-        "";
+      const mode = (row.mode || "").toLowerCase();
 
-      if (modeValue.toString().toLowerCase() !== "offline") {
+      if (mode !== "offline") {
         assignedRows.push({
-          ...row,
+          ...originalRow,
           trainer_name: null,
           trainer_status: "NOT_REQUIRED"
         });
         continue;
       }
 
-      const batchDomain =
-        (row.domain || row.DOMAIN || "").toString().trim();
+      const batchDomain = (row.domain || "").toLowerCase();
+      const moduleName = (row.module_name || row["module name"] || "").toLowerCase();
+      const currentDate = row.date;
 
-      const moduleName =
-        (row.module_name || row["MODULE NAME"] || "")
-          .toString()
-          .trim();
-
-      const currentDate =
-        (row.date || row.DATE || "").toString().trim();
+      if (!batchDomain || !moduleName || !currentDate) {
+        assignedRows.push({
+          ...originalRow,
+          trainer_name: null,
+          trainer_status: "INVALID_ROW"
+        });
+        continue;
+      }
 
       // ===============================
       // FIND TEMPLATE
       // ===============================
 
       const template = templates.find(t =>
-        t.domain?.toLowerCase().trim() === batchDomain.toLowerCase() &&
-        t.module_name?.toLowerCase().trim() === moduleName.toLowerCase()
+        t.domain?.toLowerCase().trim() === batchDomain &&
+        t.module_name?.toLowerCase().trim() === moduleName
       );
 
       if (!template) {
         assignedRows.push({
-          ...row,
+          ...originalRow,
           trainer_name: null,
-          trainer_status: "NOT_AVAILABLE"
+          trainer_status: "NO_TEMPLATE"
         });
         continue;
       }
@@ -1900,29 +1896,25 @@ app.post("/api/plan-with-trainers", async (req, res) => {
       const moduleType = template.module_type;
 
       // ===============================
-      // ELIGIBLE TRAINERS
+      // FIND ELIGIBLE TRAINERS
       // ===============================
 
       let eligible = trainers.filter(t =>
-        t.module_name?.toLowerCase().trim() === moduleName.toLowerCase()
+        t.module_name?.toLowerCase().trim() === moduleName
       );
 
       if (moduleType === "CORE_THEORY" || moduleType === "CORE_LAB") {
-        eligible = eligible.filter(
-          t =>
-            t.trainer_domain?.toLowerCase().trim() ===
-            batchDomain.toLowerCase()
+        eligible = eligible.filter(t =>
+          t.trainer_domain?.toLowerCase().trim() === batchDomain
         );
       } else {
-        eligible = eligible.filter(
-          t =>
-            t.domain_handling?.toLowerCase().trim() ===
-            batchDomain.toLowerCase()
+        eligible = eligible.filter(t =>
+          t.domain_handling?.toLowerCase().trim() === batchDomain
         );
       }
 
       // ===============================
-      // REMOVE DOUBLE BOOKING
+      // REMOVE DOUBLE BOOKED
       // ===============================
 
       eligible = eligible.filter(tr =>
@@ -1933,18 +1925,18 @@ app.post("/api/plan-with-trainers", async (req, res) => {
       );
 
       // ===============================
-      // ASSIGN
+      // FINAL ASSIGNMENT
       // ===============================
 
       if (eligible.length === 0) {
         assignedRows.push({
-          ...row,
+          ...originalRow,
           trainer_name: null,
           trainer_status: "NOT_AVAILABLE"
         });
       } else {
         assignedRows.push({
-          ...row,
+          ...originalRow,
           trainer_name: eligible[0].trainer_name,
           trainer_email: eligible[0].trainer_email,
           trainer_status: "ASSIGNED"
