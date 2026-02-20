@@ -1825,24 +1825,17 @@ app.post("/api/plan-with-trainers", async (req, res) => {
       return res.status(500).json({ error: templateRes.error.message });
     }
 
-    const existingRes = await supabase
-      .from("course_planner_data")
-      .select("trainer_name, date")
-      .eq("mode", "offline");
-
-    if (existingRes.error) {
-      return res.status(500).json({ error: existingRes.error.message });
-    }
-
     const trainers = trainerRes.data || [];
     const templates = templateRes.data || [];
-    const existingAssignments = existingRes.data || [];
 
     const assignedRows = [];
 
+    // 🔥 Track trainer booking only within this upload
+    const localBookings = {};
+
     for (const originalRow of rows) {
 
-      // 🔥 NORMALIZE INPUT
+      // Normalize keys
       const row = {};
       Object.keys(originalRow).forEach(key => {
         row[key.toLowerCase().trim()] =
@@ -1914,15 +1907,13 @@ app.post("/api/plan-with-trainers", async (req, res) => {
       }
 
       // ===============================
-      // REMOVE DOUBLE BOOKED
+      // REMOVE DUPLICATE IN SAME UPLOAD
       // ===============================
 
-      eligible = eligible.filter(tr =>
-        !existingAssignments.some(ex =>
-          ex.trainer_name === tr.trainer_name &&
-          ex.date === currentDate
-        )
-      );
+      eligible = eligible.filter(tr => {
+        const key = `${tr.trainer_name}_${currentDate}`;
+        return !localBookings[key];
+      });
 
       // ===============================
       // FINAL ASSIGNMENT
@@ -1935,10 +1926,15 @@ app.post("/api/plan-with-trainers", async (req, res) => {
           trainer_status: "NOT_AVAILABLE"
         });
       } else {
+        const selectedTrainer = eligible[0];
+
+        const bookingKey = `${selectedTrainer.trainer_name}_${currentDate}`;
+        localBookings[bookingKey] = true;
+
         assignedRows.push({
           ...originalRow,
-          trainer_name: eligible[0].trainer_name,
-          trainer_email: eligible[0].trainer_email,
+          trainer_name: selectedTrainer.trainer_name,
+          trainer_email: selectedTrainer.trainer_email,
           trainer_status: "ASSIGNED"
         });
       }
