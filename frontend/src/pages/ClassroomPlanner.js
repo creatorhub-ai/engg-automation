@@ -493,7 +493,9 @@ export default function ClassroomPlanner() {
 
   const trainers = useMemo(() => {
     const unique = new Set(
-      plans.map((p) => p.trainer_name || "UNASSIGNED")
+      plans.map((p) =>
+        (p.trainer_name || "").trim() || "UNASSIGNED"
+      )
     );
     return Array.from(unique).sort();
   }, [plans]);

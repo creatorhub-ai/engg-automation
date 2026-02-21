@@ -1618,7 +1618,6 @@ app.get("/api/get-classroom-matrix", async (req, res) => {
       return res.status(500).json({ error: error.message });
     }
 
-    // Transform back to frontend format
     const transformedRows = occupancyRows.map((r) => ({
       batch_no: r.batch_no,
       classroom_name: r.classroom_name,
@@ -1626,15 +1625,15 @@ app.get("/api/get-classroom-matrix", async (req, res) => {
       occupancy_start: r.occupancy_start,
       occupancy_end: r.occupancy_end,
       enrolled: r.enrolled || 0,
+      capacity: r.capacity || r.enrolled || 0,   // ✅ FIX HERE
       a_start: r.occupancy_start,
       a_end: r.occupancy_end,
-      capacity: 35, // default, or fetch from classrooms table if needed
       mode: "OFFLINE",
     }));
 
     res.json({
       occupancyRows: transformedRows,
-      weeks: [], // computed in frontend from dates
+      weeks: [],
     });
   } catch (err) {
     console.error("get-classroom-matrix error:", err);
