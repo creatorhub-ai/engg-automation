@@ -1933,7 +1933,7 @@ app.post("/api/plan-with-trainers", async (req, res) => {
       }
     }
 
-    res.json({ assignedRows: updatedRows });
+    res.json({ assignedRows });
 
   } catch (err) {
     console.error("PLAN TRAINER ERROR:", err);
