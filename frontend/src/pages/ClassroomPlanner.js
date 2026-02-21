@@ -660,15 +660,29 @@ export default function ClassroomPlanner() {
 
       // 🔥 Merge trainer info into plans
       const enrichedPlans = offlinePlans.map((p) => {
-        const original = rowsWithTrainers.find(
-          (r) => r["COURSE"] === p.batch_no
-        );
+      const original = rowsWithTrainers.find((r) => {
+        const excelCourse = (r["COURSE"] || "")
+          .toString()
+          .trim()
+          .toUpperCase();
 
-        return {
-          ...p,
-          trainer_name: original?.trainer_name || "UNASSIGNED",
-        };
+        const plannedCourse = (p.batch_no || "")
+          .toString()
+          .trim()
+          .toUpperCase();
+
+        return excelCourse === plannedCourse;
       });
+
+      return {
+        ...p,
+        trainer_name:
+          (original?.trainer_name ||
+          original?.Trainer_Name ||
+          original?.trainer ||
+          "").toString().trim() || "UNASSIGNED",
+      };
+    });
 
       // ===============================
       // STEP 3: UPDATE STATE
