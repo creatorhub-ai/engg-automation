@@ -107,12 +107,10 @@ function isDateOverlap(start1, end1, start2, end2) {
   const s2 = new Date(start2);
   const e2 = new Date(end2);
 
-  // If either is invalid, treat as overlap (safety)
   if (isNaN(s1) || isNaN(e1) || isNaN(s2) || isNaN(e2)) {
     return true;
   }
 
-  // Proper overlap formula
   return s1 <= e2 && s2 <= e1;
 }
 
@@ -157,7 +155,7 @@ function planClassroomsForOffline(rows) {
   const occupancyIndex = {};
   const getKey = (room, slot) => `${room}|${slot}`;
 
-  // ✅ STEP 1: Normalize and FILTER only valid OFFLINE rows first
+  // STEP 1: Normalize and FILTER only valid OFFLINE rows first
   const filteredRows = rows
     .map(normalizeRowKeys)
     .filter((row) => {
@@ -177,7 +175,7 @@ function planClassroomsForOffline(rows) {
       );
     });
 
-  // ✅ STEP 2: SORT BY START DATE (earliest first)
+  // STEP 2: SORT BY START DATE (earliest first)
   filteredRows.sort((a, b) => {
     const dateA = parseExcelDate(a["A.START DATE"]);
     const dateB = parseExcelDate(b["A.START DATE"]);
@@ -185,11 +183,10 @@ function planClassroomsForOffline(rows) {
     const diff = dateA - dateB;
     if (diff !== 0) return diff;
 
-    // If same start date → stable alphabetical order
     return (a["COURSE"] || "").localeCompare(b["COURSE"] || "");
   });
 
-  // ✅ STEP 3: Allocation happens in sorted order
+  // STEP 3: Allocation happens in sorted order
   filteredRows.forEach((row) => {
     const course = row["COURSE"];
     const mode = "OFFLINE";
@@ -203,7 +200,7 @@ function planClassroomsForOffline(rows) {
     const enrolled = Number(row["ENROLLED"] || 0);
     const batchCapacity = Number(row["CAPACITY"] || 0);
 
-    // ❌ RULE 1: enrolled should not exceed batch capacity
+    // RULE 1: enrolled should not exceed batch capacity
     if (enrolled > batchCapacity) {
       plans.push({
         batch_no: course,
@@ -215,6 +212,8 @@ function planClassroomsForOffline(rows) {
         classroom_name: "",
         slot: "",
         isAllocated: false,
+        // Preserve trainer info from enriched rows
+        trainer_name: row["trainer_name"] || "UNASSIGNED",
       });
 
       unallocated.push({
@@ -279,6 +278,8 @@ function planClassroomsForOffline(rows) {
       classroom_name: assignedRoom,
       slot: assignedSlot,
       isAllocated: allocated,
+      // Preserve trainer info from enriched rows
+      trainer_name: row["trainer_name"] || "UNASSIGNED",
     });
   });
 
@@ -325,7 +326,22 @@ export default function ClassroomPlanner() {
   const [licenseError, setLicenseError] = useState("");
   const [unallocatedBatches, setUnallocatedBatches] = useState([]);
 
-  // ✅ FIX: hoisted so it is accessible to handleSaveMatrix + useEffect
+  // ✅ FIX 2: Helper to compute weeks from plans
+  const computeAndSetWeeks = useCallback((normalizedPlans) => {
+    const allDates = normalizedPlans
+      .flatMap((p) => [p.a_start, p.a_end])
+      .filter(Boolean);
+
+    if (allDates.length) {
+      const start = allDates.reduce((a, b) => (a < b ? a : b));
+      const end = allDates.reduce((a, b) => (a > b ? a : b));
+      setWeeks(getWeeksInRange(start, end));
+    } else {
+      setWeeks([]);
+    }
+  }, []);
+
+  // ✅ FIX 2: loadExistingMatrix now correctly preserves capacity from DB
   const loadExistingMatrix = useCallback(async () => {
     try {
       setLoading(true);
@@ -358,11 +374,13 @@ export default function ClassroomPlanner() {
         a_start: r.occupancy_start,
         a_end: r.occupancy_end,
         enrolled: r.enrolled || 0,
+        // ✅ FIX 2: Use actual capacity from DB, not hardcoded 35
         capacity: r.capacity || r.enrolled || 0,
         mode: "OFFLINE",
+        // ✅ FIX 1: Preserve trainer_name from DB
+        trainer_name: r.trainer_name || "UNASSIGNED",
       }));
 
-      // ✅ IMPORTANT FIX
       const allocated = normalizedPlans.filter(
         (p) => p.classroom_name && p.slot
       );
@@ -371,7 +389,6 @@ export default function ClassroomPlanner() {
         (p) => !p.classroom_name || !p.slot
       );
 
-      // ✅ FIX: keep ALL plans in state
       setPlans(normalizedPlans);
 
       setUnallocatedBatches(
@@ -383,27 +400,18 @@ export default function ClassroomPlanner() {
         }))
       );
 
-      const allDates = normalizedPlans
-        .flatMap((p) => [p.a_start, p.a_end])
-        .filter(Boolean);
-
-      if (allDates.length) {
-        const start = allDates.reduce((a, b) => (a < b ? a : b));
-        const end = allDates.reduce((a, b) => (a > b ? a : b));
-        setWeeks(getWeeksInRange(start, end));
-      } else {
-        setWeeks([]);
-      }
+      computeAndSetWeeks(normalizedPlans);
 
       setProcessingStatus(
-        `Loaded ${occupancyRows.length} saved batches (auto-reload on next upload)`
+        `Loaded ${occupancyRows.length} saved batches.`
       );
     } catch (e) {
       console.error("loadExistingMatrix error", e);
+      setProcessingStatus("Error loading saved matrix.");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [computeAndSetWeeks]);
 
   // Auto-load matrix + licenses on mount
   useEffect(() => {
@@ -439,6 +447,7 @@ export default function ClassroomPlanner() {
 
     return allocatedRooms;
   }, [plans, unallocatedBatches]);
+
   const slots = ["morning", "evening"];
 
   const table = useMemo(() => {
@@ -461,14 +470,12 @@ export default function ClassroomPlanner() {
           let batches = [];
 
           if (room === "UNALLOCATED") {
-            // 🔥 Only check unallocated list
             batches = unallocatedBatches
               .filter((p) =>
                 isDateOverlap(p.a_start, p.a_end, startIso, endIso)
               )
               .map((p) => p.batch_no);
           } else {
-            // Normal allocated logic
             batches = plans
               .filter(
                 (p) =>
@@ -493,9 +500,7 @@ export default function ClassroomPlanner() {
 
   const trainers = useMemo(() => {
     const unique = new Set(
-      plans.map((p) =>
-        (p.trainer_name || "").trim() || "UNASSIGNED"
-      )
+      plans.map((p) => p.trainer_name || "UNASSIGNED")
     );
     return Array.from(unique).sort();
   }, [plans]);
@@ -546,7 +551,7 @@ export default function ClassroomPlanner() {
     [trainerTable]
   );
 
-  // 🔥 NEW: License based on CLASSROOM CAPACITY
+  // License based on CLASSROOM CAPACITY
   const getLicenseInfoForBatch = (batchNo, classroomCapacity, enrolled) => {
     const domain = getDomainFromCourse(batchNo);
     if (!domain || !Array.isArray(licenses)) return [];
@@ -560,7 +565,6 @@ export default function ClassroomPlanner() {
     return domainLicenses.map((lic) => {
       const licenseCount = Number(lic.count || 0);
 
-      // ✅ Required should be max of enrolled or classroom capacity
       const requiredLicenses = Math.max(
         Number(enrolled || 0),
         Number(classroomCapacity || 0)
@@ -604,6 +608,26 @@ export default function ClassroomPlanner() {
     });
   };
 
+  // ✅ FIX 1: Fetch trainer assignments from course_planner_data for batch-level rows
+  const fetchTrainerForBatches = async (batchNos) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/get-batch-trainers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ batch_nos: batchNos }),
+      });
+
+      if (!res.ok) return {};
+
+      const data = await res.json();
+      // Returns { batch_no: trainer_name } map
+      return data.trainerMap || {};
+    } catch (e) {
+      console.error("fetchTrainerForBatches error:", e);
+      return {};
+    }
+  };
+
   const handleFileUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -630,62 +654,85 @@ export default function ClassroomPlanner() {
       });
 
       // ===============================
-      // STEP 1: CALL TRAINER ASSIGNMENT API
-      // ===============================
-      setProcessingStatus("Assigning trainers...");
-
-      const trainerRes = await fetch(`${API_BASE}/api/plan-with-trainers`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rows }),
-      });
-
-      if (!trainerRes.ok) {
-        const errorText = await trainerRes.text();
-        throw new Error(errorText || "Trainer planning failed");
-      }
-
-      const trainerData = await trainerRes.json();
-
-      // Backend returns assignedRows (as per fixed backend)
-      const rowsWithTrainers = trainerData.assignedRows || rows;
-
-      // ===============================
-      // STEP 2: CLASSROOM ALLOCATION
+      // STEP 1: CLASSROOM ALLOCATION
       // ===============================
       setProcessingStatus("Allocating classrooms...");
 
       const { plans: offlinePlans, unallocated } =
-        planClassroomsForOffline(rowsWithTrainers);
-
-      // 🔥 Merge trainer info into plans
-      const enrichedPlans = offlinePlans.map((p) => {
-      const original = rowsWithTrainers.find((r) => {
-        const excelCourse = (r["COURSE"] || "")
-          .toString()
-          .trim()
-          .toUpperCase();
-
-        const plannedCourse = (p.batch_no || "")
-          .toString()
-          .trim()
-          .toUpperCase();
-
-        return excelCourse === plannedCourse;
-      });
-
-      return {
-        ...p,
-        trainer_name:
-          (original?.trainer_name ||
-          original?.Trainer_Name ||
-          original?.trainer ||
-          "").toString().trim() || "UNASSIGNED",
-      };
-    });
+        planClassroomsForOffline(rows);
 
       // ===============================
-      // STEP 3: UPDATE STATE
+      // ✅ FIX 1: STEP 2: FETCH TRAINER ASSIGNMENTS FROM DB
+      // Based on batch_no (COURSE) from course_planner_data table
+      // ===============================
+      setProcessingStatus("Fetching trainer assignments...");
+
+      const batchNos = offlinePlans.map((p) => p.batch_no).filter(Boolean);
+      const trainerMap = await fetchTrainerForBatches(batchNos);
+
+      // ===============================
+      // STEP 3: ALSO TRY plan-with-trainers API as fallback
+      // (For cases where trainer_domain table is the source)
+      // ===============================
+      let trainerApiMap = {};
+      try {
+        const trainerRes = await fetch(`${API_BASE}/api/plan-with-trainers`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rows }),
+        });
+
+        if (trainerRes.ok) {
+          const trainerData = await trainerRes.json();
+          const assignedRows = trainerData.assignedRows || [];
+
+          // Build a map from COURSE -> trainer_name from the API response
+          assignedRows.forEach((r) => {
+            const course =
+              r["COURSE"] || r["course"] || r["Course"] || "";
+            const trainerName = r.trainer_name;
+            if (
+              course &&
+              trainerName &&
+              trainerName !== "UNASSIGNED" &&
+              trainerName !== null
+            ) {
+              // Group by course: take first non-null assignment
+              if (!trainerApiMap[course]) {
+                trainerApiMap[course] = trainerName;
+              }
+            }
+          });
+        }
+      } catch (trainerErr) {
+        console.warn("plan-with-trainers API failed (non-fatal):", trainerErr);
+      }
+
+      // ===============================
+      // STEP 4: ENRICH PLANS WITH TRAINER
+      // Priority: DB trainer map > API trainer map > "UNASSIGNED"
+      // ===============================
+      const enrichedPlans = offlinePlans.map((p) => {
+        const trainerFromDb = trainerMap[p.batch_no];
+        const trainerFromApi = trainerApiMap[p.batch_no];
+
+        const finalTrainer =
+          (trainerFromDb && trainerFromDb !== "UNASSIGNED"
+            ? trainerFromDb
+            : null) ||
+          (trainerFromApi && trainerFromApi !== "UNASSIGNED"
+            ? trainerFromApi
+            : null) ||
+          "UNASSIGNED";
+
+        return {
+          ...p,
+          trainer_name: finalTrainer,
+        };
+      });
+
+      // ===============================
+      // STEP 5: UPDATE STATE
       // ===============================
 
       setPlans(enrichedPlans);
@@ -828,6 +875,7 @@ export default function ClassroomPlanner() {
         "LICENSE_ADDITIONAL_NEEDED",
         "CLASSROOM_NAME",
         "SLOT",
+        "TRAINER",
       ];
       plansSheet.addRow(plansHeader);
 
@@ -867,6 +915,7 @@ export default function ClassroomPlanner() {
           totalShortage,
           p.classroom_name,
           p.slot,
+          p.trainer_name || "UNASSIGNED",
         ]);
       });
 
@@ -881,6 +930,7 @@ export default function ClassroomPlanner() {
         { width: 25 },
         { width: 20 },
         { width: 12 },
+        { width: 20 },
       ];
 
       const buffer = await workbook.xlsx.writeBuffer();
@@ -899,7 +949,7 @@ export default function ClassroomPlanner() {
     }
   };
 
-  // Save to backend using API_BASE
+  // ✅ FIX 2: Save to backend — include actual capacity in payload
   const handleSaveMatrix = async () => {
     if (!plans.length && !unallocatedBatches.length) {
       setError("No matrix to save.");
@@ -911,7 +961,7 @@ export default function ClassroomPlanner() {
     setError("");
 
     try {
-      // ✅ Combine BOTH allocated + unallocated
+      // Combine BOTH allocated + unallocated
       const allRows = [
         ...plans,
         ...unallocatedBatches.map((u) => ({
@@ -921,7 +971,8 @@ export default function ClassroomPlanner() {
           a_start: u.a_start,
           a_end: u.a_end,
           enrolled: u.enrolled,
-          capacity: 0,
+          capacity: u.capacity || 0,
+          trainer_name: u.trainer_name || null,
         })),
       ];
 
@@ -932,7 +983,9 @@ export default function ClassroomPlanner() {
         occupancy_start: p.a_start,
         occupancy_end: p.a_end,
         enrolled: p.enrolled || 0,
+        // ✅ FIX 2: Always send actual capacity, not just enrolled
         capacity: p.capacity || p.enrolled || 0,
+        trainer_name: p.trainer_name || null,
       }));
 
       const res = await fetch(`${API_BASE}/api/save-classroom-matrix`, {
@@ -952,7 +1005,41 @@ export default function ClassroomPlanner() {
         `✅ ${inserted || 0} NEW + ${updated || 0} UPDATED + ${skipped || 0} unchanged`
       );
 
+      // ✅ FIX 2: After save, reload from DB but preserve current plans in state
+      // so License Summary remains visible with correct capacity values
+      // We store current plans snapshot before reload, then merge
+      const currentPlansSnapshot = [...plans];
+      const currentUnallocatedSnapshot = [...unallocatedBatches];
+
       await loadExistingMatrix();
+
+      // If loadExistingMatrix returns empty or capacity is wrong,
+      // fall back to current enriched plans
+      setPlans((prev) => {
+        if (!prev.length) return currentPlansSnapshot;
+        // Merge: use DB data but override capacity if DB has default 35
+        return prev.map((dbPlan) => {
+          const localPlan = currentPlansSnapshot.find(
+            (lp) => lp.batch_no === dbPlan.batch_no
+          );
+          if (localPlan) {
+            return {
+              ...dbPlan,
+              // Use whichever capacity is larger (local is more accurate)
+              capacity:
+                localPlan.capacity > dbPlan.capacity
+                  ? localPlan.capacity
+                  : dbPlan.capacity,
+              // Preserve trainer from local if DB says UNASSIGNED
+              trainer_name:
+                dbPlan.trainer_name && dbPlan.trainer_name !== "UNASSIGNED"
+                  ? dbPlan.trainer_name
+                  : localPlan.trainer_name || "UNASSIGNED",
+            };
+          }
+          return dbPlan;
+        });
+      });
     } catch (err) {
       console.error("Save error:", err);
       setError(err.message);
@@ -1082,6 +1169,10 @@ export default function ClassroomPlanner() {
                   <Typography variant="body2">
                     Classroom: {selectedBatch.classroom_name || "Not assigned"} | Slot:{" "}
                     {slotDisplayMap[selectedBatch.slot] || selectedBatch.slot || "Not assigned"}
+                  </Typography>
+                  {/* ✅ FIX 1: Show trainer in batch details */}
+                  <Typography variant="body2">
+                    Trainer: {selectedBatch.trainer_name || "UNASSIGNED"}
                   </Typography>
                 </Box>
 
@@ -1371,79 +1462,83 @@ export default function ClassroomPlanner() {
           </Table>
         </Paper>
       )}
+
       {/* ================= LICENSE REQUIREMENT SECTION ================= */}
-      <Paper elevation={3} sx={{ p: 3, mt: 4 }}>
-        <Typography variant="h6" color="primary" gutterBottom>
-          License Requirement Summary
-        </Typography>
+      {/* ✅ FIX 2: Always show this section when plans exist, regardless of save state */}
+      {plans.length > 0 && (
+        <Paper elevation={3} sx={{ p: 3, mt: 4 }}>
+          <Typography variant="h6" color="primary" gutterBottom>
+            License Requirement Summary
+          </Typography>
 
-        {(() => {
-          const licenseIssues = [];
+          {(() => {
+            const licenseIssues = [];
 
-          plans.forEach((p) => {
-            if (!p.batch_no) return;
+            plans.forEach((p) => {
+              if (!p.batch_no) return;
 
-            const licenseInfo = getLicenseInfoForBatch(
-              p.batch_no,
-              p.capacity,
-              p.enrolled
-            );
+              const licenseInfo = getLicenseInfoForBatch(
+                p.batch_no,
+                p.capacity,
+                p.enrolled
+              );
 
-            const shortages = licenseInfo.filter(
-              (l) => l.additional_needed > 0
-            );
+              const shortages = licenseInfo.filter(
+                (l) => l.additional_needed > 0
+              );
 
-            if (shortages.length > 0) {
-              licenseIssues.push({
-                batch_no: p.batch_no,
-                shortages,
-              });
+              if (shortages.length > 0) {
+                licenseIssues.push({
+                  batch_no: p.batch_no,
+                  shortages,
+                });
+              }
+            });
+
+            if (licenseIssues.length === 0) {
+              return (
+                <Alert severity="success">
+                  ✅ License is sufficient for all batches.
+                </Alert>
+              );
             }
-          });
 
-          if (licenseIssues.length === 0) {
             return (
-              <Alert severity="success">
-                ✅ License is sufficient for all batches.
-              </Alert>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Batch</TableCell>
+                    <TableCell>License</TableCell>
+                    <TableCell>Available</TableCell>
+                    <TableCell>Required (Capacity)</TableCell>
+                    <TableCell>Additional Needed</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {licenseIssues.map((issue) =>
+                    issue.shortages.map((lic, idx) => (
+                      <TableRow
+                        key={`${issue.batch_no}-${idx}`}
+                        sx={{ backgroundColor: "#fff3f3" }}
+                      >
+                        <TableCell sx={{ fontWeight: "bold", color: "error.main" }}>
+                          {issue.batch_no}
+                        </TableCell>
+                        <TableCell>{lic.license_name}</TableCell>
+                        <TableCell>{lic.count}</TableCell>
+                        <TableCell>{lic.required}</TableCell>
+                        <TableCell sx={{ color: "error.main", fontWeight: 600 }}>
+                          {lic.additional_needed}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
             );
-          }
-
-          return (
-            <Table size="small">
-              <TableHead>
-                <TableRow>
-                  <TableCell>Batch</TableCell>
-                  <TableCell>License</TableCell>
-                  <TableCell>Available</TableCell>
-                  <TableCell>Required (Capacity)</TableCell>
-                  <TableCell>Additional Needed</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {licenseIssues.map((issue) =>
-                  issue.shortages.map((lic, idx) => (
-                    <TableRow
-                      key={`${issue.batch_no}-${idx}`}
-                      sx={{ backgroundColor: "#fff3f3" }}
-                    >
-                      <TableCell sx={{ fontWeight: "bold", color: "error.main" }}>
-                        {issue.batch_no}
-                      </TableCell>
-                      <TableCell>{lic.license_name}</TableCell>
-                      <TableCell>{lic.count}</TableCell>
-                      <TableCell>{lic.required}</TableCell>
-                      <TableCell sx={{ color: "error.main", fontWeight: 600 }}>
-                        {lic.additional_needed}
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          );
-        })()}
-      </Paper>
+          })()}
+        </Paper>
+      )}
     </Box>
   );
 }

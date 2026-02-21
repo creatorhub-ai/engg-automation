@@ -1605,7 +1605,11 @@ app.get('/api/licenses', async (req, res) => {
 });
 
 
-// GET saved classroom matrix
+// ============================================================
+// ALSO UPDATE the existing GET /api/get-classroom-matrix endpoint
+// to return actual capacity from DB (not hardcoded 35)
+// ============================================================
+
 app.get("/api/get-classroom-matrix", async (req, res) => {
   try {
     const { data: occupancyRows, error } = await supabase
@@ -1625,10 +1629,13 @@ app.get("/api/get-classroom-matrix", async (req, res) => {
       occupancy_start: r.occupancy_start,
       occupancy_end: r.occupancy_end,
       enrolled: r.enrolled || 0,
-      capacity: r.capacity || r.enrolled || 0,   // ✅ FIX HERE
       a_start: r.occupancy_start,
       a_end: r.occupancy_end,
+      // ✅ FIX: Return actual capacity from DB, not hardcoded 35
+      capacity: r.capacity || r.enrolled || 0,
       mode: "OFFLINE",
+      // ✅ FIX: Return trainer_name from DB
+      trainer_name: r.trainer_name || null,
     }));
 
     res.json({
@@ -1640,6 +1647,7 @@ app.get("/api/get-classroom-matrix", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 // SAVE classroom matrix (single JSON store in Supabase)
 app.post("/api/save-classroom-matrix", async (req, res) => {
@@ -1682,6 +1690,8 @@ app.post("/api/save-classroom-matrix", async (req, res) => {
         occupancy_start,
         occupancy_end,
         enrolled,
+        capacity: Number(row.capacity) || enrolled,
+        trainer_name: row.trainer_name || null, 
         class_room: classroom_name
           ? classroom_name.split(" ")[0]
           : null,
@@ -1795,6 +1805,81 @@ app.get("/api/trainer-mapping-data", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to fetch trainer mapping data" });
+  }
+});
+
+// This endpoint looks up trainer assignments for batches
+// from the course_planner_data table (batch-level source of truth)
+
+app.post("/api/get-batch-trainers", async (req, res) => {
+  try {
+    const { batch_nos } = req.body;
+
+    if (!Array.isArray(batch_nos) || batch_nos.length === 0) {
+      return res.status(400).json({ error: "batch_nos array required" });
+    }
+
+    // Fetch trainer assignments from course_planner_data
+    // grouped by batch_no — take the first assigned trainer per batch
+    const { data, error } = await supabase
+      .from("course_planner_data")
+      .select("batch_no, trainer_name")
+      .in("batch_no", batch_nos)
+      .eq("mode", "offline")
+      .not("trainer_name", "is", null)
+      .neq("trainer_name", "")
+      .order("batch_no");
+
+    if (error) {
+      console.error("get-batch-trainers error:", error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    // Build a map of batch_no -> trainer_name (first non-null entry per batch)
+    const trainerMap = {};
+    (data || []).forEach((row) => {
+      if (row.batch_no && row.trainer_name && !trainerMap[row.batch_no]) {
+        trainerMap[row.batch_no] = row.trainer_name;
+      }
+    });
+
+    // Also try from trainer_domain table as fallback
+    // (matches by batch prefix/domain to find eligible trainer)
+    // For batch_nos not yet resolved, attempt trainer_domain lookup
+    const unresolved = batch_nos.filter((bn) => !trainerMap[bn]);
+
+    if (unresolved.length > 0) {
+      const { data: trainerDomainData, error: tdError } = await supabase
+        .from("trainer_domain")
+        .select("trainer_name, trainer_domain, domain_handling");
+
+      if (!tdError && trainerDomainData) {
+        unresolved.forEach((batchNo) => {
+          // Infer domain from batch prefix
+          const up = (batchNo || "").toUpperCase();
+          let domain = "";
+          if (up.startsWith("PDFT") || up.startsWith("PD")) domain = "pd";
+          else if (up.startsWith("DVFT") || up.startsWith("DV")) domain = "dv";
+          else if (up.startsWith("DFTFT") || up.startsWith("DFT")) domain = "dft";
+
+          if (domain) {
+            const eligible = trainerDomainData.find(
+              (t) =>
+                (t.trainer_domain || "").toLowerCase() === domain ||
+                (t.domain_handling || "").toLowerCase() === domain
+            );
+            if (eligible) {
+              trainerMap[batchNo] = eligible.trainer_name;
+            }
+          }
+        });
+      }
+    }
+
+    res.json({ trainerMap });
+  } catch (err) {
+    console.error("get-batch-trainers error:", err);
+    res.status(500).json({ error: err.message });
   }
 });
 
