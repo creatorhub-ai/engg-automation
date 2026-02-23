@@ -612,14 +612,10 @@ export default function ClassroomPlanner() {
   // ✅ FIX 1: Fetch trainer assignments from course_planner_data for batch-level rows
   const fetchTrainerForBatches = async (batchNos, offlinePlans) => {
     try {
-      // Build date range map from the plans we just computed
       const batch_date_ranges = {};
-      offlinePlans.forEach((p) => {
+      (offlinePlans || []).forEach((p) => {
         if (p.batch_no && p.a_start && p.a_end) {
-          batch_date_ranges[p.batch_no] = {
-            start: p.a_start,
-            end: p.a_end,
-          };
+          batch_date_ranges[p.batch_no] = { start: p.a_start, end: p.a_end };
         }
       });
 
@@ -1486,37 +1482,55 @@ export default function ClassroomPlanner() {
       {Object.keys(trainerOverlapInfo).length > 0 && (
         <Paper elevation={3} sx={{ p: 3, mt: 4, border: "2px solid #f44336" }}>
           <Typography variant="h6" color="error" gutterBottom>
-            ⚠️ Trainer Overlap / Unavailability
+            ⚠️ Trainer Scheduling Conflicts
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            The following batches could not be assigned a trainer due to scheduling conflicts:
+            These batches could not be assigned a trainer — all eligible trainers have overlapping batches during these dates.
           </Typography>
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>Batch</TableCell>
-                <TableCell>Trainer</TableCell>
-                <TableCell>Conflicting Batch</TableCell>
-                <TableCell>Conflict Dates</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {Object.entries(trainerOverlapInfo).flatMap(([batchNo, overlaps]) =>
-                overlaps.flatMap((o, i) =>
-                  o.conflicts.map((c, j) => (
-                    <TableRow key={`${batchNo}-${i}-${j}`} sx={{ backgroundColor: "#fff3f3" }}>
-                      <TableCell sx={{ fontWeight: "bold", color: "error.main" }}>{batchNo}</TableCell>
-                      <TableCell>{o.trainer}</TableCell>
-                      <TableCell>{c.batch_no}</TableCell>
-                      <TableCell sx={{ color: "error.main" }}>
-                        {c.start} → {c.end}
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )
-              )}
-            </TableBody>
-          </Table>
+          <TableContainer>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Unassigned Batch</TableCell>
+                  <TableCell>Trainer</TableCell>
+                  <TableCell>Conflicting Batch</TableCell>
+                  <TableCell>Conflict Period</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {Object.entries(trainerOverlapInfo).flatMap(([batchNo, overlaps]) =>
+                  overlaps.flatMap((o, i) =>
+                    o.conflicts.length > 0
+                      ? o.conflicts.map((c, j) => (
+                          <TableRow key={`${batchNo}-${i}-${j}`} sx={{ backgroundColor: "#fff3f3" }}>
+                            <TableCell sx={{ fontWeight: "bold", color: "error.main" }}>
+                              {batchNo}
+                            </TableCell>
+                            <TableCell>{o.trainer}</TableCell>
+                            <TableCell>{c.batch_no}</TableCell>
+                            <TableCell sx={{ color: "error.main" }}>
+                              {typeof c.start === "string" ? c.start.slice(0, 10) : c.start}
+                              {" → "}
+                              {typeof c.end === "string" ? c.end.slice(0, 10) : c.end}
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      : [
+                          <TableRow key={`${batchNo}-${i}-no-conflict`} sx={{ backgroundColor: "#fff3f3" }}>
+                            <TableCell sx={{ fontWeight: "bold", color: "error.main" }}>
+                              {batchNo}
+                            </TableCell>
+                            <TableCell>{o.trainer}</TableCell>
+                            <TableCell colSpan={2} sx={{ color: "text.secondary" }}>
+                              No free slot found
+                            </TableCell>
+                          </TableRow>,
+                        ]
+                  )
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
         </Paper>
       )}
 
