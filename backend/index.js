@@ -4167,6 +4167,47 @@ app.get("/api/assessment-dates", async (req, res) => {
   }
 });
 
+app.get("/apiperiods/:batchNo/:type", async (req, res) => {
+  try {
+    const { batchNo, type } = req.params;
+
+    if (!batchNo || !type) {
+      return res.status(400).json({ error: "Missing parameters" });
+    }
+
+    const textMap = {
+      "weekly-assessment": "Weekly Assessment",
+      "intermediate-assessment": "Intermediate Assessment",
+      "module-level-assessment": "Module Level Assessment",
+      "final-assessment": "Final Assessment",   // ✅ ADDED
+    };
+
+    const searchText = textMap[type];
+
+    if (!searchText) {
+      return res.status(400).json({ error: "Invalid assessment type" });
+    }
+
+    const { data, error } = await supabase
+      .from("course_planner_data")
+      .select("date, week_no, module_no, topic_name")
+      .eq("batch_no", batchNo)
+      .ilike("topic_name", `${searchText}%`)
+      .order("date", { ascending: true });
+
+    if (error) {
+      console.error("apiperiods error:", error.message);
+      return res.status(500).json({ error: "Database error" });
+    }
+
+    res.json(Array.isArray(data) ? data : []);
+  } catch (err) {
+    console.error("apiperiods crash:", err.message);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+
 // Add or update Weekly Assessment Score
 app.post("/api/marks/weekly-assessment", async (req, res) => {
   try {
