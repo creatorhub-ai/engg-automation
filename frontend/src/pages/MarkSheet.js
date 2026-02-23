@@ -223,7 +223,6 @@ function MarkSheet() {
     setTimeout(() => setMessage(""), 4000);
   };
 
-
   /* UI */
   if (loadingBatches)
     return (
