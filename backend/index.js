@@ -4143,6 +4143,7 @@ app.get("/api/assessment-dates", async (req, res) => {
       weekly: "Weekly Assessment",
       intermediate: "Intermediate Assessment",
       module: "Module Level Assessment",
+      final: "Final Assessment",
     };
 
     const searchText = textMap[type];
@@ -4330,6 +4331,66 @@ app.post("/api/marks/module-level-assessment", async (req, res) => {
 
   } catch (err) {
     console.error("Module save error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// save the final assessment marks
+app.post("/api/marks/final-assessment", async (req, res) => {
+  try {
+    const {
+      learner_id,
+      batch_no,
+      week_no,
+      assessment_date,
+      assessment_name,
+      out_off,
+      points,
+      percentage
+    } = req.body;
+
+    if (!week_no) {
+      return res.status(400).json({ error: "week_no is required" });
+    }
+
+    const { data: planner, error: plannerError } = await supabase
+      .from("course_planner_data")
+      .select("id")
+      .eq("batch_no", batch_no)
+      .eq("date", assessment_date)
+      .limit(1)
+      .single();
+
+    if (plannerError || !planner) {
+      return res.status(409).json({ error: "Planner not found" });
+    }
+
+    const { error } = await supabase
+      .from("final_assessment_scores")
+      .upsert(
+        {
+          learner_id,
+          course_planner_id: planner.id,
+          batch_no,
+          week_no,
+          assessment_date,
+          assessment_name,
+          out_off,
+          points,
+          percentage,
+          marked_at: new Date()
+        },
+        {
+          onConflict: "learner_id,course_planner_id,week_no,assessment_date"
+        }
+      );
+
+    if (error) throw error;
+
+    res.json({ success: true });
+
+  } catch (err) {
+    console.error("Final save error:", err);
     res.status(500).json({ error: err.message });
   }
 });

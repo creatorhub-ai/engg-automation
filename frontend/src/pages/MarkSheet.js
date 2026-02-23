@@ -39,6 +39,11 @@ const ASSESSMENT_MAP = {
     label: "Module Level Assessment",
     days: 5,
   },
+  final: {
+    api: "final-assessment",
+    label: "Final Assessment",
+    days: 7,
+  },
 };
 
 /* SAFE DATE PARSER */
@@ -188,24 +193,36 @@ function MarkSheet() {
           percentage: marks[l.id].percentage || null,
         };
 
-        if (assessmentType !== "module") payload.week_no = Number(selectedWeekNo);
-        if (assessmentType === "module") payload.module_no = Number(selectedWeekNo);
+        // ✅ DO NOT CHANGE EXISTING WORKING LOGIC
+        if (assessmentType !== "module") {
+          payload.week_no = Number(selectedWeekNo);
+        }
 
-        await fetch(`${API_BASE}/api/marks/${cfg.api}`, {
+        if (assessmentType === "module") {
+          payload.module_no = Number(selectedWeekNo);
+        }
+
+        const response = await fetch(`${API_BASE}/api/marks/${cfg.api}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
+
+        if (!response.ok) {
+          throw new Error("Save failed");
+        }
       }
 
       setMessage("✅ Marks saved successfully");
       setMarks({});
     } catch (e) {
+      console.error("Save error:", e);
       setMessage("❌ Failed to save marks");
     }
 
     setTimeout(() => setMessage(""), 4000);
   };
+
 
   /* UI */
   if (loadingBatches)
@@ -227,6 +244,7 @@ function MarkSheet() {
               <MenuItem value="weekly">Weekly</MenuItem>
               <MenuItem value="intermediate">Intermediate</MenuItem>
               <MenuItem value="module">Module Level</MenuItem>
+              <MenuItem value="final">Final Assessment</MenuItem>
             </Select>
           </FormControl>
 
