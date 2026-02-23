@@ -4180,7 +4180,7 @@ app.get("/apiperiods/:batchNo/:type", async (req, res) => {
       "intermediate-assessment": "Intermediate Assessment",
       "module-level-assessment": "Module Level Assessment",
       "weekly-quiz":             "Quiz",
-      "final-assessment":        "Final Assessment",
+      "final-assessment":        "Final Assessment",   // ← this was missing from the first route
     };
 
     const searchText = textMap[type];
