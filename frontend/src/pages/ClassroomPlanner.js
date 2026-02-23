@@ -623,7 +623,6 @@ export default function ClassroomPlanner() {
   // Fetch trainer assignments — passes batch_date_ranges so backend sorts date-wise
   const fetchTrainerForBatches = async (batchNos, offlinePlans) => {
     try {
-      // ✅ Build date range map from plans for date-wise sorting on backend
       const batch_date_ranges = {};
       (offlinePlans || []).forEach((p) => {
         if (p.batch_no && p.a_start && p.a_end) {
