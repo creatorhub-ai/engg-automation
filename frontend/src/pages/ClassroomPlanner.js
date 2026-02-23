@@ -325,6 +325,7 @@ export default function ClassroomPlanner() {
   const [licenses, setLicenses] = useState([]);
   const [licenseError, setLicenseError] = useState("");
   const [unallocatedBatches, setUnallocatedBatches] = useState([]);
+  const [trainerOverlapInfo, setTrainerOverlapInfo] = useState({});
 
   // ✅ FIX 2: Helper to compute weeks from plans
   const computeAndSetWeeks = useCallback((normalizedPlans) => {
@@ -616,15 +617,15 @@ export default function ClassroomPlanner() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ batch_nos: batchNos }),
       });
-
-      if (!res.ok) return {};
-
+      if (!res.ok) return { trainerMap: {}, overlapInfo: {} };
       const data = await res.json();
-      // Returns { batch_no: trainer_name } map
-      return data.trainerMap || {};
+      return {
+        trainerMap: data.trainerMap || {},
+        overlapInfo: data.overlapInfo || {},
+      };
     } catch (e) {
       console.error("fetchTrainerForBatches error:", e);
-      return {};
+      return { trainerMap: {}, overlapInfo: {} };
     }
   };
 
@@ -668,7 +669,9 @@ export default function ClassroomPlanner() {
       setProcessingStatus("Fetching trainer assignments...");
 
       const batchNos = offlinePlans.map((p) => p.batch_no).filter(Boolean);
-      const trainerMap = await fetchTrainerForBatches(batchNos);
+      const trainerResult = await fetchTrainerForBatches(batchNos);
+      const trainerMap = trainerResult.trainerMap || {};
+      setTrainerOverlapInfo(trainerResult.overlapInfo || {});
 
       // ===============================
       // STEP 3: ALSO TRY plan-with-trainers API as fallback
@@ -1458,6 +1461,43 @@ export default function ClassroomPlanner() {
                   <TableCell>{u.a_end}</TableCell>
                 </TableRow>
               ))}
+            </TableBody>
+          </Table>
+        </Paper>
+      )}
+
+      {Object.keys(trainerOverlapInfo).length > 0 && (
+        <Paper elevation={3} sx={{ p: 3, mt: 4, border: "2px solid #f44336" }}>
+          <Typography variant="h6" color="error" gutterBottom>
+            ⚠️ Trainer Overlap / Unavailability
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            The following batches could not be assigned a trainer due to scheduling conflicts:
+          </Typography>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Batch</TableCell>
+                <TableCell>Trainer</TableCell>
+                <TableCell>Conflicting Batch</TableCell>
+                <TableCell>Conflict Dates</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {Object.entries(trainerOverlapInfo).flatMap(([batchNo, overlaps]) =>
+                overlaps.flatMap((o, i) =>
+                  o.conflicts.map((c, j) => (
+                    <TableRow key={`${batchNo}-${i}-${j}`} sx={{ backgroundColor: "#fff3f3" }}>
+                      <TableCell sx={{ fontWeight: "bold", color: "error.main" }}>{batchNo}</TableCell>
+                      <TableCell>{o.trainer}</TableCell>
+                      <TableCell>{c.batch_no}</TableCell>
+                      <TableCell sx={{ color: "error.main" }}>
+                        {c.start} → {c.end}
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )
+              )}
             </TableBody>
           </Table>
         </Paper>

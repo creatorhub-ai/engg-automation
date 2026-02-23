@@ -1814,69 +1814,197 @@ app.get("/api/trainer-mapping-data", async (req, res) => {
 app.post("/api/get-batch-trainers", async (req, res) => {
   try {
     const { batch_nos } = req.body;
-
     if (!Array.isArray(batch_nos) || batch_nos.length === 0) {
       return res.status(400).json({ error: "batch_nos array required" });
     }
 
-    // Fetch trainer assignments from course_planner_data
-    // grouped by batch_no — take the first assigned trainer per batch
-    const { data, error } = await supabase
-      .from("course_planner_data")
-      .select("batch_no, trainer_name")
-      .in("batch_no", batch_nos)
-      .eq("mode", "offline")
-      .not("trainer_name", "is", null)
-      .neq("trainer_name", "")
-      .order("batch_no");
+    // Fetch trainer domain table
+    const { data: trainerDomainData, error: tdError } = await supabase
+      .from("trainer_domain")
+      .select("trainer_name, trainer_email, trainer_domain, domain_handling, module_name");
 
-    if (error) {
-      console.error("get-batch-trainers error:", error);
-      return res.status(500).json({ error: error.message });
+    if (tdError) {
+      return res.status(500).json({ error: tdError.message });
     }
 
-    // Build a map of batch_no -> trainer_name (first non-null entry per batch)
-    const trainerMap = {};
-    (data || []).forEach((row) => {
-      if (row.batch_no && row.trainer_name && !trainerMap[row.batch_no]) {
-        trainerMap[row.batch_no] = row.trainer_name;
-      }
+    // Fetch already-saved classroom occupancy to know current trainer assignments + dates
+    const { data: occupancyData, error: ocError } = await supabase
+      .from("classroom_occupancy")
+      .select("batch_no, trainer_name, occupancy_start, occupancy_end")
+      .not("trainer_name", "is", null);
+
+    if (ocError) {
+      return res.status(500).json({ error: ocError.message });
+    }
+
+    // Fetch batch date info for the requested batch_nos from course_planner_data
+    // We need start/end dates for each batch to check overlaps
+    const { data: batchDateData, error: bdError } = await supabase
+      .from("classroom_occupancy")
+      .select("batch_no, occupancy_start, occupancy_end, trainer_name")
+      .in("batch_no", batch_nos);
+
+    if (bdError) {
+      return res.status(500).json({ error: bdError.message });
+    }
+
+    // Build: trainerName -> list of { batch_no, start, end } they are assigned to
+    // (from existing occupancy, excluding current batch_nos being processed)
+    const trainerBookings = {}; // trainerName -> [{batch_no, start, end}]
+    (occupancyData || []).forEach((row) => {
+      if (!row.trainer_name || batch_nos.includes(row.batch_no)) return; // skip rows being re-assigned
+      if (!trainerBookings[row.trainer_name]) trainerBookings[row.trainer_name] = [];
+      trainerBookings[row.trainer_name].push({
+        batch_no: row.batch_no,
+        start: row.occupancy_start,
+        end: row.occupancy_end,
+      });
     });
 
-    // Also try from trainer_domain table as fallback
-    // (matches by batch prefix/domain to find eligible trainer)
-    // For batch_nos not yet resolved, attempt trainer_domain lookup
-    const unresolved = batch_nos.filter((bn) => !trainerMap[bn]);
+    // Infer domain from batch_no prefix
+    const inferDomain = (batchNo) => {
+      const up = (batchNo || "").toUpperCase();
+      if (up.startsWith("PDFT") || up.startsWith("PD")) return "PD";
+      if (up.startsWith("DVFT") || up.startsWith("DV")) return "DV";
+      if (up.startsWith("DFTFT") || up.startsWith("DFT")) return "DFT";
+      return "";
+    };
 
-    if (unresolved.length > 0) {
-      const { data: trainerDomainData, error: tdError } = await supabase
-        .from("trainer_domain")
-        .select("trainer_name, trainer_domain, domain_handling");
+    const normalize = (str) => (str || "").toString().toLowerCase().trim();
 
-      if (!tdError && trainerDomainData) {
-        unresolved.forEach((batchNo) => {
-          // Infer domain from batch prefix
-          const up = (batchNo || "").toUpperCase();
-          let domain = "";
-          if (up.startsWith("PDFT") || up.startsWith("PD")) domain = "pd";
-          else if (up.startsWith("DVFT") || up.startsWith("DV")) domain = "dv";
-          else if (up.startsWith("DFTFT") || up.startsWith("DFT")) domain = "dft";
+    // Date overlap check
+    const isOverlap = (s1, e1, s2, e2) => {
+      if (!s1 || !e1 || !s2 || !e2) return false;
+      return new Date(s1) <= new Date(e2) && new Date(s2) <= new Date(e1);
+    };
 
-          if (domain) {
-            const eligible = trainerDomainData.find(
-              (t) =>
-                (t.trainer_domain || "").toLowerCase() === domain ||
-                (t.domain_handling || "").toLowerCase() === domain
-            );
-            if (eligible) {
-              trainerMap[batchNo] = eligible.trainer_name;
-            }
+    // Get unique trainers per domain (those who can handle the full domain, not just specific modules)
+    // For batch-level assignment, a trainer is eligible if they handle ANY module in that domain
+    // We pick trainers by domain_handling for BASIC, and trainer_domain for CORE
+    // But at batch level, we just need: "can this trainer handle this domain overall?"
+    // Strategy: a trainer is eligible for a domain if they have entries for that domain
+    // (either trainer_domain or domain_handling matches)
+    
+    const getEligibleTrainers = (domain) => {
+      const norm = normalize(domain);
+      const trainerSet = new Map(); // trainer_name -> trainer info
+
+      (trainerDomainData || []).forEach((t) => {
+        const td = normalize(t.trainer_domain);
+        const dh = normalize(t.domain_handling);
+        // Eligible if trainer_domain OR domain_handling matches
+        if (td === norm || dh === norm) {
+          if (!trainerSet.has(t.trainer_name)) {
+            trainerSet.set(t.trainer_name, {
+              trainer_name: t.trainer_name,
+              trainer_email: t.trainer_email,
+            });
           }
-        });
+        }
+      });
+
+      return Array.from(trainerSet.values());
+    };
+
+    // Sort batches by start date so we assign in chronological order
+    const batchInfoMap = {}; // batch_no -> {start, end}
+    (batchDateData || []).forEach((b) => {
+      batchInfoMap[b.batch_no] = {
+        start: b.occupancy_start,
+        end: b.occupancy_end,
+        existing_trainer: b.trainer_name,
+      };
+    });
+
+    const sortedBatchNos = [...batch_nos].sort((a, b) => {
+      const sa = batchInfoMap[a]?.start || "";
+      const sb = batchInfoMap[b]?.start || "";
+      return sa.localeCompare(sb);
+    });
+
+    const trainerMap = {}; // batch_no -> trainer_name
+    const overlapInfo = {}; // batch_no -> [{trainer, conflicting_batch, dates}]
+
+    // Local booking tracker for this assignment run
+    // trainerName -> [{batch_no, start, end}]
+    const localBookings = { ...trainerBookings };
+
+    for (const batchNo of sortedBatchNos) {
+      const info = batchInfoMap[batchNo];
+
+      // If batch has no date info in occupancy yet, check course_planner_data
+      if (!info || !info.start) {
+        trainerMap[batchNo] = null;
+        continue;
       }
+
+      const { start: bStart, end: bEnd } = info;
+      const domain = inferDomain(batchNo);
+
+      if (!domain) {
+        trainerMap[batchNo] = null;
+        continue;
+      }
+
+      const eligible = getEligibleTrainers(domain);
+
+      if (!eligible.length) {
+        trainerMap[batchNo] = null;
+        continue;
+      }
+
+      // Filter: remove trainers who have overlapping batches
+      const available = eligible.filter((t) => {
+        const bookings = localBookings[t.trainer_name] || [];
+        return !bookings.some((b) => isOverlap(bStart, bEnd, b.start, b.end));
+      });
+
+      if (!available.length) {
+        // All trainers are overlapping — record overlap info
+        const overlaps = eligible.map((t) => {
+          const conflicting = (localBookings[t.trainer_name] || []).filter((b) =>
+            isOverlap(bStart, bEnd, b.start, b.end)
+          );
+          return { trainer: t.trainer_name, conflicts: conflicting };
+        });
+        overlapInfo[batchNo] = overlaps;
+        trainerMap[batchNo] = null;
+        continue;
+      }
+
+      // Sort available trainers: prefer trainer who finished their last batch earliest
+      available.sort((a, b) => {
+        const aBookings = localBookings[a.trainer_name] || [];
+        const bBookings = localBookings[b.trainer_name] || [];
+
+        // Get last end date for each trainer
+        const aLastEnd = aBookings.length
+          ? aBookings.reduce((max, b) => (b.end > max ? b.end : max), "")
+          : ""; // no bookings = most free
+        const bLastEnd = bBookings.length
+          ? bBookings.reduce((max, b) => (b.end > max ? b.end : max), "")
+          : "";
+
+        // Earlier last end = more free = higher priority
+        if (!aLastEnd && !bLastEnd) return a.trainer_name.localeCompare(b.trainer_name);
+        if (!aLastEnd) return -1; // a has no bookings, prioritize
+        if (!bLastEnd) return 1;
+        return aLastEnd.localeCompare(bLastEnd);
+      });
+
+      const selected = available[0];
+      trainerMap[batchNo] = selected.trainer_name;
+
+      // Register this booking locally
+      if (!localBookings[selected.trainer_name]) localBookings[selected.trainer_name] = [];
+      localBookings[selected.trainer_name].push({
+        batch_no: batchNo,
+        start: bStart,
+        end: bEnd,
+      });
     }
 
-    res.json({ trainerMap });
+    res.json({ trainerMap, overlapInfo });
   } catch (err) {
     console.error("get-batch-trainers error:", err);
     res.status(500).json({ error: err.message });
@@ -1888,138 +2016,179 @@ app.post("/api/get-batch-trainers", async (req, res) => {
 app.post("/api/plan-with-trainers", async (req, res) => {
   try {
     const { rows } = req.body;
-
     if (!rows || !Array.isArray(rows)) {
       return res.status(400).json({ error: "Invalid rows input" });
     }
 
-    const trainerRes = await supabase
-      .from("trainer_domain")
-      .select("*");
+    const trainerRes = await supabase.from("trainer_domain").select("*");
+    if (trainerRes.error) return res.status(500).json({ error: trainerRes.error.message });
 
-    if (trainerRes.error) {
-      return res.status(500).json({ error: trainerRes.error.message });
-    }
-
-    const templateRes = await supabase
-      .from("course_module_template")
-      .select("*");
-
-    if (templateRes.error) {
-      return res.status(500).json({ error: templateRes.error.message });
-    }
+    const templateRes = await supabase.from("course_module_template").select("*");
+    if (templateRes.error) return res.status(500).json({ error: templateRes.error.message });
 
     const trainers = trainerRes.data || [];
     const templates = templateRes.data || [];
 
-    const assignedRows = [];
-    const localBookings = {};
-
-    // 🔥 Normalization function
     const normalize = (str) =>
-      (str || "")
-        .toString()
-        .toLowerCase()
-        .replace(/\s+/g, " ")
-        .trim();
+      (str || "").toString().toLowerCase().replace(/\s+/g, " ").trim();
 
-    for (const originalRow of rows) {
-
+    // Group rows by batch_no to detect batch date ranges
+    // localBookings: trainerName -> [{batch_no, start, end}] at batch level (not day level)
+    const batchRanges = {}; // batch_no -> { start, end, domain }
+    rows.forEach((originalRow) => {
       const row = {};
-      Object.keys(originalRow).forEach(key => {
+      Object.keys(originalRow).forEach((k) => {
+        row[k.toLowerCase().trim()] = originalRow[k];
+      });
+      const batchNo = row["batch_no"] || row["course"] || "";
+      const date = row["date"] || row["a.start date"] || "";
+      if (!batchNo) return;
+      if (!batchRanges[batchNo]) {
+        batchRanges[batchNo] = { start: date, end: date, domain: normalize(row["domain"] || "") };
+      } else {
+        if (date < batchRanges[batchNo].start) batchRanges[batchNo].start = date;
+        if (date > batchRanges[batchNo].end) batchRanges[batchNo].end = date;
+      }
+    });
+
+    const isOverlap = (s1, e1, s2, e2) => {
+      if (!s1 || !e1 || !s2 || !e2) return false;
+      return new Date(s1) <= new Date(e2) && new Date(s2) <= new Date(e1);
+    };
+
+    // trainerName -> [{batch_no, start, end}]  (batch-level, not day-level)
+    const trainerBatchBookings = {};
+    // batchNo -> trainer_name (one per batch)
+    const batchTrainerMap = {};
+
+    const assignedRows = [];
+
+    // Sort rows by date then batch_no for consistent processing
+    const sortedRows = [...rows].sort((a, b) => {
+      const da = (a["date"] || a["Date"] || "");
+      const db = (b["date"] || b["Date"] || "");
+      return da.localeCompare(db);
+    });
+
+    for (const originalRow of sortedRows) {
+      const row = {};
+      Object.keys(originalRow).forEach((key) => {
         row[key.toLowerCase().trim()] = originalRow[key];
       });
 
-      const mode = normalize(row.mode);
-
+      const mode = normalize(row["mode"]);
       if (mode !== "offline") {
-        assignedRows.push({
-          ...originalRow,
-          trainer_name: null,
-          trainer_status: "NOT_REQUIRED"
-        });
+        assignedRows.push({ ...originalRow, trainer_name: null, trainer_status: "NOT_REQUIRED" });
         continue;
       }
 
-      const batchDomain = normalize(row.domain);
-      const moduleName = normalize(row.module_name || row["module name"]);
-      const currentDate = row.date;
+      const batchDomain = normalize(row["domain"]);
+      const moduleName = normalize(row["module_name"] || row["module name"]);
+      const batchNo = row["batch_no"] || row["course"] || "";
+      const currentDate = row["date"];
 
       if (!batchDomain || !moduleName || !currentDate) {
-        assignedRows.push({
-          ...originalRow,
-          trainer_name: null,
-          trainer_status: "INVALID_ROW"
-        });
+        assignedRows.push({ ...originalRow, trainer_name: null, trainer_status: "INVALID_ROW" });
         continue;
       }
 
-      // ===============================
-      // FIND TEMPLATE (Flexible Match)
-      // ===============================
-
-      const template = templates.find(t =>
-        normalize(t.domain) === batchDomain &&
-        normalize(t.module_name) === moduleName
+      // Find template for this module
+      const template = templates.find(
+        (t) => normalize(t.domain) === batchDomain && normalize(t.module_name) === moduleName
       );
 
       if (!template) {
+        assignedRows.push({ ...originalRow, trainer_name: null, trainer_status: "NO_TEMPLATE" });
+        continue;
+      }
+
+      const moduleType = template.module_type; // BASIC, CORE_THEORY, CORE_LAB
+
+      // If batch already has a trainer assigned (from earlier rows in same batch), reuse it
+      if (batchTrainerMap[batchNo]) {
+        const assignedTrainer = trainers.find(
+          (t) => t.trainer_name === batchTrainerMap[batchNo]
+        );
         assignedRows.push({
           ...originalRow,
-          trainer_name: null,
-          trainer_status: "NO_TEMPLATE"
+          trainer_name: batchTrainerMap[batchNo],
+          trainer_email: assignedTrainer?.trainer_email || null,
+          trainer_status: "ASSIGNED",
         });
         continue;
       }
 
-      const moduleType = template.module_type;
-
-      // ===============================
-      // FIND TRAINERS (Flexible Match)
-      // ===============================
-
-      let eligible = trainers.filter(t =>
-        normalize(t.module_name) === moduleName
-      );
+      // Find eligible trainers based on module type
+      let eligible = [];
 
       if (moduleType === "CORE_THEORY" || moduleType === "CORE_LAB") {
-        eligible = eligible.filter(t =>
-          normalize(t.trainer_domain) === batchDomain
+        // Match by trainer_domain AND module_name
+        eligible = trainers.filter(
+          (t) =>
+            normalize(t.trainer_domain) === batchDomain &&
+            normalize(t.module_name) === moduleName
         );
       } else {
-        eligible = eligible.filter(t =>
-          normalize(t.domain_handling) === batchDomain
+        // BASIC: match by domain_handling AND module_name
+        eligible = trainers.filter(
+          (t) =>
+            normalize(t.domain_handling) === batchDomain &&
+            normalize(t.module_name) === moduleName
         );
       }
 
-      // Remove duplicate booking within upload
-      eligible = eligible.filter(tr => {
-        const key = `${tr.trainer_name}_${currentDate}`;
-        return !localBookings[key];
+      // Filter: remove trainers already assigned to an overlapping batch
+      const batchStart = batchRanges[batchNo]?.start;
+      const batchEnd = batchRanges[batchNo]?.end;
+
+      const available = eligible.filter((t) => {
+        const bookings = trainerBatchBookings[t.trainer_name] || [];
+        return !bookings.some((b) => isOverlap(batchStart, batchEnd, b.start, b.end));
       });
 
-      if (eligible.length === 0) {
-        assignedRows.push({
-          ...originalRow,
-          trainer_name: null,
-          trainer_status: "NOT_AVAILABLE"
-        });
-      } else {
-        const selected = eligible[0];
-
-        localBookings[`${selected.trainer_name}_${currentDate}`] = true;
-
-        assignedRows.push({
-          ...originalRow,
-          trainer_name: selected.trainer_name,
-          trainer_email: selected.trainer_email,
-          trainer_status: "ASSIGNED"
-        });
+      if (!available.length) {
+        assignedRows.push({ ...originalRow, trainer_name: null, trainer_status: "NOT_AVAILABLE" });
+        continue;
       }
+
+      // Sort: prefer trainer who finished last batch earliest (most idle)
+      available.sort((a, b) => {
+        const aBookings = trainerBatchBookings[a.trainer_name] || [];
+        const bBookings = trainerBatchBookings[b.trainer_name] || [];
+        const aLastEnd = aBookings.length
+          ? aBookings.reduce((max, x) => (x.end > max ? x.end : max), "")
+          : "";
+        const bLastEnd = bBookings.length
+          ? bBookings.reduce((max, x) => (x.end > max ? x.end : max), "")
+          : "";
+        if (!aLastEnd && !bLastEnd) return a.trainer_name.localeCompare(b.trainer_name);
+        if (!aLastEnd) return -1;
+        if (!bLastEnd) return 1;
+        return aLastEnd.localeCompare(bLastEnd);
+      });
+
+      const selected = available[0];
+
+      // Register batch-level booking
+      batchTrainerMap[batchNo] = selected.trainer_name;
+      if (!trainerBatchBookings[selected.trainer_name]) {
+        trainerBatchBookings[selected.trainer_name] = [];
+      }
+      trainerBatchBookings[selected.trainer_name].push({
+        batch_no: batchNo,
+        start: batchStart,
+        end: batchEnd,
+      });
+
+      assignedRows.push({
+        ...originalRow,
+        trainer_name: selected.trainer_name,
+        trainer_email: selected.trainer_email,
+        trainer_status: "ASSIGNED",
+      });
     }
 
     res.json({ assignedRows });
-
   } catch (err) {
     console.error("PLAN TRAINER ERROR:", err);
     res.status(500).json({ error: err.message });
