@@ -610,14 +610,31 @@ export default function ClassroomPlanner() {
   };
 
   // ✅ FIX 1: Fetch trainer assignments from course_planner_data for batch-level rows
-  const fetchTrainerForBatches = async (batchNos) => {
+  const fetchTrainerForBatches = async (batchNos, offlinePlans) => {
     try {
+      // Build date range map from the plans we just computed
+      const batch_date_ranges = {};
+      offlinePlans.forEach((p) => {
+        if (p.batch_no && p.a_start && p.a_end) {
+          batch_date_ranges[p.batch_no] = {
+            start: p.a_start,
+            end: p.a_end,
+          };
+        }
+      });
+
       const res = await fetch(`${API_BASE}/api/get-batch-trainers`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ batch_nos: batchNos }),
+        body: JSON.stringify({ batch_nos: batchNos, batch_date_ranges }),
       });
-      if (!res.ok) return { trainerMap: {}, overlapInfo: {} };
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        console.error("get-batch-trainers error response:", errData);
+        return { trainerMap: {}, overlapInfo: {} };
+      }
+
       const data = await res.json();
       return {
         trainerMap: data.trainerMap || {},
@@ -669,7 +686,7 @@ export default function ClassroomPlanner() {
       setProcessingStatus("Fetching trainer assignments...");
 
       const batchNos = offlinePlans.map((p) => p.batch_no).filter(Boolean);
-      const trainerResult = await fetchTrainerForBatches(batchNos);
+      const trainerResult = await fetchTrainerForBatches(batchNos, offlinePlans);
       const trainerMap = trainerResult.trainerMap || {};
       setTrainerOverlapInfo(trainerResult.overlapInfo || {});
 

@@ -1813,7 +1813,9 @@ app.get("/api/trainer-mapping-data", async (req, res) => {
 
 app.post("/api/get-batch-trainers", async (req, res) => {
   try {
-    const { batch_nos } = req.body;
+    const { batch_nos, batch_date_ranges } = req.body;
+    // batch_date_ranges: { [batch_no]: { start: "yyyy-MM-dd", end: "yyyy-MM-dd" } }
+
     if (!Array.isArray(batch_nos) || batch_nos.length === 0) {
       return res.status(400).json({ error: "batch_nos array required" });
     }
@@ -1824,35 +1826,43 @@ app.post("/api/get-batch-trainers", async (req, res) => {
       .select("trainer_name, trainer_email, trainer_domain, domain_handling, module_name");
 
     if (tdError) {
+      console.error("trainer_domain fetch error:", tdError);
       return res.status(500).json({ error: tdError.message });
     }
 
-    // Fetch already-saved classroom occupancy to know current trainer assignments + dates
+    // Fetch existing classroom occupancy to know already-assigned trainer bookings
+    // (for batches NOT in current upload — i.e. previously saved batches)
     const { data: occupancyData, error: ocError } = await supabase
       .from("classroom_occupancy")
       .select("batch_no, trainer_name, occupancy_start, occupancy_end")
       .not("trainer_name", "is", null);
 
     if (ocError) {
+      console.error("classroom_occupancy fetch error:", ocError);
       return res.status(500).json({ error: ocError.message });
     }
 
-    // Fetch batch date info for the requested batch_nos from course_planner_data
-    // We need start/end dates for each batch to check overlaps
-    const { data: batchDateData, error: bdError } = await supabase
-      .from("classroom_occupancy")
-      .select("batch_no, occupancy_start, occupancy_end, trainer_name")
-      .in("batch_no", batch_nos);
+    const normalize = (str) => (str || "").toString().toLowerCase().trim();
 
-    if (bdError) {
-      return res.status(500).json({ error: bdError.message });
-    }
+    const isOverlap = (s1, e1, s2, e2) => {
+      if (!s1 || !e1 || !s2 || !e2) return false;
+      return new Date(s1) <= new Date(e2) && new Date(s2) <= new Date(e1);
+    };
 
-    // Build: trainerName -> list of { batch_no, start, end } they are assigned to
-    // (from existing occupancy, excluding current batch_nos being processed)
+    // Infer domain from batch_no prefix
+    const inferDomain = (batchNo) => {
+      const up = (batchNo || "").toUpperCase();
+      if (up.startsWith("DFTFT") || up.startsWith("DFT")) return "DFT";
+      if (up.startsWith("DVFT") || up.startsWith("DV")) return "DV";
+      if (up.startsWith("PDFT") || up.startsWith("PD")) return "PD";
+      return "";
+    };
+
+    // Build trainerBookings from EXISTING DB occupancy
+    // Only include batches NOT in the current upload (those are being re-assigned)
     const trainerBookings = {}; // trainerName -> [{batch_no, start, end}]
     (occupancyData || []).forEach((row) => {
-      if (!row.trainer_name || batch_nos.includes(row.batch_no)) return; // skip rows being re-assigned
+      if (!row.trainer_name || batch_nos.includes(row.batch_no)) return;
       if (!trainerBookings[row.trainer_name]) trainerBookings[row.trainer_name] = [];
       trainerBookings[row.trainer_name].push({
         batch_no: row.batch_no,
@@ -1861,38 +1871,13 @@ app.post("/api/get-batch-trainers", async (req, res) => {
       });
     });
 
-    // Infer domain from batch_no prefix
-    const inferDomain = (batchNo) => {
-      const up = (batchNo || "").toUpperCase();
-      if (up.startsWith("PDFT") || up.startsWith("PD")) return "PD";
-      if (up.startsWith("DVFT") || up.startsWith("DV")) return "DV";
-      if (up.startsWith("DFTFT") || up.startsWith("DFT")) return "DFT";
-      return "";
-    };
-
-    const normalize = (str) => (str || "").toString().toLowerCase().trim();
-
-    // Date overlap check
-    const isOverlap = (s1, e1, s2, e2) => {
-      if (!s1 || !e1 || !s2 || !e2) return false;
-      return new Date(s1) <= new Date(e2) && new Date(s2) <= new Date(e1);
-    };
-
-    // Get unique trainers per domain (those who can handle the full domain, not just specific modules)
-    // For batch-level assignment, a trainer is eligible if they handle ANY module in that domain
-    // We pick trainers by domain_handling for BASIC, and trainer_domain for CORE
-    // But at batch level, we just need: "can this trainer handle this domain overall?"
-    // Strategy: a trainer is eligible for a domain if they have entries for that domain
-    // (either trainer_domain or domain_handling matches)
-    
+    // Get unique eligible trainers for a given domain
     const getEligibleTrainers = (domain) => {
       const norm = normalize(domain);
-      const trainerSet = new Map(); // trainer_name -> trainer info
-
+      const trainerSet = new Map();
       (trainerDomainData || []).forEach((t) => {
         const td = normalize(t.trainer_domain);
         const dh = normalize(t.domain_handling);
-        // Eligible if trainer_domain OR domain_handling matches
         if (td === norm || dh === norm) {
           if (!trainerSet.has(t.trainer_name)) {
             trainerSet.set(t.trainer_name, {
@@ -1902,46 +1887,39 @@ app.post("/api/get-batch-trainers", async (req, res) => {
           }
         }
       });
-
       return Array.from(trainerSet.values());
     };
 
-    // Sort batches by start date so we assign in chronological order
-    const batchInfoMap = {}; // batch_no -> {start, end}
-    (batchDateData || []).forEach((b) => {
-      batchInfoMap[b.batch_no] = {
-        start: b.occupancy_start,
-        end: b.occupancy_end,
-        existing_trainer: b.trainer_name,
-      };
-    });
-
+    // Sort batches chronologically using the passed-in date ranges
     const sortedBatchNos = [...batch_nos].sort((a, b) => {
-      const sa = batchInfoMap[a]?.start || "";
-      const sb = batchInfoMap[b]?.start || "";
+      const sa = batch_date_ranges?.[a]?.start || "";
+      const sb = batch_date_ranges?.[b]?.start || "";
       return sa.localeCompare(sb);
     });
 
-    const trainerMap = {}; // batch_no -> trainer_name
-    const overlapInfo = {}; // batch_no -> [{trainer, conflicting_batch, dates}]
+    const trainerMap = {};   // batch_no -> trainer_name
+    const overlapInfo = {};  // batch_no -> [{trainer, conflicts:[{batch_no,start,end}]}]
 
-    // Local booking tracker for this assignment run
-    // trainerName -> [{batch_no, start, end}]
-    const localBookings = { ...trainerBookings };
+    // Local booking tracker — starts with DB state, grows as we assign
+    const localBookings = {};
+    Object.keys(trainerBookings).forEach((tn) => {
+      localBookings[tn] = [...trainerBookings[tn]];
+    });
 
     for (const batchNo of sortedBatchNos) {
-      const info = batchInfoMap[batchNo];
+      const dateRange = batch_date_ranges?.[batchNo];
 
-      // If batch has no date info in occupancy yet, check course_planner_data
-      if (!info || !info.start) {
+      if (!dateRange?.start || !dateRange?.end) {
+        console.warn(`No date range for batch: ${batchNo}`);
         trainerMap[batchNo] = null;
         continue;
       }
 
-      const { start: bStart, end: bEnd } = info;
+      const { start: bStart, end: bEnd } = dateRange;
       const domain = inferDomain(batchNo);
 
       if (!domain) {
+        console.warn(`Cannot infer domain for batch: ${batchNo}`);
         trainerMap[batchNo] = null;
         continue;
       }
@@ -1953,41 +1931,38 @@ app.post("/api/get-batch-trainers", async (req, res) => {
         continue;
       }
 
-      // Filter: remove trainers who have overlapping batches
+      // Filter out trainers with overlapping existing bookings
       const available = eligible.filter((t) => {
         const bookings = localBookings[t.trainer_name] || [];
         return !bookings.some((b) => isOverlap(bStart, bEnd, b.start, b.end));
       });
 
       if (!available.length) {
-        // All trainers are overlapping — record overlap info
-        const overlaps = eligible.map((t) => {
-          const conflicting = (localBookings[t.trainer_name] || []).filter((b) =>
+        // Record overlap details
+        overlapInfo[batchNo] = eligible.map((t) => ({
+          trainer: t.trainer_name,
+          conflicts: (localBookings[t.trainer_name] || []).filter((b) =>
             isOverlap(bStart, bEnd, b.start, b.end)
-          );
-          return { trainer: t.trainer_name, conflicts: conflicting };
-        });
-        overlapInfo[batchNo] = overlaps;
+          ),
+        }));
         trainerMap[batchNo] = null;
         continue;
       }
 
-      // Sort available trainers: prefer trainer who finished their last batch earliest
+      // Sort: trainer who finished their last batch earliest gets priority
       available.sort((a, b) => {
         const aBookings = localBookings[a.trainer_name] || [];
         const bBookings = localBookings[b.trainer_name] || [];
 
-        // Get last end date for each trainer
         const aLastEnd = aBookings.length
-          ? aBookings.reduce((max, b) => (b.end > max ? b.end : max), "")
-          : ""; // no bookings = most free
+          ? aBookings.reduce((max, x) => (x.end > max ? x.end : max), "")
+          : "";
         const bLastEnd = bBookings.length
-          ? bBookings.reduce((max, b) => (b.end > max ? b.end : max), "")
+          ? bBookings.reduce((max, x) => (x.end > max ? x.end : max), "")
           : "";
 
-        // Earlier last end = more free = higher priority
         if (!aLastEnd && !bLastEnd) return a.trainer_name.localeCompare(b.trainer_name);
-        if (!aLastEnd) return -1; // a has no bookings, prioritize
+        if (!aLastEnd) return -1; // no bookings = most free = highest priority
         if (!bLastEnd) return 1;
         return aLastEnd.localeCompare(bLastEnd);
       });
@@ -1995,7 +1970,7 @@ app.post("/api/get-batch-trainers", async (req, res) => {
       const selected = available[0];
       trainerMap[batchNo] = selected.trainer_name;
 
-      // Register this booking locally
+      // Register this new booking so subsequent batches respect it
       if (!localBookings[selected.trainer_name]) localBookings[selected.trainer_name] = [];
       localBookings[selected.trainer_name].push({
         batch_no: batchNo,
@@ -2003,6 +1978,9 @@ app.post("/api/get-batch-trainers", async (req, res) => {
         end: bEnd,
       });
     }
+
+    console.log("trainerMap result:", trainerMap);
+    console.log("overlapInfo:", overlapInfo);
 
     res.json({ trainerMap, overlapInfo });
   } catch (err) {
