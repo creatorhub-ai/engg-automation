@@ -3959,8 +3959,6 @@ app.get('/apigetlearners', async (req, res) => {
   }
 });
 
-
-
 app.post("/api/trainer-leaves", async (req, res) => {
   const {
     trainer_email,
@@ -4136,8 +4134,6 @@ app.get("/apiperiods/:batchNo/:type", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
-
-
 
 // Add or update Weekly Assessment Score
 app.post("/api/marks/weekly-assessment", async (req, res) => {
