@@ -91,7 +91,7 @@ function MarkSheet() {
     return () => clearInterval(i);
   }, []);
 
-  /* LOAD BATCHES */
+  /* BATCHES */
   useEffect(() => {
     fetch(`${API_BASE}/api/batches`)
       .then((res) => res.json())
@@ -106,50 +106,33 @@ function MarkSheet() {
       .finally(() => setLoadingBatches(false));
   }, []);
 
-  /* LOAD LEARNERS */
+  /* LEARNERS */
   useEffect(() => {
     if (!batchNo) return setLearners([]);
 
     setLoadingLearners(true);
-    fetch(`${API_BASE}/apigetlearners?batchno=${encodeURIComponent(batchNo)}`)
+    fetch(`${API_BASE}/apigetlearners?batchno=${batchNo}`)
       .then((res) => res.json())
       .then((data) => setLearners(Array.isArray(data) ? data : []))
       .catch(() => setLearners([]))
       .finally(() => setLoadingLearners(false));
   }, [batchNo]);
 
-  /* LOAD PERIODS — 🔥 FIXED */
+  /* LOAD ASSESSMENT DATES */
   useEffect(() => {
-    if (!batchNo || !assessmentType) return;
+    if (!batchNo) return;
 
-    const apiType = ASSESSMENT_MAP[assessmentType]?.api;
+    const apiType = ASSESSMENT_MAP[assessmentType].api;
 
-    if (!apiType) {
-      console.error("Invalid assessment type:", assessmentType);
-      return;
-    }
-
-    const url = `${API_BASE}/apiperiods/${encodeURIComponent(
-      batchNo
-    )}/${encodeURIComponent(apiType)}`;
-
-    console.log("Fetching periods from:", url);
-
-    fetch(url)
-      .then(async (res) => {
-        if (!res.ok) {
-          const errorData = await res.json().catch(() => ({}));
-          console.error("Backend 400 Error:", errorData);
-          throw new Error(errorData.error || `HTTP ${res.status}`);
-        }
+    // ✅ FIX: Use /apiperiods (no leading /api/) — matches the backend route
+    fetch(`${API_BASE}/apiperiods/${batchNo}/${apiType}`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
       })
-      .then((data) => {
-        console.log("Periods received:", data);
-        setPeriods(Array.isArray(data) ? data : []);
-      })
+      .then((data) => setPeriods(Array.isArray(data) ? data : []))
       .catch((err) => {
-        console.error("Failed to load periods:", err.message);
+        console.error("Failed to load periods:", err);
         setPeriods([]);
       });
 
@@ -179,18 +162,21 @@ function MarkSheet() {
   /* HANDLERS */
   const handlePeriodSelect = (e) => {
     const val = e.target.value;
+    // value format: "weekNo::date::topicName"
     const parts = val.split("::");
+    const w = parts[0] || "";
+    const d = parts[1] || "";
+    const t = parts.slice(2).join("::"); // topic name may contain "::"
     setPeriodValue(val);
-    setSelectedWeekNo(parts[0] || "");
-    setSelectedDate(parts[1] || "");
-    setTopicName(parts.slice(2).join("::"));
+    setSelectedWeekNo(w);
+    setSelectedDate(d);
+    setTopicName(t);
     setMarks({});
   };
 
   const handleMarksInput = (id, val) => {
     if (!isWindowOpen) return;
     const points = val.replace(/\D/g, "");
-
     setMarks((p) => ({
       ...p,
       [id]: {
@@ -207,11 +193,13 @@ function MarkSheet() {
   const handleSave = async () => {
     if (!batchNo || !selectedDate || !outOff) {
       setMessage("❌ Please select batch, assessment date and fill Out Of value.");
+      setTimeout(() => setMessage(""), 4000);
       return;
     }
 
     if (!isWindowOpen) {
-      setMessage("❌ The marks entry window is closed.");
+      setMessage("❌ The marks entry window is closed for this assessment.");
+      setTimeout(() => setMessage(""), 4000);
       return;
     }
 
@@ -228,31 +216,39 @@ function MarkSheet() {
           assessment_name: cfg.label,
           out_off: Number(outOff),
           points: Number(marks[l.id].points),
-          percentage: marks[l.id].percentage || null,
-          week_no:
-            assessmentType === "module"
-              ? undefined
-              : Number(selectedWeekNo),
-          module_no:
-            assessmentType === "module"
-              ? Number(selectedWeekNo)
-              : undefined,
+          percentage: marks[l.id].percentage !== "" ? marks[l.id].percentage : null,
         };
 
-        await fetch(`${API_BASE}/api/marks/${cfg.api}`, {
+        // ✅ week_no for weekly / intermediate / final; module_no for module
+        if (assessmentType === "module") {
+          payload.module_no = Number(selectedWeekNo);
+        } else {
+          payload.week_no = Number(selectedWeekNo);
+        }
+
+        const response = await fetch(`${API_BASE}/api/marks/${cfg.api}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
+
+        if (!response.ok) {
+          const err = await response.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${response.status}`);
+        }
       }
 
       setMessage("✅ Marks saved successfully");
       setMarks({});
     } catch (e) {
-      setMessage("❌ Failed to save marks");
+      console.error("Save error:", e);
+      setMessage(`❌ Failed to save marks: ${e.message}`);
     }
+
+    setTimeout(() => setMessage(""), 5000);
   };
 
+  /* UI */
   if (loadingBatches)
     return (
       <Box sx={{ display: "flex", justifyContent: "center", mt: 5 }}>
@@ -267,9 +263,197 @@ function MarkSheet() {
           Assessment Marks Entry
         </Typography>
 
-        {/* REST OF YOUR UI REMAINS SAME */}
-        {/* (No changes below needed) */}
-        
+        <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap", mb: 3, alignItems: "center" }}>
+          {/* Assessment Type */}
+          <FormControl sx={{ minWidth: 220 }}>
+            <InputLabel>Assessment Type</InputLabel>
+            <Select
+              value={assessmentType}
+              label="Assessment Type"
+              onChange={(e) => {
+                setAssessmentType(e.target.value);
+                setPeriods([]);
+                setPeriodValue("");
+                setSelectedDate("");
+                setSelectedWeekNo("");
+                setTopicName("");
+                setMarks({});
+              }}
+            >
+              <MenuItem value="weekly">Weekly Assessment</MenuItem>
+              <MenuItem value="intermediate">Intermediate Assessment</MenuItem>
+              <MenuItem value="module">Module Level Assessment</MenuItem>
+              <MenuItem value="final">Final Assessment</MenuItem>
+            </Select>
+          </FormControl>
+
+          {/* Batch */}
+          <FormControl sx={{ minWidth: 160 }}>
+            <InputLabel>Batch</InputLabel>
+            <Select
+              value={batchNo}
+              label="Batch"
+              onChange={(e) => {
+                setBatchNo(e.target.value);
+                setPeriods([]);
+                setPeriodValue("");
+                setSelectedDate("");
+                setSelectedWeekNo("");
+                setTopicName("");
+                setMarks({});
+              }}
+            >
+              {availableBatches.map((b) => (
+                <MenuItem key={b} value={b}>
+                  {b}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+
+          {/* Assessment Date / Period */}
+          <FormControl sx={{ minWidth: 300 }}>
+            <InputLabel>Assessment Date</InputLabel>
+            <Select
+              value={periodValue}
+              label="Assessment Date"
+              onChange={handlePeriodSelect}
+              disabled={!batchNo || periods.length === 0}
+            >
+              {periods.length === 0 && (
+                <MenuItem value="" disabled>
+                  {batchNo ? "No assessments found" : "Select a batch first"}
+                </MenuItem>
+              )}
+              {periods.map((p, idx) => (
+                <MenuItem
+                  key={`${p.week_no ?? idx}-${p.date}`}
+                  value={`${p.week_no ?? ""}::${p.date}::${p.topic_name}`}
+                >
+                  {assessmentType === "module"
+                    ? `Module ${p.week_no} (${p.date})`
+                    : `Week ${p.week_no} (${p.date})`}
+                  {p.topic_name ? ` — ${p.topic_name}` : ""}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+
+          {/* Out Of */}
+          <TextField
+            label="Out Of"
+            value={outOff}
+            sx={{ width: 110 }}
+            onChange={(e) => {
+              const v = e.target.value.replace(/\D/g, "");
+              setOutOff(v);
+              // Recalculate percentages when outOff changes
+              if (v) {
+                setMarks((prev) => {
+                  const updated = { ...prev };
+                  Object.keys(updated).forEach((id) => {
+                    if (updated[id]?.points) {
+                      updated[id] = {
+                        ...updated[id],
+                        percentage: Math.round(
+                          (Number(updated[id].points) / Number(v)) * 100
+                        ),
+                      };
+                    }
+                  });
+                  return updated;
+                });
+              }
+            }}
+          />
+
+          {/* Window status chip */}
+          {selectedDate && (
+            <Chip
+              label={
+                isWindowOpen
+                  ? `Open till ${windowCloseDate}`
+                  : `Closed (was ${windowCloseDate})`
+              }
+              color={isWindowOpen ? "success" : "error"}
+              variant="outlined"
+            />
+          )}
+        </Box>
+
+        {/* Loading learners */}
+        {loadingLearners && (
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 2 }}>
+            <CircularProgress size={20} />
+            <Typography variant="body2">Loading learners…</Typography>
+          </Box>
+        )}
+
+        {/* Marks table */}
+        {!loadingLearners && learners.length > 0 && (
+          <Table size="small">
+            <TableHead>
+              <TableRow sx={{ backgroundColor: "#f5f5f5" }}>
+                <TableCell><strong>#</strong></TableCell>
+                <TableCell><strong>Name</strong></TableCell>
+                <TableCell><strong>Email</strong></TableCell>
+                <TableCell><strong>Topic</strong></TableCell>
+                <TableCell><strong>Marks</strong></TableCell>
+                <TableCell><strong>%</strong></TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {learners.map((l, idx) => (
+                <TableRow key={l.id} hover>
+                  <TableCell>{idx + 1}</TableCell>
+                  <TableCell>{l.name}</TableCell>
+                  <TableCell>{l.email}</TableCell>
+                  <TableCell>{topicName || "—"}</TableCell>
+                  <TableCell>
+                    <TextField
+                      size="small"
+                      sx={{ width: 90 }}
+                      value={marks[l.id]?.points || ""}
+                      disabled={!isWindowOpen || !selectedDate}
+                      onChange={(e) => handleMarksInput(l.id, e.target.value)}
+                      placeholder={outOff ? `/ ${outOff}` : ""}
+                    />
+                  </TableCell>
+                  <TableCell>
+                    {marks[l.id]?.percentage !== undefined && marks[l.id]?.percentage !== ""
+                      ? `${marks[l.id].percentage}%`
+                      : "—"}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+
+        {!loadingLearners && batchNo && learners.length === 0 && (
+          <Alert severity="info" sx={{ mt: 2 }}>
+            No learners found for batch {batchNo}.
+          </Alert>
+        )}
+
+        {/* Save button */}
+        <Button
+          sx={{ mt: 3 }}
+          variant="contained"
+          onClick={handleSave}
+          disabled={!isWindowOpen || !selectedDate || learners.length === 0}
+        >
+          Save Marks
+        </Button>
+
+        {message && (
+          <Alert
+            severity={message.startsWith("✅") ? "success" : "error"}
+            sx={{ mt: 2 }}
+          >
+            {message}
+          </Alert>
+        )}
       </Paper>
     </Box>
   );
