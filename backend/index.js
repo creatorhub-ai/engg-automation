@@ -4172,21 +4172,23 @@ app.get("/apiperiods/:batchNo/:type", async (req, res) => {
     const { batchNo, type } = req.params;
 
     if (!batchNo || !type) {
-      return res.status(400).json({ error: "Missing parameters" });
+      return res.status(400).json({ error: "Missing parameters: batchNo and type are required" });
     }
 
     const textMap = {
-      "weekly-assessment":        "Weekly Assessment",
-      "intermediate-assessment":  "Intermediate Assessment",
-      "module-level-assessment":  "Module Level Assessment",
-      "weekly-quiz":              "Quiz",
-      "final-assessment":         "Final Assessment",   // ✅ was missing from first handler
+      "weekly-assessment":       "Weekly Assessment",
+      "intermediate-assessment": "Intermediate Assessment",
+      "module-level-assessment": "Module Level Assessment",
+      "weekly-quiz":             "Quiz",
+      "final-assessment":        "Final Assessment",
     };
 
     const searchText = textMap[type];
 
     if (!searchText) {
-      return res.status(400).json({ error: `Invalid assessment type: ${type}` });
+      return res.status(400).json({
+        error: `Invalid assessment type: "${type}". Valid types: ${Object.keys(textMap).join(", ")}`,
+      });
     }
 
     const { data, error } = await supabase
@@ -4197,16 +4199,19 @@ app.get("/apiperiods/:batchNo/:type", async (req, res) => {
       .order("date", { ascending: true });
 
     if (error) {
-      console.error("apiperiods error:", error.message);
+      console.error(`apiperiods DB error [${batchNo}/${type}]:`, error.message);
       return res.status(500).json({ error: "Database error" });
     }
 
+    console.log(`apiperiods [${batchNo}/${type}] → ${data?.length ?? 0} rows`);
     res.json(Array.isArray(data) ? data : []);
+
   } catch (err) {
     console.error("apiperiods crash:", err.message);
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 
 // Add or update Weekly Assessment Score
