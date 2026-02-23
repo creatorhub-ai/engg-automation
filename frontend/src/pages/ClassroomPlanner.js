@@ -128,17 +128,19 @@ function normalizeRowKeys(row) {
 function getDomainFromCourse(course) {
   if (!course || typeof course !== "string") return "";
   const up = course.toUpperCase();
-  if (up.startsWith("PDFT") || up.startsWith("PD")) return "PD";
-  if (up.startsWith("DVFT") || up.startsWith("DV")) return "DV";
+  // ✅ Check longer prefixes first to avoid false matches
   if (up.startsWith("DFTFT") || up.startsWith("DFT")) return "DFT";
+  if (up.startsWith("DVFT") || up.startsWith("DV")) return "DV";
+  if (up.startsWith("PDFT") || up.startsWith("PD")) return "PD";
   return "";
 }
 
 /**
  * Plan classrooms only for MODE = OFFLINE.
+ * Allocation is done strictly date-wise: earliest start date gets first pick.
  * Capacity rule:
- *   CAPACITY <= 35 -> Yamuna or Cauvery
- *   CAPACITY > 35  -> Ganga
+ *   ENROLLED <= 35 -> Yamuna, Cauvery, or Bhavani
+ *   ENROLLED > 35  -> Ganga
  */
 function planClassroomsForOffline(rows) {
   const classrooms = [
@@ -175,7 +177,7 @@ function planClassroomsForOffline(rows) {
       );
     });
 
-  // STEP 2: SORT BY START DATE (earliest first)
+  // STEP 2: SORT BY START DATE ascending (earliest first), then end date, then course name
   filteredRows.sort((a, b) => {
     const dateA = parseExcelDate(a["A.START DATE"]);
     const dateB = parseExcelDate(b["A.START DATE"]);
@@ -183,10 +185,17 @@ function planClassroomsForOffline(rows) {
     const diff = dateA - dateB;
     if (diff !== 0) return diff;
 
+    // Secondary sort: end date ascending
+    const endA = parseExcelDate(a["A.DUE DATE"]);
+    const endB = parseExcelDate(b["A.DUE DATE"]);
+    const endDiff = endA - endB;
+    if (endDiff !== 0) return endDiff;
+
+    // Tertiary sort: course name
     return (a["COURSE"] || "").localeCompare(b["COURSE"] || "");
   });
 
-  // STEP 3: Allocation happens in sorted order
+  // STEP 3: Allocation happens in sorted (date-wise) order
   filteredRows.forEach((row) => {
     const course = row["COURSE"];
     const mode = "OFFLINE";
@@ -212,7 +221,6 @@ function planClassroomsForOffline(rows) {
         classroom_name: "",
         slot: "",
         isAllocated: false,
-        // Preserve trainer info from enriched rows
         trainer_name: row["trainer_name"] || "UNASSIGNED",
       });
 
@@ -278,7 +286,6 @@ function planClassroomsForOffline(rows) {
       classroom_name: assignedRoom,
       slot: assignedSlot,
       isAllocated: allocated,
-      // Preserve trainer info from enriched rows
       trainer_name: row["trainer_name"] || "UNASSIGNED",
     });
   });
@@ -327,7 +334,7 @@ export default function ClassroomPlanner() {
   const [unallocatedBatches, setUnallocatedBatches] = useState([]);
   const [trainerOverlapInfo, setTrainerOverlapInfo] = useState({});
 
-  // ✅ FIX 2: Helper to compute weeks from plans
+  // Helper to compute weeks from plans
   const computeAndSetWeeks = useCallback((normalizedPlans) => {
     const allDates = normalizedPlans
       .flatMap((p) => [p.a_start, p.a_end])
@@ -342,7 +349,6 @@ export default function ClassroomPlanner() {
     }
   }, []);
 
-  // ✅ FIX 2: loadExistingMatrix now correctly preserves capacity from DB
   const loadExistingMatrix = useCallback(async () => {
     try {
       setLoading(true);
@@ -368,23 +374,28 @@ export default function ClassroomPlanner() {
         return;
       }
 
-      const normalizedPlans = occupancyRows.map((r) => ({
+      // ✅ Sort loaded plans by start date ascending
+      const sortedRows = [...occupancyRows].sort((a, b) => {
+        const sa = a.occupancy_start || "";
+        const sb = b.occupancy_start || "";
+        if (sa !== sb) return sa.localeCompare(sb);
+        const ea = a.occupancy_end || "";
+        const eb = b.occupancy_end || "";
+        if (ea !== eb) return ea.localeCompare(eb);
+        return (a.batch_no || "").localeCompare(b.batch_no || "");
+      });
+
+      const normalizedPlans = sortedRows.map((r) => ({
         batch_no: r.batch_no,
         classroom_name: r.classroom_name || "",
         slot: r.slot || "",
         a_start: r.occupancy_start,
         a_end: r.occupancy_end,
         enrolled: r.enrolled || 0,
-        // ✅ FIX 2: Use actual capacity from DB, not hardcoded 35
         capacity: r.capacity || r.enrolled || 0,
         mode: "OFFLINE",
-        // ✅ FIX 1: Preserve trainer_name from DB
         trainer_name: r.trainer_name || "UNASSIGNED",
       }));
-
-      const allocated = normalizedPlans.filter(
-        (p) => p.classroom_name && p.slot
-      );
 
       const unallocated = normalizedPlans.filter(
         (p) => !p.classroom_name || !p.slot
@@ -609,9 +620,10 @@ export default function ClassroomPlanner() {
     });
   };
 
-  // ✅ FIX 1: Fetch trainer assignments from course_planner_data for batch-level rows
+  // Fetch trainer assignments — passes batch_date_ranges so backend sorts date-wise
   const fetchTrainerForBatches = async (batchNos, offlinePlans) => {
     try {
+      // ✅ Build date range map from plans for date-wise sorting on backend
       const batch_date_ranges = {};
       (offlinePlans || []).forEach((p) => {
         if (p.batch_no && p.a_start && p.a_end) {
@@ -653,6 +665,7 @@ export default function ClassroomPlanner() {
     setWeeks([]);
     setSelectedBatch(null);
     setSaveStatus("");
+    setTrainerOverlapInfo({}); // ✅ reset overlap info on new upload
 
     try {
       const data = await file.arrayBuffer();
@@ -668,7 +681,7 @@ export default function ClassroomPlanner() {
       });
 
       // ===============================
-      // STEP 1: CLASSROOM ALLOCATION
+      // STEP 1: CLASSROOM ALLOCATION (sorted date-wise inside planClassroomsForOffline)
       // ===============================
       setProcessingStatus("Allocating classrooms...");
 
@@ -676,8 +689,8 @@ export default function ClassroomPlanner() {
         planClassroomsForOffline(rows);
 
       // ===============================
-      // ✅ FIX 1: STEP 2: FETCH TRAINER ASSIGNMENTS FROM DB
-      // Based on batch_no (COURSE) from course_planner_data table
+      // STEP 2: FETCH TRAINER ASSIGNMENTS
+      // Passes batch_date_ranges so backend assigns trainers date-wise
       // ===============================
       setProcessingStatus("Fetching trainer assignments...");
 
@@ -688,7 +701,6 @@ export default function ClassroomPlanner() {
 
       // ===============================
       // STEP 3: ALSO TRY plan-with-trainers API as fallback
-      // (For cases where trainer_domain table is the source)
       // ===============================
       let trainerApiMap = {};
       try {
@@ -702,7 +714,6 @@ export default function ClassroomPlanner() {
           const trainerData = await trainerRes.json();
           const assignedRows = trainerData.assignedRows || [];
 
-          // Build a map from COURSE -> trainer_name from the API response
           assignedRows.forEach((r) => {
             const course =
               r["COURSE"] || r["course"] || r["Course"] || "";
@@ -713,7 +724,6 @@ export default function ClassroomPlanner() {
               trainerName !== "UNASSIGNED" &&
               trainerName !== null
             ) {
-              // Group by course: take first non-null assignment
               if (!trainerApiMap[course]) {
                 trainerApiMap[course] = trainerName;
               }
@@ -748,18 +758,26 @@ export default function ClassroomPlanner() {
       });
 
       // ===============================
-      // STEP 5: UPDATE STATE
+      // STEP 5: SORT ENRICHED PLANS BY START DATE before setting state
       // ===============================
+      const sortedEnrichedPlans = [...enrichedPlans].sort((a, b) => {
+        if (a.a_start !== b.a_start) return a.a_start.localeCompare(b.a_start);
+        if (a.a_end !== b.a_end) return a.a_end.localeCompare(b.a_end);
+        return (a.batch_no || "").localeCompare(b.batch_no || "");
+      });
 
-      setPlans(enrichedPlans);
+      setPlans(sortedEnrichedPlans);
 
       setUnallocatedBatches(
-        unallocated.map((u) => ({
-          batch_no: u.batch_no,
-          enrolled: u.enrolled,
-          a_start: u.a_start,
-          a_end: u.a_end,
-        }))
+        unallocated
+          .slice()
+          .sort((a, b) => (a.a_start || "").localeCompare(b.a_start || ""))
+          .map((u) => ({
+            batch_no: u.batch_no,
+            enrolled: u.enrolled,
+            a_start: u.a_start,
+            a_end: u.a_end,
+          }))
       );
 
       if (!offlinePlans.length) {
@@ -878,7 +896,7 @@ export default function ClassroomPlanner() {
 
       matrixSheet.columns = [{ width: 20 }, { width: 12 }, ...weeks.map(() => ({ width: 18 }))];
 
-      // === OFFLINE PLANS SHEET ===
+      // === OFFLINE PLANS SHEET (sorted by start date) ===
       const plansSheet = workbook.addWorksheet("Offline Plans");
       const plansHeader = [
         "COURSE",
@@ -908,7 +926,14 @@ export default function ClassroomPlanner() {
         wrapText: true,
       };
 
-      plans.forEach((p) => {
+      // ✅ Sort plans by start date for the export sheet
+      const sortedPlansForExport = [...plans].sort((a, b) => {
+        if (a.a_start !== b.a_start) return (a.a_start || "").localeCompare(b.a_start || "");
+        if (a.a_end !== b.a_end) return (a.a_end || "").localeCompare(b.a_end || "");
+        return (a.batch_no || "").localeCompare(b.batch_no || "");
+      });
+
+      sortedPlansForExport.forEach((p) => {
         const licenseInfo = getLicenseInfoForBatch(
           p.batch_no,
           p.capacity,
@@ -965,7 +990,6 @@ export default function ClassroomPlanner() {
     }
   };
 
-  // ✅ FIX 2: Save to backend — include actual capacity in payload
   const handleSaveMatrix = async () => {
     if (!plans.length && !unallocatedBatches.length) {
       setError("No matrix to save.");
@@ -992,14 +1016,24 @@ export default function ClassroomPlanner() {
         })),
       ];
 
-      const occupancyRows = allRows.map((p) => ({
+      // ✅ Sort by start date before saving
+      const sortedForSave = [...allRows].sort((a, b) => {
+        const sa = a.a_start || "";
+        const sb = b.a_start || "";
+        if (sa !== sb) return sa.localeCompare(sb);
+        const ea = a.a_end || "";
+        const eb = b.a_end || "";
+        if (ea !== eb) return ea.localeCompare(eb);
+        return (a.batch_no || "").localeCompare(b.batch_no || "");
+      });
+
+      const occupancyRows = sortedForSave.map((p) => ({
         batch_no: p.batch_no?.trim(),
         classroom_name: p.classroom_name || null,
         slot: p.slot || null,
         occupancy_start: p.a_start,
         occupancy_end: p.a_end,
         enrolled: p.enrolled || 0,
-        // ✅ FIX 2: Always send actual capacity, not just enrolled
         capacity: p.capacity || p.enrolled || 0,
         trainer_name: p.trainer_name || null,
       }));
@@ -1021,19 +1055,12 @@ export default function ClassroomPlanner() {
         `✅ ${inserted || 0} NEW + ${updated || 0} UPDATED + ${skipped || 0} unchanged`
       );
 
-      // ✅ FIX 2: After save, reload from DB but preserve current plans in state
-      // so License Summary remains visible with correct capacity values
-      // We store current plans snapshot before reload, then merge
       const currentPlansSnapshot = [...plans];
-      const currentUnallocatedSnapshot = [...unallocatedBatches];
 
       await loadExistingMatrix();
 
-      // If loadExistingMatrix returns empty or capacity is wrong,
-      // fall back to current enriched plans
       setPlans((prev) => {
         if (!prev.length) return currentPlansSnapshot;
-        // Merge: use DB data but override capacity if DB has default 35
         return prev.map((dbPlan) => {
           const localPlan = currentPlansSnapshot.find(
             (lp) => lp.batch_no === dbPlan.batch_no
@@ -1041,12 +1068,10 @@ export default function ClassroomPlanner() {
           if (localPlan) {
             return {
               ...dbPlan,
-              // Use whichever capacity is larger (local is more accurate)
               capacity:
                 localPlan.capacity > dbPlan.capacity
                   ? localPlan.capacity
                   : dbPlan.capacity,
-              // Preserve trainer from local if DB says UNASSIGNED
               trainer_name:
                 dbPlan.trainer_name && dbPlan.trainer_name !== "UNASSIGNED"
                   ? dbPlan.trainer_name
@@ -1083,8 +1108,9 @@ export default function ClassroomPlanner() {
 
         <Box sx={{ mb: 3, display: "flex", flexDirection: "column", gap: 2 }}>
           <Typography variant="subtitle1">
-            Upload CSV or XLSX file with columns like COURSE, MODE, A.START DATE, A.DUE DATE,
-            CAPACITY, ENROLLED, CLASS_ROOM, SHIFTS. Only MODE = OFFLINE rows are planned.
+            Upload CSV or XLSX file with columns: COURSE, MODE, A.START DATE, A.DUE DATE,
+            CAPACITY, ENROLLED. Only MODE = OFFLINE rows are planned.
+            Allocation is done date-wise (earliest start date gets first pick of classrooms and trainers).
           </Typography>
 
           <Button variant="contained" component="label" disabled={loading}>
@@ -1186,7 +1212,6 @@ export default function ClassroomPlanner() {
                     Classroom: {selectedBatch.classroom_name || "Not assigned"} | Slot:{" "}
                     {slotDisplayMap[selectedBatch.slot] || selectedBatch.slot || "Not assigned"}
                   </Typography>
-                  {/* ✅ FIX 1: Show trainer in batch details */}
                   <Typography variant="body2">
                     Trainer: {selectedBatch.trainer_name || "UNASSIGNED"}
                   </Typography>
@@ -1257,6 +1282,7 @@ export default function ClassroomPlanner() {
         </Fade>
       </Paper>
 
+      {/* CLASSROOM MATRIX */}
       <Paper elevation={3} sx={{ p: 4, borderRadius: 3, minHeight: 320 }}>
         <Typography variant="h5" fontWeight="bold" mb={2}>
           Classroom Occupancy Matrix
@@ -1283,6 +1309,7 @@ export default function ClassroomPlanner() {
           <>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
               Showing {plans.length} OFFLINE batches across {classrooms.length} classrooms.
+              (Date-wise allocation — earliest start date gets first pick)
             </Typography>
             <TableContainer sx={{ maxHeight: 450 }}>
               <Table size="small" stickyHeader>
@@ -1365,7 +1392,7 @@ export default function ClassroomPlanner() {
         )}
       </Paper>
 
-      {/* ================= TRAINER MATRIX ================= */}
+      {/* TRAINER MATRIX */}
       <Paper elevation={3} sx={{ p: 4, borderRadius: 3, mt: 4 }}>
         <Typography variant="h5" fontWeight="bold" mb={2}>
           Trainer Allocation Matrix
@@ -1450,6 +1477,7 @@ export default function ClassroomPlanner() {
         )}
       </Paper>
 
+      {/* UNALLOCATED BATCHES */}
       {unallocatedBatches.length > 0 && (
         <Paper elevation={3} sx={{ p: 3, mt: 4 }}>
           <Typography variant="h6" color="error" gutterBottom>
@@ -1466,19 +1494,23 @@ export default function ClassroomPlanner() {
               </TableRow>
             </TableHead>
             <TableBody>
-              {unallocatedBatches.map((u) => (
-                <TableRow key={u.batch_no}>
-                  <TableCell>{u.batch_no}</TableCell>
-                  <TableCell>{u.enrolled}</TableCell>
-                  <TableCell>{u.a_start}</TableCell>
-                  <TableCell>{u.a_end}</TableCell>
-                </TableRow>
-              ))}
+              {unallocatedBatches
+                .slice()
+                .sort((a, b) => (a.a_start || "").localeCompare(b.a_start || ""))
+                .map((u) => (
+                  <TableRow key={u.batch_no}>
+                    <TableCell>{u.batch_no}</TableCell>
+                    <TableCell>{u.enrolled}</TableCell>
+                    <TableCell>{u.a_start}</TableCell>
+                    <TableCell>{u.a_end}</TableCell>
+                  </TableRow>
+                ))}
             </TableBody>
           </Table>
         </Paper>
       )}
 
+      {/* TRAINER OVERLAP WARNINGS */}
       {Object.keys(trainerOverlapInfo).length > 0 && (
         <Paper elevation={3} sx={{ p: 3, mt: 4, border: "2px solid #f44336" }}>
           <Typography variant="h6" color="error" gutterBottom>
@@ -1534,8 +1566,7 @@ export default function ClassroomPlanner() {
         </Paper>
       )}
 
-      {/* ================= LICENSE REQUIREMENT SECTION ================= */}
-      {/* ✅ FIX 2: Always show this section when plans exist, regardless of save state */}
+      {/* LICENSE REQUIREMENT SECTION */}
       {plans.length > 0 && (
         <Paper elevation={3} sx={{ p: 3, mt: 4 }}>
           <Typography variant="h6" color="primary" gutterBottom>
