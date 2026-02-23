@@ -122,14 +122,16 @@ function MarkSheet() {
   useEffect(() => {
     if (!batchNo) return;
 
-    const apiType = ASSESSMENT_MAP[assessmentType].api;
-
-    fetch(`${API_BASE}/apiperiods/${batchNo}/${apiType}`)
+    fetch(
+      `${API_BASE}/api/assessment-dates?batch_no=${batchNo}&type=${assessmentType}`
+    )
       .then((res) => {
         if (!res.ok) throw new Error();
         return res.json();
       })
-      .then((data) => setPeriods(Array.isArray(data) ? data : []))
+      .then((data) => {
+        setPeriods(Array.isArray(data) ? data : []);
+      })
       .catch(() => setPeriods([]));
 
     setPeriodValue("");

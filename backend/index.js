@@ -4136,7 +4136,7 @@ app.get("/api/assessment-dates", async (req, res) => {
     const { batch_no, type } = req.query;
 
     if (!batch_no || !type) {
-      return res.json([]); // ALWAYS array
+      return res.json([]); // ALWAYS return array
     }
 
     const textMap = {
@@ -4148,22 +4148,35 @@ app.get("/api/assessment-dates", async (req, res) => {
 
     const searchText = textMap[type];
 
+    if (!searchText) {
+      return res.json([]); // safety check
+    }
+
     const { data, error } = await supabase
       .from("course_planner_data")
-      .select("date, week_no, module_no")
+      .select("date, week_no, module_no, topic_name")
       .eq("batch_no", batch_no)
-      .ilike("topic_name", `${searchText}%`)
+      // ✅ More flexible matching (handles extra spaces)
+      .ilike("topic_name", `%${searchText}%`)
       .order("date", { ascending: true });
 
     if (error) {
       console.error("assessment-dates error:", error.message);
-      return res.json([]); // 👈 NEVER fail
+      return res.json([]);
     }
 
-    res.json(Array.isArray(data) ? data : []);
+    // ✅ Ensure consistent response structure
+    const formatted = (data || []).map((row) => ({
+      date: row.date,
+      week_no: row.week_no,
+      module_no: row.module_no,
+      topic_name: row.topic_name,
+    }));
+
+    res.json(formatted);
   } catch (err) {
     console.error("assessment-dates crash:", err.message);
-    res.json([]); // 👈 ABSOLUTE SAFETY
+    res.json([]);
   }
 });
 
