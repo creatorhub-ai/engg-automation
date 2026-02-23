@@ -4136,7 +4136,7 @@ app.get("/api/assessment-dates", async (req, res) => {
     const { batch_no, type } = req.query;
 
     if (!batch_no || !type) {
-      return res.json([]);
+      return res.json([]); // ALWAYS array
     }
 
     const textMap = {
@@ -4148,26 +4148,22 @@ app.get("/api/assessment-dates", async (req, res) => {
 
     const searchText = textMap[type];
 
-    if (!searchText) {
-      return res.json([]);
-    }
-
     const { data, error } = await supabase
       .from("course_planner_data")
-      .select("date, week_no, module_no, topic_name")  // ✅ include topic_name
+      .select("date, week_no, module_no")
       .eq("batch_no", batch_no)
-      .ilike("topic_name", `${searchText}%`)           // ✅ use prefix match (correct)
+      .ilike("topic_name", `${searchText}%`)
       .order("date", { ascending: true });
 
     if (error) {
       console.error("assessment-dates error:", error.message);
-      return res.json([]);
+      return res.json([]); // 👈 NEVER fail
     }
 
     res.json(Array.isArray(data) ? data : []);
   } catch (err) {
     console.error("assessment-dates crash:", err.message);
-    res.json([]);
+    res.json([]); // 👈 ABSOLUTE SAFETY
   }
 });
 
