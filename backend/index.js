@@ -4176,23 +4176,24 @@ app.get("/apiperiods/:batchNo/:type", async (req, res) => {
     }
 
     const textMap = {
-      "weekly-assessment": "Weekly Assessment",
-      "intermediate-assessment": "Intermediate Assessment",
-      "module-level-assessment": "Module Level Assessment",
-      "final-assessment": "Final Assessment",   // ✅ ADDED
+      "weekly-assessment":        "Weekly Assessment",
+      "intermediate-assessment":  "Intermediate Assessment",
+      "module-level-assessment":  "Module Level Assessment",
+      "weekly-quiz":              "Quiz",
+      "final-assessment":         "Final Assessment",   // ✅ was missing from first handler
     };
 
     const searchText = textMap[type];
 
     if (!searchText) {
-      return res.status(400).json({ error: "Invalid assessment type" });
+      return res.status(400).json({ error: `Invalid assessment type: ${type}` });
     }
 
     const { data, error } = await supabase
       .from("course_planner_data")
       .select("date, week_no, module_no, topic_name")
       .eq("batch_no", batchNo)
-      .ilike("topic_name", `${searchText}%`)
+      .ilike("topic_name", `%${searchText}%`)
       .order("date", { ascending: true });
 
     if (error) {
