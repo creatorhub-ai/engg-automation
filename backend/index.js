@@ -3971,37 +3971,36 @@ app.get('/apiperiods/:batchNo/:assessmentType', async (req, res) => {
     }
 
     let queryFilter = '';
-    let filterValue = '';
 
-    // Map assessment types to course_planner_data topic filters
+    // ✅ Added final-assessment here
     switch (assessmentType) {
       case 'weekly-assessment':
         queryFilter = "topic_name.ilike.%Weekly%";
         break;
+
       case 'intermediate-assessment':
         queryFilter = "topic_name.ilike.%Intermediate%";
         break;
+
       case 'module-level-assessment':
         queryFilter = "topic_name.ilike.%Module Level%";
         break;
+
+      case 'final-assessment':
+        queryFilter = "topic_name.ilike.%Final%";
+        break;
+
       case 'weekly-quiz':
         queryFilter = "topic_name.ilike.%Quiz%";
         break;
+
       default:
         return res.status(400).json({ error: 'Invalid assessment type' });
     }
 
-    console.log(`📊 Supabase query filter: ${queryFilter}`);
-
-    // SUPABASE QUERY - Get distinct assessment periods
     const { data, error } = await supabase
-      .from('course_planner_data') // Your actual table name
-      .select(`
-        week_no,
-        date,
-        topic_name,
-        batch_no
-      `)
+      .from('course_planner_data')
+      .select('week_no, date, topic_name')
       .eq('batch_no', batchNo)
       .or(queryFilter)
       .order('week_no', { ascending: true })
@@ -4009,29 +4008,28 @@ app.get('/apiperiods/:batchNo/:assessmentType', async (req, res) => {
 
     if (error) {
       console.error('❌ Supabase error:', error);
-      return res.status(500).json({ 
-        error: 'Database query failed', 
-        details: error.message 
+      return res.status(500).json({
+        error: 'Database query failed',
+        details: error.message
       });
     }
 
-    // Format for frontend: "week_no::date::topic_name"
     const periods = (data || [])
-      .filter(row => row.week_no && row.date && row.topic_name) // Must have all fields
+      .filter(row => row.week_no && row.date && row.topic_name)
       .map(row => ({
         week_no: row.week_no,
         date: row.date,
         topic_name: row.topic_name
       }));
 
-    console.log(`✅ Found ${periods.length} periods for ${batchNo}/${assessmentType}`);
+    console.log(`✅ Found ${periods.length} periods`);
     res.json(periods);
 
   } catch (error) {
     console.error('🚨 /apiperiods ERROR:', error);
-    res.status(500).json({ 
-      error: 'Server error', 
-      details: error.message 
+    res.status(500).json({
+      error: 'Server error',
+      details: error.message
     });
   }
 });
@@ -4400,6 +4398,7 @@ app.post("/api/marks/final-assessment", async (req, res) => {
       return res.status(400).json({ error: "week_no is required" });
     }
 
+    // Get planner row
     const { data: planner, error: plannerError } = await supabase
       .from("course_planner_data")
       .select("id")
@@ -4412,6 +4411,7 @@ app.post("/api/marks/final-assessment", async (req, res) => {
       return res.status(409).json({ error: "Planner not found" });
     }
 
+    // Save into final_assessment_scores
     const { error } = await supabase
       .from("final_assessment_scores")
       .upsert(
@@ -4437,7 +4437,7 @@ app.post("/api/marks/final-assessment", async (req, res) => {
     res.json({ success: true });
 
   } catch (err) {
-    console.error("Final save error:", err);
+    console.error("Final assessment save error:", err);
     res.status(500).json({ error: err.message });
   }
 });
