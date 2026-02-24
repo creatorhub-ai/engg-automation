@@ -130,7 +130,24 @@ function MarkSheet() {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
       })
-      .then((data) => setPeriods(Array.isArray(data) ? data : []))
+      .then((data) => {
+        if (!Array.isArray(data)) {
+          setPeriods([]);
+          return;
+        }
+
+        // Remove duplicate week_no + date combinations
+        const uniqueMap = new Map();
+
+        data.forEach((item) => {
+          const key = `${item.week_no}-${item.date}`;
+          if (!uniqueMap.has(key)) {
+            uniqueMap.set(key, item);
+          }
+        });
+
+        setPeriods(Array.from(uniqueMap.values()));
+      })
       .catch((err) => {
         console.error("Failed to load periods:", err);
         setPeriods([]);
