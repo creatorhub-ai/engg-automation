@@ -124,7 +124,6 @@ function MarkSheet() {
 
     const apiType = ASSESSMENT_MAP[assessmentType].api;
 
-    // ✅ FIX: Use /apiperiods (no leading /api/) — matches the backend route
     fetch(`${API_BASE}/apiperiods/${batchNo}/${apiType}`)
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -136,11 +135,11 @@ function MarkSheet() {
           return;
         }
 
-        // Remove duplicate week_no + date combinations
+        // ✅ Remove only exact duplicate rows
         const uniqueMap = new Map();
 
         data.forEach((item) => {
-          const key = `${item.week_no}-${item.date}`;
+          const key = `${item.week_no}-${item.date}-${item.topic_name}`;
           if (!uniqueMap.has(key)) {
             uniqueMap.set(key, item);
           }
