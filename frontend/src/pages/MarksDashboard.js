@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
-import * as XLSX from "xlsx";
-import jsPDF from "jspdf";
-import "jspdf-autotable";
+import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
 import {
   Paper,
   Typography,
@@ -12,6 +12,7 @@ import {
   InputLabel,
   FormControl,
   Box,
+  TextField,
   Alert,
   Fade,
   Table,
@@ -20,6 +21,8 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  IconButton,
+  Chip,
   CircularProgress,
 } from "@mui/material";
 import {
@@ -27,321 +30,35 @@ import {
   TableChart as TableChartIcon,
 } from "@mui/icons-material";
 
-const API_BASE =
-  process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
+const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 
 export default function MarksDashboard({ user }) {
   const [batchNo, setBatchNo] = useState("");
   const [assessmentType, setAssessmentType] = useState("weekly");
   const [marksData, setMarksData] = useState([]);
   const [batches, setBatches] = useState([]);
+  const [loading, setLoading] = useState(false);
   const [fetchLoading, setFetchLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [downloadUrl, setDownloadUrl] = useState("");
 
-  /* =========================
-     FETCH BATCHES
-  ========================== */
+  // Fetch batches on mount
   useEffect(() => {
-    axios
-      .get(`${API_BASE}/api/batches`)
-      .then((res) => setBatches(res.data || []))
-      .catch(() => setMessage("Error loading batches"));
-  }, []);
-
-  /* =========================
-     COMMON HELPERS
-  ========================== */
-
-  const convertTo100 = (points, outOff) => {
-    if (!points || !outOff) return 0;
-    return (points / outOff) * 100;
-  };
-
-  const average = (arr) => {
-    if (!arr.length) return 0;
-    return arr.reduce((a, b) => a + b, 0) / arr.length;
-  };
-
-  /* =========================
-     PD WEIGHTAGE
-  ========================== */
-
-  const calculatePD = (grouped) => {
-    return Object.values(grouped).map((learner) => {
-      let total = 0;
-
-      const intermediateAvg =
-        average(
-          learner.intermediate.map((m) =>
-            convertTo100(m.points, m.out_off)
-          )
-        ) * 0.1;
-
-      const finalCoreAvg =
-        average(
-          learner.finalCore.map((m) =>
-            convertTo100(m.points, m.out_off)
-          )
-        ) * 0.2;
-
-      const finalPD =
-        average(
-          learner.finalPD.map((m) =>
-            convertTo100(m.points, m.out_off)
-          )
-        ) * 0.3;
-
-      const project =
-        learner.project.length > 0
-          ? convertTo100(
-              learner.project[0].points,
-              learner.project[0].out_off
-            ) * 0.3
-          : 0;
-
-      const viva =
-        learner.viva.length > 0
-          ? convertTo100(
-              learner.viva[0].points,
-              learner.viva[0].out_off
-            ) * 0.1
-          : 0;
-
-      total =
-        intermediateAvg + finalCoreAvg + finalPD + project + viva;
-
-      return {
-        learner_id: learner.id,
-        total_percentage: total.toFixed(2),
-      };
-    });
-  };
-
-  /* =========================
-     DV WEIGHTAGE
-  ========================== */
-
-  const calculateDV = (grouped) => {
-    return Object.values(grouped).map((learner) => {
-      let total = 0;
-
-      const intermediateAvg =
-        average(
-          learner.intermediate.map((m) =>
-            convertTo100(m.points, m.out_off)
-          )
-        ) * 0.1;
-
-      const finalAvg =
-        average(
-          learner.final.map((m) =>
-            convertTo100(m.points, m.out_off)
-          )
-        ) * 0.3; // DV finals 30%
-
-      const project =
-        learner.project.length > 0
-          ? convertTo100(
-              learner.project[0].points,
-              learner.project[0].out_off
-            ) * 0.3
-          : 0;
-
-      const viva =
-        learner.viva.length > 0
-          ? convertTo100(
-              learner.viva[0].points,
-              learner.viva[0].out_off
-            ) * 0.1
-          : 0;
-
-      total = intermediateAvg + finalAvg + project + viva;
-
-      return {
-        learner_id: learner.id,
-        total_percentage: total.toFixed(2),
-      };
-    });
-  };
-
-  /* =========================
-     WEIGHTED FETCH
-  ========================== */
-
-  const fetchWeighted = async () => {
-    try {
-      const [intermediateRes, moduleRes] = await Promise.all([
-        axios.get(`${API_BASE}/api/assessments/${batchNo}/intermediate`),
-        axios.get(`${API_BASE}/api/assessments/${batchNo}/module`)
-      ]);
-
-      const intermediateData = intermediateRes.data.data || [];
-      const moduleData = moduleRes.data.data || [];
-
-      const grouped = {};
-
-      const initLearner = (id) => {
-        if (!grouped[id]) {
-          grouped[id] = {
-            id,
-            intermediate: [],
-            finalCore: [],
-            finalPD: [],
-            finalDV: [],
-            project: [],
-            viva: []
-          };
-        }
-      };
-
-      /* =====================
-        INTERMEDIATE
-      ====================== */
-      intermediateData.forEach((row) => {
-        initLearner(row.learner_id);
-        grouped[row.learner_id].intermediate.push(row);
-      });
-
-      /* =====================
-        MODULE DATA FILTERING
-      ====================== */
-      moduleData.forEach((row) => {
-        initLearner(row.learner_id);
-
-        const topic = (row.assessment_name || "").toLowerCase();
-
-        // Final Project
-        if (topic.includes("project")) {
-          grouped[row.learner_id].project.push(row);
-        }
-
-        // Viva
-        else if (topic.includes("viva")) {
-          grouped[row.learner_id].viva.push(row);
-        }
-
-        // PD Finals
-        else if (
-          topic.includes("cmos") ||
-          topic.includes("digital design") ||
-          topic.includes("tcl")
-        ) {
-          grouped[row.learner_id].finalCore.push(row);
-        }
-
-        else if (topic.includes("physical design")) {
-          grouped[row.learner_id].finalPD.push(row);
-        }
-
-        // DV Finals
-        else if (
-          topic.includes("digital") ||
-          topic.includes("verilog") ||
-          topic.includes("sv") ||
-          topic.includes("uvm") ||
-          topic.includes("python")
-        ) {
-          grouped[row.learner_id].finalDV.push(row);
-        }
-      });
-
-      /* =====================
-        DOMAIN DETECTION
-      ====================== */
-      const sample =
-        intermediateData[0] || moduleData[0];
-
-      const domain =
-        sample?.course_planner_id?.toString().includes("PD")
-          ? "PD"
-          : "DV";
-
-      const convertTo100 = (points, outOff) => {
-        if (!points || !outOff) return 0;
-        return (points / outOff) * 100;
-      };
-
-      const average = (arr) => {
-        if (!arr.length) return 0;
-        return arr.reduce((a, b) => a + b, 0) / arr.length;
-      };
-
-      const results = Object.values(grouped).map((learner) => {
-        const intermediateAvg =
-          average(
-            learner.intermediate.map((m) =>
-              convertTo100(m.points, m.out_off)
-            )
-          ) * 0.1;
-
-        const project =
-          learner.project.length > 0
-            ? convertTo100(
-                learner.project[0].points,
-                learner.project[0].out_off
-              ) * 0.3
-            : 0;
-
-        const viva =
-          learner.viva.length > 0
-            ? convertTo100(
-                learner.viva[0].points,
-                learner.viva[0].out_off
-              ) * 0.1
-            : 0;
-
-        let finalWeight = 0;
-
-        if (domain === "PD") {
-          const finalCoreAvg =
-            average(
-              learner.finalCore.map((m) =>
-                convertTo100(m.points, m.out_off)
-              )
-            ) * 0.2;
-
-          const finalPD =
-            average(
-              learner.finalPD.map((m) =>
-                convertTo100(m.points, m.out_off)
-              )
-            ) * 0.3;
-
-          finalWeight = finalCoreAvg + finalPD;
+    const fetchBatches = async () => {
+      try {
+        const res = await axios.get(`${API_BASE}/api/batches`);
+        if (res.data && Array.isArray(res.data)) {
+          setBatches(res.data);
         } else {
-          const finalDVAvg =
-            average(
-              learner.finalDV.map((m) =>
-                convertTo100(m.points, m.out_off)
-              )
-            ) * 0.3;
-
-          finalWeight = finalDVAvg;
+          setMessage("No batches found");
         }
-
-        const total =
-          intermediateAvg + finalWeight + project + viva;
-
-        return {
-          learner_id: learner.id,
-          total_percentage: total.toFixed(2)
-        };
-      });
-
-      setMarksData(results);
-      setMessage(
-        `✅ Weighted result calculated for ${results.length} learners (${domain})`
-      );
-
-    } catch (err) {
-      console.error(err);
-      setMessage("❌ Error calculating weightage");
-    }
-  };
-
-  /* =========================
-     NORMAL FETCH
-  ========================== */
+      } catch (error) {
+        console.error("Failed to fetch batches:", error);
+        setMessage("Error loading batches. See console for details.");
+      }
+    };
+    fetchBatches();
+  }, []);
 
   const fetchMarks = async () => {
     if (!batchNo) {
@@ -349,177 +66,297 @@ export default function MarksDashboard({ user }) {
       return;
     }
 
-    if (assessmentType === "weighted") {
-      setFetchLoading(true);
-      await fetchWeighted();
-      setFetchLoading(false);
-      return;
-    }
-
     setFetchLoading(true);
     setMessage("");
-
+    
     try {
       const res = await axios.get(
         `${API_BASE}/api/assessments/${batchNo}/${assessmentType}`
       );
-
+      
       if (res.data && Array.isArray(res.data.data)) {
         setMarksData(res.data.data);
-        setMessage(
-          `✅ Loaded ${res.data.data.length} records`
-        );
+        setMessage(`✅ Loaded ${res.data.data.length} assessment records`);
       } else {
         setMarksData([]);
-        setMessage("No assessment data found");
+        setMessage("No assessment data found for selected criteria");
       }
     } catch (error) {
-      console.error(error);
+      console.error("Failed to fetch marks:", error);
       setMarksData([]);
-      setMessage("Error fetching assessment data");
+      setMessage(
+        error.response?.data?.error || "Error fetching assessment data"
+      );
     } finally {
       setFetchLoading(false);
     }
   };
 
-  /* =========================
-     UI
-  ========================== */
+  // ✅ CLIENT-SIDE CSV/XLSX DOWNLOAD
+  const downloadExcel = () => {
+    try {
+      const ws = XLSX.utils.json_to_sheet(marksData);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Marks Data");
+      
+      const filename = `marks_${batchNo}_${assessmentType}_${new Date().toISOString().split('T')[0]}.xlsx`;
+      XLSX.writeFile(wb, filename);
+      
+      setMessage(`✅ XLSX downloaded: ${marksData.length} records`);
+    } catch (error) {
+      console.error("Excel download failed:", error);
+      setMessage("❌ Excel download failed");
+    }
+  };
+
+  // ✅ CLIENT-SIDE PDF DOWNLOAD
+  const downloadPDF = () => {
+    try {
+      const doc = new jsPDF();
+      const date = new Date().toLocaleDateString();
+      
+      // Title
+      doc.setFontSize(16);
+      doc.text(`Marks Report - ${batchNo} (${assessmentType})`, 14, 20);
+      doc.setFontSize(10);
+      doc.text(`Generated: ${date}`, 14, 28);
+
+      // Dynamic columns based on data
+      const sampleRow = marksData[0] || {};
+      const columns = [
+        { header: 'Learner ID', dataKey: 'learner_id' },
+        { header: 'Course ID', dataKey: 'course_planner_id' },
+        { header: 'Batch', dataKey: 'batch_no' },
+      ];
+
+      if (sampleRow.week_no !== undefined) columns.push({ header: 'Week', dataKey: 'week_no' });
+      if (sampleRow.module_no !== undefined) columns.push({ header: 'Module', dataKey: 'module_no' });
+      
+      columns.push(
+        { header: 'Date', dataKey: 'assessment_date' },
+        ...(sampleRow.assessment_name ? [{ header: 'Assessment', dataKey: 'assessment_name' }] : []),
+        { header: 'Out Of', dataKey: 'out_off' },
+        { header: 'Points', dataKey: 'points' },
+        { header: 'Percentage', dataKey: 'percentage' }
+      );
+
+      // Prepare table data
+      const tableData = marksData.map(row => ({
+        learner_id: row.learner_id,
+        course_planner_id: row.course_planner_id,
+        batch_no: row.batch_no,
+        week_no: row.week_no || '',
+        module_no: row.module_no || '',
+        assessment_date: row.assessment_date || '',
+        assessment_name: row.assessment_name || '',
+        out_off: row.out_off,
+        points: row.points,
+        percentage: row.percentage ? `${row.percentage.toFixed(2)}%` : '-'
+      }));
+
+      // Generate table
+      doc.autoTable({
+        startY: 35,
+        head: columns.map(col => [col.header]),
+        body: tableData.map(row => columns.map(col => row[col.dataKey] || '-')),
+        theme: 'grid',
+        styles: { fontSize: 8, cellPadding: 3 },
+        headStyles: { fillColor: [66, 139, 202], textColor: 255, fontStyle: 'bold' },
+        margin: { top: 35 }
+      });
+
+      const filename = `marks_${batchNo}_${assessmentType}_${new Date().toISOString().split('T')[0]}.pdf`;
+      doc.save(filename);
+      
+      setMessage(`✅ PDF downloaded: ${marksData.length} records`);
+    } catch (error) {
+      console.error("PDF download failed:", error);
+      setMessage("❌ PDF download failed");
+    }
+  };
+
+  // Role-based title and welcome
+  const roleTitle = user?.role 
+    ? user.role.charAt(0).toUpperCase() + user.role.slice(1) 
+    : "Marks Dashboard";
+  const welcomeName = user?.name || "User";
+
+  const formatPercentage = (percentage) => {
+    return percentage ? `${percentage.toFixed(2)}%` : "-";
+  };
+
+  const getDynamicColumns = () => {
+    if (marksData.length === 0) return [];
+    
+    const sampleRow = marksData[0];
+    const columns = [
+      { key: "learner_id", label: "Learner ID", numeric: true },
+      { key: "course_planner_id", label: "Course ID", numeric: true },
+      { key: "batch_no", label: "Batch", numeric: false },
+    ];
+
+    if (sampleRow.week_no !== undefined) {
+      columns.push({ key: "week_no", label: "Week", numeric: true });
+    }
+    if (sampleRow.module_no !== undefined) {
+      columns.push({ key: "module_no", label: "Module", numeric: true });
+    }
+
+    columns.push(
+      { key: "assessment_date", label: "Date", numeric: false },
+      sampleRow.assessment_name ? 
+        { key: "assessment_name", label: "Assessment", numeric: false } : null,
+      { key: "out_off", label: "Out Of", numeric: true },
+      { key: "points", label: "Points", numeric: true },
+      { key: "percentage", label: "Percentage", numeric: true }
+    );
+
+    return columns.filter(Boolean);
+  };
 
   return (
-    <Box sx={{ maxWidth: 1300, mx: "auto", my: 3 }}>
-      <Paper sx={{ p: 4 }}>
-        <Typography variant="h5" gutterBottom>
-          🎯 Marks Dashboard
+    <Box sx={{ maxWidth: 1400, mx: "auto", my: 3 }}>
+      <Paper elevation={5} sx={{ p: 4, borderRadius: 3 }}>
+        <Typography variant="h4" color="primary" gutterBottom>
+          {roleTitle}
+        </Typography>
+        <Typography variant="subtitle1" color="text.secondary" mb={3}>
+          Welcome, {welcomeName}!
         </Typography>
 
-        <Box sx={{ display: "flex", gap: 3, mb: 3 }}>
+        <Typography variant="h6" color="primary" sx={{ mb: 3 }}>
+          📊 Marks Dashboard
+        </Typography>
+
+        {/* Filters */}
+        <Box sx={{ display: "flex", gap: 3, flexWrap: "wrap", mb: 3 }}>
           <FormControl sx={{ minWidth: 200 }}>
-            <InputLabel>Batch</InputLabel>
+            <InputLabel>Select Batch</InputLabel>
             <Select
+              label="Select Batch"
               value={batchNo}
-              label="Batch"
-              onChange={(e) =>
-                setBatchNo(e.target.value)
-              }
+              onChange={(e) => setBatchNo(e.target.value)}
             >
-              {batches.map((b, i) => (
-                <MenuItem
-                  key={i}
-                  value={b.batch_no}
-                >
-                  {b.batch_no}
+              <MenuItem value="">-- Select Batch --</MenuItem>
+              {batches.map((b, idx) => (
+                <MenuItem key={idx} value={b.batch_no}>
+                  {b.batch_no} ({b.start_date})
                 </MenuItem>
               ))}
             </Select>
           </FormControl>
 
-          <FormControl sx={{ minWidth: 250 }}>
-            <InputLabel>
-              Assessment Type
-            </InputLabel>
+          <FormControl sx={{ minWidth: 220 }}>
+            <InputLabel>Assessment Type</InputLabel>
             <Select
-              value={assessmentType}
               label="Assessment Type"
-              onChange={(e) =>
-                setAssessmentType(e.target.value)
-              }
+              value={assessmentType}
+              onChange={(e) => setAssessmentType(e.target.value)}
             >
-              <MenuItem value="weekly">
-                Weekly
-              </MenuItem>
-              <MenuItem value="intermediate">
-                Intermediate
-              </MenuItem>
-              <MenuItem value="module">
-                Module
-              </MenuItem>
-              <MenuItem value="final">
-                Final
-              </MenuItem>
-              <MenuItem value="weighted">
-                🎯 Weighted Final Result
-              </MenuItem>
+              <MenuItem value="weekly">Weekly Assessment</MenuItem>
+              <MenuItem value="intermediate">Intermediate Assessment</MenuItem>
+              <MenuItem value="module">Module Level Assessment</MenuItem>
             </Select>
           </FormControl>
 
           <Button
             variant="contained"
+            color="primary"
             onClick={fetchMarks}
-            disabled={fetchLoading}
+            disabled={!batchNo || fetchLoading}
+            startIcon={fetchLoading ? <CircularProgress size={20} /> : <TableChartIcon />}
+            sx={{ py: 1.5, fontWeight: "bold", fontSize: "1rem", boxShadow: 4 }}
           >
-            {fetchLoading
-              ? "Processing..."
-              : "Fetch"}
+            {fetchLoading ? "Loading..." : "Fetch Marks"}
           </Button>
         </Box>
 
+        {/* ✅ Download Buttons - CLIENT-SIDE */}
         {marksData.length > 0 && (
-          <TableContainer>
-            <Table>
-              <TableHead>
-                <TableRow>
-                  {assessmentType ===
-                  "weighted" ? (
-                    <>
-                      <TableCell>
-                        Learner ID
-                      </TableCell>
-                      <TableCell>
-                        Total %
-                      </TableCell>
-                    </>
-                  ) : (
-                    Object.keys(
-                      marksData[0]
-                    ).map((key) => (
-                      <TableCell key={key}>
-                        {key}
-                      </TableCell>
-                    ))
-                  )}
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {marksData.map((row, i) => (
-                  <TableRow key={i}>
-                    {assessmentType ===
-                    "weighted" ? (
-                      <>
-                        <TableCell>
-                          {
-                            row.learner_id
-                          }
-                        </TableCell>
-                        <TableCell>
-                          {
-                            row.total_percentage
-                          }
-                          %
-                        </TableCell>
-                      </>
-                    ) : (
-                      Object.values(row).map(
-                        (val, idx) => (
-                          <TableCell
-                            key={idx}
-                          >
-                            {val}
-                          </TableCell>
-                        )
-                      )
-                    )}
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
+          <Box sx={{ display: "flex", gap: 2, mb: 3 }}>
+            <Button
+              variant="outlined"
+              color="success"
+              startIcon={<DownloadIcon />}
+              onClick={downloadExcel}
+              sx={{ fontWeight: "bold" }}
+            >
+              Download XLSX
+            </Button>
+            <Button
+              variant="outlined"
+              color="error"
+              startIcon={<DownloadIcon />}
+              onClick={downloadPDF}
+              sx={{ fontWeight: "bold" }}
+            >
+              Download PDF
+            </Button>
+          </Box>
         )}
 
+        {/* Results Table */}
+        {marksData.length > 0 && (
+          <Box sx={{ mb: 2 }}>
+            <Typography variant="h6" color="primary" gutterBottom>
+              📋 Results: {marksData.length} records found
+            </Typography>
+            <TableContainer sx={{ maxHeight: 600, borderRadius: 2, boxShadow: 2 }}>
+              <Table stickyHeader>
+                <TableHead>
+                  <TableRow>
+                    {getDynamicColumns().map((col) => (
+                      <TableCell 
+                        key={col.key} 
+                        sx={{ 
+                          fontWeight: "bold", 
+                          backgroundColor: "primary.light",
+                          color: "white",
+                          ...(col.numeric && { textAlign: "right" })
+                        }}
+                      >
+                        {col.label}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {marksData.map((row, idx) => (
+                    <TableRow key={idx} hover>
+                      {getDynamicColumns().map((col) => (
+                        <TableCell 
+                          key={col.key}
+                          sx={{ 
+                            ...(col.numeric && { textAlign: "right" })
+                          }}
+                        >
+                          {col.key === "percentage" 
+                            ? formatPercentage(row[col.key])
+                            : row[col.key] || "-"
+                          }
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </Box>
+        )}
+
+        {/* Messages */}
         <Fade in={!!message}>
-          <Box sx={{ mt: 2 }}>
+          <Box>
             {message && (
-              <Alert>
+              <Alert 
+                severity={
+                  message.startsWith("✅") || message.startsWith("📥") 
+                    ? "success" 
+                    : message.startsWith("⚠️") || message.startsWith("❌")
+                    ? "warning" 
+                    : "info"
+                }
+              >
                 {message}
               </Alert>
             )}
