@@ -170,21 +170,13 @@ export default function MarksDashboard({ user }) {
 
   const fetchWeighted = async () => {
     try {
-      const [intermediate, final, project, viva] =
-        await Promise.all([
-          axios.get(
-            `${API_BASE}/api/assessments/${batchNo}/intermediate`
-          ),
-          axios.get(
-            `${API_BASE}/api/assessments/${batchNo}/final`
-          ),
-          axios.get(
-            `${API_BASE}/api/assessments/${batchNo}/final-project`
-          ),
-          axios.get(
-            `${API_BASE}/api/assessments/${batchNo}/viva`
-          ),
-        ]);
+      const [intermediateRes, moduleRes] = await Promise.all([
+        axios.get(`${API_BASE}/api/assessments/${batchNo}/intermediate`),
+        axios.get(`${API_BASE}/api/assessments/${batchNo}/module`)
+      ]);
+
+      const intermediateData = intermediateRes.data.data || [];
+      const moduleData = moduleRes.data.data || [];
 
       const grouped = {};
 
@@ -195,77 +187,155 @@ export default function MarksDashboard({ user }) {
             intermediate: [],
             finalCore: [],
             finalPD: [],
-            final: [],
+            finalDV: [],
             project: [],
-            viva: [],
+            viva: []
           };
         }
       };
 
-      intermediate.data.data.forEach((row) => {
+      /* =====================
+        INTERMEDIATE
+      ====================== */
+      intermediateData.forEach((row) => {
         initLearner(row.learner_id);
         grouped[row.learner_id].intermediate.push(row);
       });
 
-      final.data.data.forEach((row) => {
+      /* =====================
+        MODULE DATA FILTERING
+      ====================== */
+      moduleData.forEach((row) => {
         initLearner(row.learner_id);
 
-        const topic = row.assessment_name || "";
+        const topic = (row.assessment_name || "").toLowerCase();
 
-        if (
-          topic.includes("CMOS") ||
-          topic.includes("Digital Design") ||
-          topic.includes("TCL")
+        // Final Project
+        if (topic.includes("project")) {
+          grouped[row.learner_id].project.push(row);
+        }
+
+        // Viva
+        else if (topic.includes("viva")) {
+          grouped[row.learner_id].viva.push(row);
+        }
+
+        // PD Finals
+        else if (
+          topic.includes("cmos") ||
+          topic.includes("digital design") ||
+          topic.includes("tcl")
         ) {
           grouped[row.learner_id].finalCore.push(row);
-        } else if (topic.includes("Physical Design")) {
+        }
+
+        else if (topic.includes("physical design")) {
           grouped[row.learner_id].finalPD.push(row);
         }
 
-        // For DV
-        if (
-          topic.includes("Digital") ||
-          topic.includes("Verilog") ||
-          topic.includes("SV") ||
-          topic.includes("UVM") ||
-          topic.includes("Python")
+        // DV Finals
+        else if (
+          topic.includes("digital") ||
+          topic.includes("verilog") ||
+          topic.includes("sv") ||
+          topic.includes("uvm") ||
+          topic.includes("python")
         ) {
-          grouped[row.learner_id].final.push(row);
+          grouped[row.learner_id].finalDV.push(row);
         }
       });
 
-      project.data.data.forEach((row) => {
-        initLearner(row.learner_id);
-        grouped[row.learner_id].project.push(row);
-      });
-
-      viva.data.data.forEach((row) => {
-        initLearner(row.learner_id);
-        grouped[row.learner_id].viva.push(row);
-      });
-
-      // Detect Domain (PD or DV)
+      /* =====================
+        DOMAIN DETECTION
+      ====================== */
       const sample =
-        intermediate.data.data[0] ||
-        final.data.data[0];
+        intermediateData[0] || moduleData[0];
 
       const domain =
         sample?.course_planner_id?.toString().includes("PD")
           ? "PD"
           : "DV";
 
-      const calculated =
-        domain === "PD"
-          ? calculatePD(grouped)
-          : calculateDV(grouped);
+      const convertTo100 = (points, outOff) => {
+        if (!points || !outOff) return 0;
+        return (points / outOff) * 100;
+      };
 
-      setMarksData(calculated);
+      const average = (arr) => {
+        if (!arr.length) return 0;
+        return arr.reduce((a, b) => a + b, 0) / arr.length;
+      };
+
+      const results = Object.values(grouped).map((learner) => {
+        const intermediateAvg =
+          average(
+            learner.intermediate.map((m) =>
+              convertTo100(m.points, m.out_off)
+            )
+          ) * 0.1;
+
+        const project =
+          learner.project.length > 0
+            ? convertTo100(
+                learner.project[0].points,
+                learner.project[0].out_off
+              ) * 0.3
+            : 0;
+
+        const viva =
+          learner.viva.length > 0
+            ? convertTo100(
+                learner.viva[0].points,
+                learner.viva[0].out_off
+              ) * 0.1
+            : 0;
+
+        let finalWeight = 0;
+
+        if (domain === "PD") {
+          const finalCoreAvg =
+            average(
+              learner.finalCore.map((m) =>
+                convertTo100(m.points, m.out_off)
+              )
+            ) * 0.2;
+
+          const finalPD =
+            average(
+              learner.finalPD.map((m) =>
+                convertTo100(m.points, m.out_off)
+              )
+            ) * 0.3;
+
+          finalWeight = finalCoreAvg + finalPD;
+        } else {
+          const finalDVAvg =
+            average(
+              learner.finalDV.map((m) =>
+                convertTo100(m.points, m.out_off)
+              )
+            ) * 0.3;
+
+          finalWeight = finalDVAvg;
+        }
+
+        const total =
+          intermediateAvg + finalWeight + project + viva;
+
+        return {
+          learner_id: learner.id,
+          total_percentage: total.toFixed(2)
+        };
+      });
+
+      setMarksData(results);
       setMessage(
-        `✅ Weighted result calculated for ${calculated.length} learners (${domain})`
+        `✅ Weighted result calculated for ${results.length} learners (${domain})`
       );
+
     } catch (err) {
       console.error(err);
-      setMessage("Error calculating weightage");
+      setMessage("❌ Error calculating weightage");
     }
   };
 
