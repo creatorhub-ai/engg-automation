@@ -4230,65 +4230,54 @@ app.get('/apigetlearners', async (req, res) => {
 app.get('/apiperiods/:batchNo/:assessmentType', async (req, res) => {
   try {
     const { batchNo, assessmentType } = req.params;
-
     console.log(`🔍 Loading periods: batchNo=${batchNo}, type=${assessmentType}`);
-
     if (!batchNo || !assessmentType) {
       return res.status(400).json({ error: 'batchNo and assessmentType required' });
     }
-
     let queryFilter = '';
-
-    // ✅ Added final-assessment here
     switch (assessmentType) {
       case 'weekly-assessment':
         queryFilter = "topic_name.ilike.%Weekly%";
         break;
-
       case 'intermediate-assessment':
         queryFilter = "topic_name.ilike.%Intermediate%";
         break;
-
       case 'module-level-assessment':
         queryFilter = "topic_name.ilike.%Module Level%";
         break;
-
       case 'final-assessment':
         queryFilter = "topic_name.ilike.%Final%";
         break;
-
       case 'weekly-quiz':
         queryFilter = "topic_name.ilike.%Quiz%";
         break;
-
       default:
         return res.status(400).json({ error: 'Invalid assessment type' });
     }
-
     const { data, error } = await supabase
-      .from("course_planner_data")
-      // ← id is now included so the frontend can send it back as course_planner_id
-      .select("id, date, week_no, module_no, topic_name")
-      .eq("batch_no", batchNo)
-      .ilike("topic_name", `%${searchText}%`)
-      .order("date", { ascending: true });
-
+      .from('course_planner_data')
+      .select('id, week_no, date, topic_name')   // ← CHANGE: added 'id'
+      .eq('batch_no', batchNo)
+      .or(queryFilter)
+      .order('week_no', { ascending: true })
+      .order('date', { ascending: true });
     if (error) {
-      console.error(`apiperiods DB error [${batchNo}/${type}]:`, error.message);
-      return res.status(500).json({ error: "Database error" });
+      console.error('❌ Supabase error:', error);
+      return res.status(500).json({
+        error: 'Database query failed',
+        details: error.message
+      });
     }
-
     const periods = (data || [])
       .filter(row => row.week_no && row.date && row.topic_name)
       .map(row => ({
+        id: row.id,               // ← CHANGE: added id so frontend can use it as course_planner_id
         week_no: row.week_no,
         date: row.date,
         topic_name: row.topic_name
       }));
-
     console.log(`✅ Found ${periods.length} periods`);
     res.json(periods);
-
   } catch (error) {
     console.error('🚨 /apiperiods ERROR:', error);
     res.status(500).json({
@@ -4429,20 +4418,12 @@ app.get("/api/assessment-dates", async (req, res) => {
   }
 });
 
-// ==============================
-// APIPERIODS ENDPOINT - FIXED
-// Now returns `id` (course_planner_data primary key) in every row.
-// The frontend uses this id as course_planner_id when saving marks,
-// which is the key to distinguishing same-date assessments.
-// ==============================
 app.get("/apiperiods/:batchNo/:type", async (req, res) => {
   try {
     const { batchNo, type } = req.params;
 
     if (!batchNo || !type) {
-      return res.status(400).json({
-        error: "Missing parameters: batchNo and type are required",
-      });
+      return res.status(400).json({ error: "Missing parameters: batchNo and type are required" });
     }
 
     const textMap = {
@@ -4450,7 +4431,7 @@ app.get("/apiperiods/:batchNo/:type", async (req, res) => {
       "intermediate-assessment": "Intermediate Assessment",
       "module-level-assessment": "Module Level Assessment",
       "weekly-quiz":             "Quiz",
-      "final-assessment":        "Final Assessment",
+      "final-assessment":        "Final Assessment",   // ← this was missing from the first route
     };
 
     const searchText = textMap[type];
@@ -4463,8 +4444,7 @@ app.get("/apiperiods/:batchNo/:type", async (req, res) => {
 
     const { data, error } = await supabase
       .from("course_planner_data")
-      // ← id is now included so the frontend can send it back as course_planner_id
-      .select("id, date, week_no, module_no, topic_name")
+      .select("date, week_no, module_no, topic_name")
       .eq("batch_no", batchNo)
       .ilike("topic_name", `%${searchText}%`)
       .order("date", { ascending: true });
@@ -4476,6 +4456,7 @@ app.get("/apiperiods/:batchNo/:type", async (req, res) => {
 
     console.log(`apiperiods [${batchNo}/${type}] → ${data?.length ?? 0} rows`);
     res.json(Array.isArray(data) ? data : []);
+
   } catch (err) {
     console.error("apiperiods crash:", err.message);
     res.status(500).json({ error: "Server error" });
