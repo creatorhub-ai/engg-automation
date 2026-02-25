@@ -41,9 +41,6 @@ export default function MarksDashboard({ user }) {
     useState(false);
   const [message, setMessage] = useState("");
 
-  /* =========================
-     FETCH BATCHES
-  ========================== */
   useEffect(() => {
     const fetchBatches = async () => {
       try {
@@ -60,9 +57,6 @@ export default function MarksDashboard({ user }) {
     fetchBatches();
   }, []);
 
-  /* =========================
-     FETCH DATA
-  ========================== */
   const fetchMarks = async () => {
     if (!batchNo) {
       setMessage("⚠️ Please select batch");
@@ -101,9 +95,6 @@ export default function MarksDashboard({ user }) {
     }
   };
 
-  /* =========================
-     DOWNLOADS (UNCHANGED)
-  ========================== */
   const downloadExcel = () => {
     const ws =
       XLSX.utils.json_to_sheet(marksData);
@@ -113,12 +104,10 @@ export default function MarksDashboard({ user }) {
       ws,
       "Marks Data"
     );
-
-    const filename = `marks_${batchNo}_${assessmentType}_${new Date()
-      .toISOString()
-      .split("T")[0]}.xlsx`;
-
-    XLSX.writeFile(wb, filename);
+    XLSX.writeFile(
+      wb,
+      `marks_${batchNo}_${assessmentType}.xlsx`
+    );
   };
 
   const downloadPDF = () => {
@@ -129,7 +118,6 @@ export default function MarksDashboard({ user }) {
       14,
       20
     );
-
     doc.autoTable({
       startY: 30,
       head: [
@@ -141,7 +129,6 @@ export default function MarksDashboard({ user }) {
         Object.values(row)
       ),
     });
-
     doc.save(
       `marks_${batchNo}_${assessmentType}.pdf`
     );
@@ -155,30 +142,17 @@ export default function MarksDashboard({ user }) {
   const welcomeName =
     user?.name || "User";
 
-  /* =========================
-     NORMAL TABLE COLUMNS
-  ========================== */
   const getDynamicColumns = () => {
     if (!marksData.length) return [];
-
     if (assessmentType === "scorecard")
       return [];
 
     const sampleRow = marksData[0];
 
     const columns = [
-      {
-        key: "learner_id",
-        label: "Learner ID",
-      },
-      {
-        key: "course_planner_id",
-        label: "Course ID",
-      },
-      {
-        key: "batch_no",
-        label: "Batch",
-      },
+      { key: "learner_id", label: "Learner ID" },
+      { key: "course_planner_id", label: "Course ID" },
+      { key: "batch_no", label: "Batch" },
     ];
 
     if (sampleRow.week_no !== undefined)
@@ -194,28 +168,16 @@ export default function MarksDashboard({ user }) {
       });
 
     columns.push(
-      {
-        key: "assessment_date",
-        label: "Date",
-      },
+      { key: "assessment_date", label: "Date" },
       sampleRow.assessment_name
         ? {
             key: "assessment_name",
             label: "Assessment",
           }
         : null,
-      {
-        key: "out_off",
-        label: "Out Of",
-      },
-      {
-        key: "points",
-        label: "Points",
-      },
-      {
-        key: "percentage",
-        label: "Percentage",
-      }
+      { key: "out_off", label: "Out Of" },
+      { key: "points", label: "Points" },
+      { key: "percentage", label: "Percentage" }
     );
 
     return columns.filter(Boolean);
@@ -228,26 +190,14 @@ export default function MarksDashboard({ user }) {
           {roleTitle}
         </Typography>
 
-        <Typography
-          variant="subtitle1"
-          mb={3}
-        >
+        <Typography mb={3}>
           Welcome, {welcomeName}!
         </Typography>
 
         {/* Filters */}
-        <Box
-          sx={{
-            display: "flex",
-            gap: 3,
-            flexWrap: "wrap",
-            mb: 3,
-          }}
-        >
+        <Box sx={{ display: "flex", gap: 3, mb: 3 }}>
           <FormControl sx={{ minWidth: 200 }}>
-            <InputLabel>
-              Select Batch
-            </InputLabel>
+            <InputLabel>Select Batch</InputLabel>
             <Select
               value={batchNo}
               label="Select Batch"
@@ -263,8 +213,7 @@ export default function MarksDashboard({ user }) {
                   key={i}
                   value={b.batch_no}
                 >
-                  {b.batch_no} (
-                  {b.start_date})
+                  {b.batch_no}
                 </MenuItem>
               ))}
             </Select>
@@ -284,13 +233,13 @@ export default function MarksDashboard({ user }) {
               }
             >
               <MenuItem value="weekly">
-                Weekly Assessment
+                Weekly
               </MenuItem>
               <MenuItem value="intermediate">
-                Intermediate Assessment
+                Intermediate
               </MenuItem>
               <MenuItem value="module">
-                Module Level Assessment
+                Module
               </MenuItem>
               <MenuItem value="scorecard">
                 Scorecard
@@ -312,94 +261,28 @@ export default function MarksDashboard({ user }) {
               )
             }
           >
-            {fetchLoading
-              ? "Loading..."
-              : "Fetch Marks"}
+            Fetch Marks
           </Button>
         </Box>
 
-        {/* Download */}
-        {marksData.length > 0 && (
-          <Box
-            sx={{ display: "flex", gap: 2 }}
-          >
-            <Button
-              variant="outlined"
-              onClick={downloadExcel}
-              startIcon={
-                <DownloadIcon />
-              }
-            >
-              Download XLSX
-            </Button>
-            <Button
-              variant="outlined"
-              onClick={downloadPDF}
-              startIcon={
-                <DownloadIcon />
-              }
-            >
-              Download PDF
-            </Button>
-          </Box>
-        )}
-
-        {/* =========================
-            SCORECARD TABLE
-        ========================== */}
+        {/* SCORECARD FIXED TABLE */}
         {assessmentType ===
           "scorecard" &&
           marksData.length > 0 && (
-            <TableContainer sx={{ mt: 3 }}>
+            <TableContainer>
               <Table stickyHeader>
                 <TableHead>
                   <TableRow>
+                    <TableCell>Name</TableCell>
+                    <TableCell>Email</TableCell>
                     <TableCell>
-                      Name
+                      Digital
                     </TableCell>
+                    <TableCell>CMOS</TableCell>
+                    <TableCell>TCL</TableCell>
                     <TableCell>
-                      Email
+                      Physical
                     </TableCell>
-
-                    {batchNo.includes(
-                      "PDFT"
-                    ) ? (
-                      <>
-                        <TableCell>
-                          Digital
-                          Design
-                        </TableCell>
-                        <TableCell>
-                          CMOS
-                        </TableCell>
-                        <TableCell>
-                          TCL
-                        </TableCell>
-                        <TableCell>
-                          Physical
-                          Design
-                        </TableCell>
-                      </>
-                    ) : (
-                      <>
-                        <TableCell>
-                          Digital
-                        </TableCell>
-                        <TableCell>
-                          Verilog
-                        </TableCell>
-                        <TableCell>
-                          SV
-                        </TableCell>
-                        <TableCell>
-                          UVM
-                        </TableCell>
-                        <TableCell>
-                          Python
-                        </TableCell>
-                      </>
-                    )}
-
                     <TableCell>
                       Project
                     </TableCell>
@@ -421,9 +304,7 @@ export default function MarksDashboard({ user }) {
                 <TableBody>
                   {marksData.map(
                     (row, i) => (
-                      <TableRow
-                        key={i}
-                      >
+                      <TableRow key={i}>
                         <TableCell>
                           {row.name}
                         </TableCell>
@@ -431,33 +312,25 @@ export default function MarksDashboard({ user }) {
                           {row.email}
                         </TableCell>
 
-                        {Object.values(
-                          row.breakdown ||
-                            {}
-                        ).map(
-                          (
-                            val,
-                            idx
-                          ) => (
-                            <TableCell
-                              key={
-                                idx
-                              }
-                            >
-                              {val?.toFixed
-                                ? val.toFixed(
-                                    2
-                                  )
-                                : val}
-                            </TableCell>
-                          )
-                        )}
-
+                        {/* FIXED ORDER */}
                         <TableCell>
-                          {row.project}
+                          {row.breakdown?.digital ?? 0}
                         </TableCell>
                         <TableCell>
-                          {row.overall}
+                          {row.breakdown?.cmos ?? 0}
+                        </TableCell>
+                        <TableCell>
+                          {row.breakdown?.tcl ?? 0}
+                        </TableCell>
+                        <TableCell>
+                          {row.breakdown?.physical ?? 0}
+                        </TableCell>
+
+                        <TableCell>
+                          {row.project ?? 0}
+                        </TableCell>
+                        <TableCell>
+                          {row.overall ?? 0}
                         </TableCell>
                         <TableCell>
                           {row.grade}
@@ -480,13 +353,11 @@ export default function MarksDashboard({ user }) {
             </TableContainer>
           )}
 
-        {/* =========================
-            NORMAL TABLE
-        ========================== */}
+        {/* NORMAL TABLE (UNCHANGED) */}
         {assessmentType !==
           "scorecard" &&
           marksData.length > 0 && (
-            <TableContainer sx={{ mt: 3 }}>
+            <TableContainer>
               <Table stickyHeader>
                 <TableHead>
                   <TableRow>
@@ -534,7 +405,6 @@ export default function MarksDashboard({ user }) {
             </TableContainer>
           )}
 
-        {/* Messages */}
         <Fade in={!!message}>
           <Box mt={2}>
             {message && (

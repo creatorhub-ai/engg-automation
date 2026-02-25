@@ -2901,153 +2901,163 @@ app.get('/api/download/csv/:batchNo/:assessmentType', async (req, res) => {
   }
 });
 
-// ===============================
+// ==============================
 // SCORECARD API
-// ===============================
+// ==============================
 app.get("/api/scorecard/:batchNo", async (req, res) => {
+  const { batchNo } = req.params;
+
   try {
-    const { batchNo } = req.params;
+    const learners = await pool.query(
+      `SELECT id, name, email 
+       FROM learners_data 
+       WHERE batch_no = $1`,
+      [batchNo]
+    );
 
-    const { data: intermediate } = await supabase
-      .from("intermediate_assessment_scores")
-      .select("*")
-      .eq("batch_no", batchNo);
+    const results = [];
 
-    const { data: module } = await supabase
-      .from("module_level_assessment_scores")
-      .select("*")
-      .eq("batch_no", batchNo);
+    for (const learner of learners.rows) {
+      const learnerId = learner.id;
 
-    if (!intermediate && !module) {
-      return res.json({ data: [] });
-    }
+      // =============================
+      // INTERMEDIATE (Convert to 100)
+      // =============================
+      const intermediate = await pool.query(
+        `SELECT SUM(points) as total_points,
+                SUM(out_off) as total_out
+         FROM intermediate_assessment_scores
+         WHERE learner_id = $1 AND batch_no = $2`,
+        [learnerId, batchNo]
+      );
 
-    const convertTo100 = (points, outOff) =>
-      points && outOff ? (points / outOff) * 100 : 0;
-
-    const avg = (arr) =>
-      arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
-
-    const grouped = {};
-
-    const init = (row) => {
-      if (!grouped[row.learner_id]) {
-        grouped[row.learner_id] = {
-          learner_id: row.learner_id,
-          name: row.name,
-          email: row.email,
-          intermediate: [],
-          finals: [],
-          project: [],
-          viva: []
-        };
+      let intermediatePercent = 0;
+      if (intermediate.rows[0].total_out) {
+        intermediatePercent =
+          (intermediate.rows[0].total_points /
+            intermediate.rows[0].total_out) *
+          100;
       }
-    };
 
-    intermediate?.forEach((row) => {
-      init(row);
-      grouped[row.learner_id].intermediate.push(row);
-    });
+      // =============================
+      // FINAL ASSESSMENTS
+      // =============================
+      const finalAssessments = await pool.query(
+        `SELECT assessment_name,
+                SUM(points) as total_points,
+                SUM(out_off) as total_out
+         FROM final_assessment_scores
+         WHERE learner_id = $1 AND batch_no = $2
+         GROUP BY assessment_name`,
+        [learnerId, batchNo]
+      );
 
-    module?.forEach((row) => {
-      init(row);
-      const topic = (row.assessment_name || "").toLowerCase();
+      let digital = 0,
+        cmos = 0,
+        tcl = 0,
+        physical = 0;
 
-      if (topic.includes("project")) {
-        grouped[row.learner_id].project.push(row);
-      } else if (topic.includes("viva")) {
-        grouped[row.learner_id].viva.push(row);
-      } else {
-        grouped[row.learner_id].finals.push(row);
+      finalAssessments.rows.forEach((row) => {
+        const percent =
+          (row.total_points / row.total_out) * 100;
+
+        if (row.assessment_name.includes("Digital"))
+          digital = percent;
+        if (row.assessment_name.includes("CMOS"))
+          cmos = percent;
+        if (row.assessment_name.includes("TCL"))
+          tcl = percent;
+        if (row.assessment_name.includes("Physical"))
+          physical = percent;
+      });
+
+      // =============================
+      // FINAL PROJECT
+      // =============================
+      const projectRes = await pool.query(
+        `SELECT points, out_off
+         FROM final_project_scores
+         WHERE learner_id = $1 AND batch_no = $2`,
+        [learnerId, batchNo]
+      );
+
+      let project = 0;
+      if (projectRes.rows.length) {
+        project =
+          (projectRes.rows[0].points /
+            projectRes.rows[0].out_off) *
+          100;
       }
-    });
 
-    const isPD = batchNo.toUpperCase().includes("PDFT");
+      // =============================
+      // VIVA
+      // =============================
+      const vivaRes = await pool.query(
+        `SELECT points, out_off
+         FROM viva_scores
+         WHERE learner_id = $1 AND batch_no = $2`,
+        [learnerId, batchNo]
+      );
 
-    const result = Object.values(grouped).map((l) => {
-      const intermediateAvg =
-        avg(l.intermediate.map((m) =>
-          convertTo100(m.points, m.out_off)
-        )) * 0.1;
-
-      const viva =
-        l.viva.length
-          ? convertTo100(l.viva[0].points, l.viva[0].out_off) * 0.1
-          : 0;
-
-      const project =
-        l.project.length
-          ? convertTo100(l.project[0].points, l.project[0].out_off) * 0.3
-          : 0;
-
-      let finalWeight = 0;
-      let breakdown = {};
-
-      if (isPD) {
-        const digital = l.finals.find(f =>
-          f.assessment_name.includes("Digital Design")
-        );
-        const cmos = l.finals.find(f =>
-          f.assessment_name.includes("CMOS")
-        );
-        const tcl = l.finals.find(f =>
-          f.assessment_name.includes("TCL")
-        );
-        const pd = l.finals.find(f =>
-          f.assessment_name.includes("Physical Design")
-        );
-
-        breakdown.digital = digital ? convertTo100(digital.points, digital.out_off) : 0;
-        breakdown.cmos = cmos ? convertTo100(cmos.points, cmos.out_off) : 0;
-        breakdown.tcl = tcl ? convertTo100(tcl.points, tcl.out_off) : 0;
-        breakdown.pd = pd ? convertTo100(pd.points, pd.out_off) : 0;
-
-        finalWeight =
-          avg([breakdown.digital, breakdown.cmos, breakdown.tcl]) * 0.2 +
-          breakdown.pd * 0.3;
-      } else {
-        const topics = ["Digital", "Verilog", "SV", "UVM", "Python"];
-        breakdown = {};
-        topics.forEach(t => {
-          const found = l.finals.find(f =>
-            f.assessment_name.includes(t)
-          );
-          breakdown[t] = found
-            ? convertTo100(found.points, found.out_off)
-            : 0;
-        });
-
-        finalWeight =
-          avg(Object.values(breakdown)) * 0.3;
+      let viva = 0;
+      if (vivaRes.rows.length) {
+        viva =
+          (vivaRes.rows[0].points /
+            vivaRes.rows[0].out_off) *
+          100;
       }
+
+      // =============================
+      // WEIGHTAGE (PDFT)
+      // =============================
+
+      const finalGroup =
+        (digital + cmos + tcl) / 3;
 
       const overall =
-        intermediateAvg + finalWeight + project + viva;
+        intermediatePercent * 0.1 +
+        finalGroup * 0.2 +
+        physical * 0.3 +
+        project * 0.3 +
+        viva * 0.1;
 
-      const grade =
-        overall >= 85 ? "A+" :
-        overall >= 75 ? "A" :
-        overall >= 65 ? "B" :
-        overall >= 50 ? "C" : "Fail";
+      // =============================
+      // GRADE
+      // =============================
+      let grade = "F";
+      if (overall >= 90) grade = "A";
+      else if (overall >= 80) grade = "B";
+      else if (overall >= 70) grade = "C";
+      else if (overall >= 60) grade = "D";
 
-      return {
-        learner_id: l.learner_id,
-        name: l.name,
-        email: l.email,
-        breakdown,
-        project: project ? project.toFixed(2) : 0,
+      const certification =
+        overall >= 70 ? "YES" : "NO";
+      const placement =
+        overall >= 80 ? "YES" : "NO";
+
+      results.push({
+        name: learner.name,
+        email: learner.email,
+        breakdown: {
+          digital: digital.toFixed(2),
+          cmos: cmos.toFixed(2),
+          tcl: tcl.toFixed(2),
+          physical: physical.toFixed(2),
+        },
+        project: project.toFixed(2),
         overall: overall.toFixed(2),
         grade,
-        certification: overall > 70 ? "YES" : "NO",
-        placement: overall > 80 ? "YES" : "NO"
-      };
-    });
+        certification,
+        placement,
+      });
+    }
 
-    res.json({ data: result });
-
+    res.json({ data: results });
   } catch (err) {
-    console.error("Scorecard error:", err);
-    res.status(500).json({ error: "Scorecard failed" });
+    console.error(err);
+    res.status(500).json({
+      error: "Scorecard calculation failed",
+    });
   }
 });
 
