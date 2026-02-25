@@ -68,25 +68,26 @@ export default function MarksDashboard({ user }) {
 
     setFetchLoading(true);
     setMessage("");
-    
+
     try {
-      const res = await axios.get(
-        `${API_BASE}/api/assessments/${batchNo}/${assessmentType}`
-      );
-      
+      let url =
+        assessmentType === "scorecard"
+          ? `${API_BASE}/api/scorecard/${batchNo}`
+          : `${API_BASE}/api/assessments/${batchNo}/${assessmentType}`;
+
+      const res = await axios.get(url);
+
       if (res.data && Array.isArray(res.data.data)) {
         setMarksData(res.data.data);
-        setMessage(`✅ Loaded ${res.data.data.length} assessment records`);
+        setMessage(`✅ Loaded ${res.data.data.length} records`);
       } else {
         setMarksData([]);
-        setMessage("No assessment data found for selected criteria");
+        setMessage("No data found");
       }
     } catch (error) {
-      console.error("Failed to fetch marks:", error);
+      console.error(error);
       setMarksData([]);
-      setMessage(
-        error.response?.data?.error || "Error fetching assessment data"
-      );
+      setMessage("Error fetching data");
     } finally {
       setFetchLoading(false);
     }
@@ -187,7 +188,17 @@ export default function MarksDashboard({ user }) {
 
   const getDynamicColumns = () => {
     if (marksData.length === 0) return [];
-    
+
+    // ✅ Scorecard case
+    if (assessmentType === "scorecard") {
+      return Object.keys(marksData[0]).map((key) => ({
+        key,
+        label: key,
+        numeric: key.includes("%") || key.includes("Marks")
+      }));
+    }
+
+    // Existing logic
     const sampleRow = marksData[0];
     const columns = [
       { key: "learner_id", label: "Learner ID", numeric: true },
@@ -195,17 +206,17 @@ export default function MarksDashboard({ user }) {
       { key: "batch_no", label: "Batch", numeric: false },
     ];
 
-    if (sampleRow.week_no !== undefined) {
+    if (sampleRow.week_no !== undefined)
       columns.push({ key: "week_no", label: "Week", numeric: true });
-    }
-    if (sampleRow.module_no !== undefined) {
+
+    if (sampleRow.module_no !== undefined)
       columns.push({ key: "module_no", label: "Module", numeric: true });
-    }
 
     columns.push(
       { key: "assessment_date", label: "Date", numeric: false },
-      sampleRow.assessment_name ? 
-        { key: "assessment_name", label: "Assessment", numeric: false } : null,
+      sampleRow.assessment_name
+        ? { key: "assessment_name", label: "Assessment", numeric: false }
+        : null,
       { key: "out_off", label: "Out Of", numeric: true },
       { key: "points", label: "Points", numeric: true },
       { key: "percentage", label: "Percentage", numeric: true }
@@ -256,6 +267,7 @@ export default function MarksDashboard({ user }) {
               <MenuItem value="weekly">Weekly Assessment</MenuItem>
               <MenuItem value="intermediate">Intermediate Assessment</MenuItem>
               <MenuItem value="module">Module Level Assessment</MenuItem>
+              <MenuItem value="scorecard">Scorecard</MenuItem>
             </Select>
           </FormControl>
 
@@ -293,6 +305,61 @@ export default function MarksDashboard({ user }) {
               Download PDF
             </Button>
           </Box>
+        )}
+
+        {assessmentType === "scorecard" && marksData.length > 0 && (
+          <TableContainer>
+            <Table>
+              <TableHead>
+                <TableRow>
+                  <TableCell>Name</TableCell>
+                  <TableCell>Email</TableCell>
+
+                  {batchNo.includes("PDFT") ? (
+                    <>
+                      <TableCell>Digital Design</TableCell>
+                      <TableCell>CMOS</TableCell>
+                      <TableCell>TCL</TableCell>
+                      <TableCell>Physical Design</TableCell>
+                    </>
+                  ) : (
+                    <>
+                      <TableCell>Digital</TableCell>
+                      <TableCell>Verilog</TableCell>
+                      <TableCell>SV</TableCell>
+                      <TableCell>UVM</TableCell>
+                      <TableCell>Python</TableCell>
+                    </>
+                  )}
+
+                  <TableCell>Project</TableCell>
+                  <TableCell>Overall %</TableCell>
+                  <TableCell>Grade</TableCell>
+                  <TableCell>Certification</TableCell>
+                  <TableCell>Placement</TableCell>
+                </TableRow>
+              </TableHead>
+
+              <TableBody>
+                {marksData.map((row, i) => (
+                  <TableRow key={i}>
+                    <TableCell>{row.name}</TableCell>
+                    <TableCell>{row.email}</TableCell>
+
+                    {Object.values(row.breakdown || {}).map((val, idx) => (
+                      <TableCell key={idx}>{val.toFixed(2)}</TableCell>
+                    ))}
+
+                    <TableCell>{row.project}</TableCell>
+                    <TableCell>{row.overall}</TableCell>
+                    <TableCell>{row.grade}</TableCell>
+                    <TableCell>{row.certification}</TableCell>
+                    <TableCell>{row.placement}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
         )}
 
         {/* Results Table */}

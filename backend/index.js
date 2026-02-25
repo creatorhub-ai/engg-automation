@@ -2901,6 +2901,157 @@ app.get('/api/download/csv/:batchNo/:assessmentType', async (req, res) => {
   }
 });
 
+// ===============================
+// SCORECARD API
+// ===============================
+app.get("/api/scorecard/:batchNo", async (req, res) => {
+  try {
+    const { batchNo } = req.params;
+
+    const { data: intermediate } = await supabase
+      .from("intermediate_assessment_scores")
+      .select("*")
+      .eq("batch_no", batchNo);
+
+    const { data: module } = await supabase
+      .from("module_level_assessment_scores")
+      .select("*")
+      .eq("batch_no", batchNo);
+
+    if (!intermediate && !module) {
+      return res.json({ data: [] });
+    }
+
+    const convertTo100 = (points, outOff) =>
+      points && outOff ? (points / outOff) * 100 : 0;
+
+    const avg = (arr) =>
+      arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+
+    const grouped = {};
+
+    const init = (row) => {
+      if (!grouped[row.learner_id]) {
+        grouped[row.learner_id] = {
+          learner_id: row.learner_id,
+          name: row.name,
+          email: row.email,
+          intermediate: [],
+          finals: [],
+          project: [],
+          viva: []
+        };
+      }
+    };
+
+    intermediate?.forEach((row) => {
+      init(row);
+      grouped[row.learner_id].intermediate.push(row);
+    });
+
+    module?.forEach((row) => {
+      init(row);
+      const topic = (row.assessment_name || "").toLowerCase();
+
+      if (topic.includes("project")) {
+        grouped[row.learner_id].project.push(row);
+      } else if (topic.includes("viva")) {
+        grouped[row.learner_id].viva.push(row);
+      } else {
+        grouped[row.learner_id].finals.push(row);
+      }
+    });
+
+    const isPD = batchNo.toUpperCase().includes("PDFT");
+
+    const result = Object.values(grouped).map((l) => {
+      const intermediateAvg =
+        avg(l.intermediate.map((m) =>
+          convertTo100(m.points, m.out_off)
+        )) * 0.1;
+
+      const viva =
+        l.viva.length
+          ? convertTo100(l.viva[0].points, l.viva[0].out_off) * 0.1
+          : 0;
+
+      const project =
+        l.project.length
+          ? convertTo100(l.project[0].points, l.project[0].out_off) * 0.3
+          : 0;
+
+      let finalWeight = 0;
+      let breakdown = {};
+
+      if (isPD) {
+        const digital = l.finals.find(f =>
+          f.assessment_name.includes("Digital Design")
+        );
+        const cmos = l.finals.find(f =>
+          f.assessment_name.includes("CMOS")
+        );
+        const tcl = l.finals.find(f =>
+          f.assessment_name.includes("TCL")
+        );
+        const pd = l.finals.find(f =>
+          f.assessment_name.includes("Physical Design")
+        );
+
+        breakdown.digital = digital ? convertTo100(digital.points, digital.out_off) : 0;
+        breakdown.cmos = cmos ? convertTo100(cmos.points, cmos.out_off) : 0;
+        breakdown.tcl = tcl ? convertTo100(tcl.points, tcl.out_off) : 0;
+        breakdown.pd = pd ? convertTo100(pd.points, pd.out_off) : 0;
+
+        finalWeight =
+          avg([breakdown.digital, breakdown.cmos, breakdown.tcl]) * 0.2 +
+          breakdown.pd * 0.3;
+      } else {
+        const topics = ["Digital", "Verilog", "SV", "UVM", "Python"];
+        breakdown = {};
+        topics.forEach(t => {
+          const found = l.finals.find(f =>
+            f.assessment_name.includes(t)
+          );
+          breakdown[t] = found
+            ? convertTo100(found.points, found.out_off)
+            : 0;
+        });
+
+        finalWeight =
+          avg(Object.values(breakdown)) * 0.3;
+      }
+
+      const overall =
+        intermediateAvg + finalWeight + project + viva;
+
+      const grade =
+        overall >= 85 ? "A+" :
+        overall >= 75 ? "A" :
+        overall >= 65 ? "B" :
+        overall >= 50 ? "C" : "Fail";
+
+      return {
+        learner_id: l.learner_id,
+        name: l.name,
+        email: l.email,
+        breakdown,
+        project: project ? project.toFixed(2) : 0,
+        overall: overall.toFixed(2),
+        grade,
+        certification: overall > 70 ? "YES" : "NO",
+        placement: overall > 80 ? "YES" : "NO"
+      };
+    });
+
+    res.json({ data: result });
+
+  } catch (err) {
+    console.error("Scorecard error:", err);
+    res.status(500).json({ error: "Scorecard failed" });
+  }
+});
+
+
 // Download PDF
 app.get('/api/download/pdf/:batchNo/:assessmentType', async (req, res) => {
   try {
