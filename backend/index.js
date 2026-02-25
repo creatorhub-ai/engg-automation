@@ -442,6 +442,34 @@ function isDateOverlap(start1, end1, start2, end2) {
          new Date(start2) <= new Date(end1);
 }
 
+function isWindowOpen(assessmentType, assessmentDate) {
+  const date = new Date(assessmentDate);
+  const now = new Date();
+
+  let close = new Date(date);
+
+  if (assessmentType === "weekly-assessment") {
+    // Friday → Monday
+    close.setDate(close.getDate() + 3);
+  } 
+  else if (
+    assessmentType === "intermediate-assessment" ||
+    assessmentType === "module-level-assessment"
+  ) {
+    // Friday → Wednesday
+    close.setDate(close.getDate() + 5);
+  } 
+  else if (assessmentType === "final-assessment") {
+    // 7 days
+    close.setDate(close.getDate() + 7);
+  }
+
+  close.setHours(23, 59, 59, 999);
+
+  return now <= close;
+}
+
+
 // Tools: you need a 'tools' column in classroom_occupancy or separate table if you want to restrict by required tools.
 async function hasRequiredTools(classroomName, requiredTools) {
   // Implement this lookup if your schema has tools info (pseudo-code):
@@ -4485,6 +4513,11 @@ app.get("/api/assessment-dates", async (req, res) => {
 
 // Add or update Weekly Assessment Score
 app.post("/api/marks/weekly-assessment", async (req, res) => {
+  if (!isWindowOpen("weekly-assessment", req.body.assessment_date)) {
+    return res.status(403).json({
+      error: "Marks entry window closed",
+    });
+  }
   try {
     const {
       learner_id,
@@ -4530,6 +4563,11 @@ app.post("/api/marks/weekly-assessment", async (req, res) => {
 
 //save the intermediate assessment marks
 app.post("/api/marks/intermediate-assessment", async (req, res) => {
+  if (!isWindowOpen("intermediate-assessment", req.body.assessment_date)) {
+    return res.status(403).json({
+      error: "Marks entry window closed",
+    });
+  }
   try {
     const {
       learner_id,
@@ -4592,6 +4630,11 @@ app.post("/api/marks/intermediate-assessment", async (req, res) => {
 
 //save the module level assessment marks
 app.post("/api/marks/module-level-assessment", async (req, res) => {
+  if (!isWindowOpen("module-level-assessment", req.body.assessment_date)) {
+    return res.status(403).json({
+      error: "Marks entry window closed",
+    });
+  }
   try {
     const {
       learner_id,
@@ -4658,6 +4701,11 @@ app.post("/api/marks/module-level-assessment", async (req, res) => {
 // because the unique key is (learner_id, course_planner_id, week_no, assessment_date).
 // ==============================
 app.post("/api/marks/final-assessment", async (req, res) => {
+  if (!isWindowOpen("final-assessment", req.body.assessment_date)) {
+    return res.status(403).json({
+      error: "Marks entry window closed",
+    });
+  }
   try {
     const {
       learner_id,
