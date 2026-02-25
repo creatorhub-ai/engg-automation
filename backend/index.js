@@ -4868,6 +4868,37 @@ app.post("/api/marks/viva", async (req, res) => {
   }
 });
 
+//load existing marks
+app.get("/api/marks/:type", async (req, res) => {
+  const { batch_no, assessment_date, course_planner_id } = req.query;
+
+  const result = await pool.query(
+    `SELECT learner_id, points, out_off
+     FROM final_assessment_scores
+     WHERE batch_no=$1
+     AND assessment_date=$2
+     AND course_planner_id=$3`,
+    [batch_no, assessment_date, course_planner_id]
+  );
+
+  res.json(result.rows);
+});
+
+//save out of API
+app.post("/api/outoff/save", async (req, res) => {
+  const { batch_no, topic_name, out_off } = req.body;
+
+  await pool.query(
+    `UPDATE final_assessment_scores
+     SET out_off=$1
+     WHERE batch_no=$2
+     AND assessment_name=$3`,
+    [out_off, batch_no, topic_name]
+  );
+
+  res.json({ success: true });
+});
+
 
 // Fetch all marks for a learner and batch (optional API for dashboard display)
 app.get('/api/marks/:category', async (req, res) => {
