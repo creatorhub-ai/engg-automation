@@ -2903,6 +2903,7 @@ app.get('/api/download/csv/:batchNo/:assessmentType', async (req, res) => {
 
 // ==============================
 // SCORECARD API - FULLY FIXED
+// JOINs final_assessment_scores → course_planner_data to resolve topic_name
 // All marks converted to /100 before weightage
 // Weightage: Intermediate 10% | Theory(D+C+T) 20% | Physical 30% | Project 30% | Viva 10%
 // ==============================
@@ -2928,139 +2929,177 @@ app.get("/api/scorecard/:batchNo", async (req, res) => {
       return res.json({ data: [] });
     }
 
+    // ── 2. Pre-fetch ALL final_assessment_scores for the batch ───────────────
+    const { data: allFinalScores, error: finalScoresErr } = await supabase
+      .from("final_assessment_scores")
+      .select("learner_id, course_planner_id, assessment_name, points, out_off")
+      .eq("batch_no", batchNo);
+
+    if (finalScoresErr) {
+      console.error("SCORECARD final_assessment_scores error:", finalScoresErr);
+    }
+
+    // ── 3. Resolve topic_name for each course_planner_id ────────────────────
+    // Collect unique planner IDs from the fetched scores
+    const plannerIds = [
+      ...new Set(
+        (allFinalScores || [])
+          .map((r) => r.course_planner_id)
+          .filter(Boolean)
+      ),
+    ];
+
+    let plannerTopicMap = {}; // { course_planner_id → topic_name }
+    if (plannerIds.length > 0) {
+      const { data: plannerRows, error: plannerErr } = await supabase
+        .from("course_planner_data")
+        .select("id, topic_name")
+        .in("id", plannerIds);
+
+      if (plannerErr) {
+        console.error("SCORECARD planner lookup error:", plannerErr);
+      } else {
+        (plannerRows || []).forEach((row) => {
+          plannerTopicMap[row.id] = row.topic_name || "";
+        });
+      }
+    }
+
+    // ── 4. Pre-fetch ALL intermediate scores for the batch ───────────────────
+    const { data: allIntermediateScores, error: interErr } = await supabase
+      .from("intermediate_assessment_scores")
+      .select("learner_id, points, out_off")
+      .eq("batch_no", batchNo);
+
+    if (interErr) {
+      console.error("SCORECARD intermediate error:", interErr);
+    }
+
+    // ── 5. Pre-fetch ALL final_project_scores for the batch ──────────────────
+    const { data: allProjectScores, error: projectErr } = await supabase
+      .from("final_project_scores")
+      .select("learner_id, points, out_off")
+      .eq("batch_no", batchNo);
+
+    if (projectErr) {
+      console.error("SCORECARD project error:", projectErr);
+    }
+
+    // ── 6. Pre-fetch ALL viva_scores for the batch ───────────────────────────
+    const { data: allVivaScores, error: vivaErr } = await supabase
+      .from("viva_scores")
+      .select("learner_id, points, out_off")
+      .eq("batch_no", batchNo);
+
+    if (vivaErr) {
+      console.error("SCORECARD viva error:", vivaErr);
+    }
+
+    // ── Helper: resolve canonical subject key ─────────────────────────────────
+    // topic_name examples from course_planner_data:
+    //   "Final Assessment  - 1. Digital Design & Aptitude"
+    //   "Final Assessment - 2. CMOS Devices & Technology"
+    //   "Final Assessment - 2. TCL Assessment"
+    //   "Final Assessment - 3. Physical Design"
+    // assessment_name in final_assessment_scores may mirror these or be shorter.
+    // We check both, preferring topic_name from course_planner_data.
+    const getSubjectKey = (topicName, assessmentName) => {
+      const raw = ((topicName || "") + " " + (assessmentName || "")).toLowerCase();
+      if (raw.includes("digital"))                         return "digital";
+      if (raw.includes("cmos"))                            return "cmos";
+      if (raw.includes("tcl"))                             return "tcl";
+      if (raw.includes("physical") || raw.includes("phy")) return "physical";
+      return null;
+    };
+
+    // ── Helper: sum raw points & out_off ─────────────────────────────────────
+    const sumRows = (rows) => ({
+      totalPoints: rows.reduce((s, r) => s + (Number(r.points)  || 0), 0),
+      totalOut:    rows.reduce((s, r) => s + (Number(r.out_off) || 0), 0),
+    });
+
+    // ── Helper: convert to percentage out of 100 ──────────────────────────────
+    const toPct = ({ totalPoints, totalOut }) =>
+      totalOut > 0 ? (totalPoints / totalOut) * 100 : 0;
+
+    // ── 7. Build per-learner results ──────────────────────────────────────────
     const results = [];
 
     for (const learner of learners) {
-      const learnerId = learner.id;
+      const learnerId = Number(learner.id);
 
-      // ── 2. INTERMEDIATE ───────────────────────────────────────────────────
-      // Sum all intermediate rows → convert to /100
-      const { data: intermediateRows, error: intermediateErr } = await supabase
-        .from("intermediate_assessment_scores")
-        .select("points, out_off")
-        .eq("learner_id", learnerId)
-        .eq("batch_no", batchNo);
+      // ── Intermediate ─────────────────────────────────────────────────────────
+      const intermediateRows = (allIntermediateScores || []).filter(
+        (r) => Number(r.learner_id) === learnerId
+      );
+      const intermediateOutOf100 = toPct(sumRows(intermediateRows));
 
-      let intermediateOutOf100 = 0;
-      if (!intermediateErr && intermediateRows && intermediateRows.length > 0) {
-        const totalPoints = intermediateRows.reduce(
-          (sum, r) => sum + (Number(r.points)  || 0), 0
-        );
-        const totalOut = intermediateRows.reduce(
-          (sum, r) => sum + (Number(r.out_off) || 0), 0
-        );
-        if (totalOut > 0) {
-          intermediateOutOf100 = (totalPoints / totalOut) * 100;
-        }
-      }
+      // ── Final assessments: group into subject buckets ─────────────────────────
+      const learnerFinalRows = (allFinalScores || []).filter(
+        (r) => Number(r.learner_id) === learnerId
+      );
 
-      // ── 3. FINAL ASSESSMENTS (Digital / CMOS / TCL / Physical) ───────────
-      // Fetch all rows for this learner, then group by subject name
-      const { data: finalRows, error: finalErr } = await supabase
-        .from("final_assessment_scores")
-        .select("assessment_name, points, out_off")
-        .eq("learner_id", learnerId)
-        .eq("batch_no", batchNo);
-
-      // subjectMap accumulates raw points & out_off per canonical key
-      const subjectMap = {};
-
-      if (!finalErr && finalRows && finalRows.length > 0) {
-        finalRows.forEach((row) => {
-          const rawName = (row.assessment_name || "").toLowerCase().trim();
-          const pts  = Number(row.points)  || 0;
-          const outf = Number(row.out_off) || 0;
-
-          // Map to canonical key based on keywords in the assessment_name
-          let key = "";
-          if      (rawName.includes("digital"))                          key = "digital";
-          else if (rawName.includes("cmos"))                             key = "cmos";
-          else if (rawName.includes("tcl"))                              key = "tcl";
-          else if (rawName.includes("physical") || rawName.includes("phy")) key = "physical";
-          else                                                            key = rawName; // fallback
-
-          if (!subjectMap[key]) {
-            subjectMap[key] = { total_points: 0, total_out: 0 };
-          }
-          subjectMap[key].total_points += pts;
-          subjectMap[key].total_out    += outf;
-        });
-      }
-
-      // Helper: convert a subject bucket to percentage out of 100
-      const subjectPct = (key) => {
-        const s = subjectMap[key];
-        if (!s || s.total_out === 0) return 0;
-        return (s.total_points / s.total_out) * 100;
+      const buckets = {
+        digital:  { pts: 0, out: 0 },
+        cmos:     { pts: 0, out: 0 },
+        tcl:      { pts: 0, out: 0 },
+        physical: { pts: 0, out: 0 },
       };
 
-      // Individual subject percentages (for display columns)
+      learnerFinalRows.forEach((row) => {
+        // Resolve topic_name via course_planner_data lookup
+        const topicName      = plannerTopicMap[row.course_planner_id] || "";
+        const assessmentName = row.assessment_name || "";
+        const key            = getSubjectKey(topicName, assessmentName);
+
+        if (key) {
+          buckets[key].pts += Number(row.points)  || 0;
+          buckets[key].out += Number(row.out_off) || 0;
+        } else {
+          // Unrecognised — log for debugging
+          console.log(
+            `[SCORECARD] Unrecognised assessment for learner ${learnerId}:`,
+            { topicName, assessmentName, pts: row.points, out: row.out_off }
+          );
+        }
+      });
+
+      // Subject % out of 100
+      const subjectPct = (key) =>
+        buckets[key].out > 0
+          ? (buckets[key].pts / buckets[key].out) * 100
+          : 0;
+
       const digitalOutOf100  = subjectPct("digital");
       const cmosOutOf100     = subjectPct("cmos");
       const tclOutOf100      = subjectPct("tcl");
       const physicalOutOf100 = subjectPct("physical");
 
-      // Theory group = Digital + CMOS + TCL combined into one percentage
-      const theoryKeys = ["digital", "cmos", "tcl"].filter((k) => subjectMap[k]);
-      let theoryOutOf100 = 0;
-      if (theoryKeys.length > 0) {
-        const theoryTotalPoints = theoryKeys.reduce(
-          (s, k) => s + subjectMap[k].total_points, 0
-        );
-        const theoryTotalOut = theoryKeys.reduce(
-          (s, k) => s + subjectMap[k].total_out, 0
-        );
-        if (theoryTotalOut > 0) {
-          theoryOutOf100 = (theoryTotalPoints / theoryTotalOut) * 100;
-        }
-      }
+      // Theory group = Digital + CMOS + TCL combined into one %
+      const theoryTotalPts = buckets.digital.pts + buckets.cmos.pts + buckets.tcl.pts;
+      const theoryTotalOut = buckets.digital.out + buckets.cmos.out + buckets.tcl.out;
+      const theoryOutOf100 = theoryTotalOut > 0
+        ? (theoryTotalPts / theoryTotalOut) * 100
+        : 0;
 
-      // ── 4. FINAL PROJECT ─────────────────────────────────────────────────
-      const { data: projectRows, error: projectErr } = await supabase
-        .from("final_project_scores")
-        .select("points, out_off")
-        .eq("learner_id", learnerId)
-        .eq("batch_no", batchNo);
+      // ── Final Project ─────────────────────────────────────────────────────────
+      const projectRows     = (allProjectScores || []).filter(
+        (r) => Number(r.learner_id) === learnerId
+      );
+      const projectOutOf100 = toPct(sumRows(projectRows));
 
-      let projectOutOf100 = 0;
-      if (!projectErr && projectRows && projectRows.length > 0) {
-        const totalPoints = projectRows.reduce(
-          (sum, r) => sum + (Number(r.points)  || 0), 0
-        );
-        const totalOut = projectRows.reduce(
-          (sum, r) => sum + (Number(r.out_off) || 0), 0
-        );
-        if (totalOut > 0) {
-          projectOutOf100 = (totalPoints / totalOut) * 100;
-        }
-      }
+      // ── Viva ──────────────────────────────────────────────────────────────────
+      const vivaRows     = (allVivaScores || []).filter(
+        (r) => Number(r.learner_id) === learnerId
+      );
+      const vivaOutOf100 = toPct(sumRows(vivaRows));
 
-      // ── 5. VIVA ───────────────────────────────────────────────────────────
-      const { data: vivaRows, error: vivaErr } = await supabase
-        .from("viva_scores")
-        .select("points, out_off")
-        .eq("learner_id", learnerId)
-        .eq("batch_no", batchNo);
-
-      let vivaOutOf100 = 0;
-      if (!vivaErr && vivaRows && vivaRows.length > 0) {
-        const totalPoints = vivaRows.reduce(
-          (sum, r) => sum + (Number(r.points)  || 0), 0
-        );
-        const totalOut = vivaRows.reduce(
-          (sum, r) => sum + (Number(r.out_off) || 0), 0
-        );
-        if (totalOut > 0) {
-          vivaOutOf100 = (totalPoints / totalOut) * 100;
-        }
-      }
-
-      // ── 6. WEIGHTED OVERALL ───────────────────────────────────────────────
-      // Intermediate          10%
-      // Theory (D + C + T)    20%
-      // Physical Design       30%
-      // Final Project         30%
-      // Viva                  10%
+      // ── Weighted Overall ──────────────────────────────────────────────────────
+      // Intermediate (all inter assessments combined)   10%
+      // Theory       (Digital + CMOS + TCL combined)    20%
+      // Physical Design                                 30%
+      // Final Project                                   30%
+      // Viva                                            10%
       const overall =
         intermediateOutOf100 * 0.10 +
         theoryOutOf100       * 0.20 +
@@ -3068,7 +3107,7 @@ app.get("/api/scorecard/:batchNo", async (req, res) => {
         projectOutOf100      * 0.30 +
         vivaOutOf100         * 0.10;
 
-      // ── 7. GRADE ─────────────────────────────────────────────────────────
+      // ── Grade ─────────────────────────────────────────────────────────────────
       let grade = "F";
       if      (overall >= 90) grade = "A";
       else if (overall >= 80) grade = "B";
@@ -3078,11 +3117,25 @@ app.get("/api/scorecard/:batchNo", async (req, res) => {
       const certification = overall >= 70 ? "YES" : "NO";
       const placement     = overall >= 80 ? "YES" : "NO";
 
+      // Debug log (remove or reduce in production)
+      console.log(
+        `[SCORECARD] ${learner.name} | ` +
+        `Inter=${intermediateOutOf100.toFixed(1)}% ` +
+        `Digital=${digitalOutOf100.toFixed(1)}% ` +
+        `CMOS=${cmosOutOf100.toFixed(1)}% ` +
+        `TCL=${tclOutOf100.toFixed(1)}% ` +
+        `Theory=${theoryOutOf100.toFixed(1)}% ` +
+        `Phy=${physicalOutOf100.toFixed(1)}% ` +
+        `Proj=${projectOutOf100.toFixed(1)}% ` +
+        `Viva=${vivaOutOf100.toFixed(1)}% ` +
+        `=> Overall=${overall.toFixed(2)}% Grade=${grade}`
+      );
+
       results.push({
         name:  learner.name,
         email: learner.email,
 
-        // Individual subject percentages (each already out of 100)
+        // Individual subject percentages (each converted to /100)
         breakdown: {
           digital:  digitalOutOf100.toFixed(2),
           cmos:     cmosOutOf100.toFixed(2),
@@ -3092,7 +3145,7 @@ app.get("/api/scorecard/:batchNo", async (req, res) => {
 
         // Group percentages used in weightage formula
         intermediate: intermediateOutOf100.toFixed(2),
-        theory:       theoryOutOf100.toFixed(2),   // D+C+T combined
+        theory:       theoryOutOf100.toFixed(2),
         project:      projectOutOf100.toFixed(2),
         viva:         vivaOutOf100.toFixed(2),
 
