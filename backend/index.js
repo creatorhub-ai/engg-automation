@@ -4266,19 +4266,16 @@ app.get('/apiperiods/:batchNo/:assessmentType', async (req, res) => {
     }
 
     const { data, error } = await supabase
-      .from('course_planner_data')
-      .select('week_no, date, topic_name')
-      .eq('batch_no', batchNo)
-      .or(queryFilter)
-      .order('week_no', { ascending: true })
-      .order('date', { ascending: true });
+      .from("course_planner_data")
+      // ← id is now included so the frontend can send it back as course_planner_id
+      .select("id, date, week_no, module_no, topic_name")
+      .eq("batch_no", batchNo)
+      .ilike("topic_name", `%${searchText}%`)
+      .order("date", { ascending: true });
 
     if (error) {
-      console.error('❌ Supabase error:', error);
-      return res.status(500).json({
-        error: 'Database query failed',
-        details: error.message
-      });
+      console.error(`apiperiods DB error [${batchNo}/${type}]:`, error.message);
+      return res.status(500).json({ error: "Database error" });
     }
 
     const periods = (data || [])
@@ -4647,7 +4644,12 @@ app.post("/api/marks/module-level-assessment", async (req, res) => {
   }
 });
 
-// save the final assessment marks
+// ==============================
+// SAVE FINAL ASSESSMENT MARKS - FIXED
+// Uses course_planner_id sent directly from frontend.
+// This ensures two assessments on the same date are stored as separate rows
+// because the unique key is (learner_id, course_planner_id, week_no, assessment_date).
+// ==============================
 app.post("/api/marks/final-assessment", async (req, res) => {
   try {
     const {
@@ -4658,51 +4660,73 @@ app.post("/api/marks/final-assessment", async (req, res) => {
       assessment_name,
       out_off,
       points,
-      percentage
+      percentage,
+      course_planner_id, // ← sent directly from the frontend now
     } = req.body;
 
     if (!week_no) {
       return res.status(400).json({ error: "week_no is required" });
     }
 
-    // Get planner row
-    const { data: planner, error: plannerError } = await supabase
-      .from("course_planner_data")
-      .select("id")
-      .eq("batch_no", batch_no)
-      .eq("date", assessment_date)
-      .limit(1)
-      .single();
+    // Resolve course_planner_id:
+    // 1. Use the one sent from the frontend (preferred — uniquely identifies the assessment slot).
+    // 2. Fall back to a DB lookup only if not provided (backward-compatible).
+    let plannerId = course_planner_id ? Number(course_planner_id) : null;
 
-    if (plannerError || !planner) {
-      return res.status(409).json({ error: "Planner not found" });
+    if (!plannerId) {
+      // Fallback: look up by batch_no + date + assessment_name so we at least try
+      // to match the correct row rather than just taking the first on that date.
+      const matchName = assessment_name || "";
+      let query = supabase
+        .from("course_planner_data")
+        .select("id")
+        .eq("batch_no", batch_no)
+        .eq("date", assessment_date);
+
+      if (matchName) {
+        query = query.ilike("topic_name", `%${matchName}%`);
+      }
+
+      const { data: plannerRows, error: plannerErr } = await query.limit(1);
+
+      if (plannerErr || !plannerRows || plannerRows.length === 0) {
+        return res.status(409).json({
+          error: "Could not resolve course_planner_id. Please select the assessment from the dropdown.",
+        });
+      }
+      plannerId = plannerRows[0].id;
     }
 
-    // Save into final_assessment_scores
+    // Upsert using the full unique key:
+    // (learner_id, course_planner_id, week_no, assessment_date)
+    // Two assessments on the same date have different course_planner_ids,
+    // so they will be stored as separate rows — no overwriting.
     const { error } = await supabase
       .from("final_assessment_scores")
       .upsert(
         {
-          learner_id,
-          course_planner_id: planner.id,
+          learner_id:        Number(learner_id),
+          course_planner_id: plannerId,
           batch_no,
-          week_no,
+          week_no:           Number(week_no),
           assessment_date,
-          assessment_name,
-          out_off,
-          points,
-          percentage,
-          marked_at: new Date()
+          assessment_name:   assessment_name || null,
+          out_off:           Number(out_off),
+          points:            Number(points),
+          percentage:        percentage != null ? Number(percentage) : null,
+          marked_at:         new Date(),
         },
         {
-          onConflict: "learner_id,course_planner_id,week_no,assessment_date"
+          onConflict: "learner_id,course_planner_id,week_no,assessment_date",
         }
       );
 
-    if (error) throw error;
+    if (error) {
+      console.error("final-assessment upsert error:", error);
+      throw error;
+    }
 
     res.json({ success: true });
-
   } catch (err) {
     console.error("Final assessment save error:", err);
     res.status(500).json({ error: err.message });
