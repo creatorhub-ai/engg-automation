@@ -2921,18 +2921,20 @@ app.get("/api/scorecard/:batchNo", async (req, res) => {
       const learnerId = learner.id;
 
       // =============================
-      // INTERMEDIATE (Convert to 100)
+      // INTERMEDIATE
       // =============================
       const intermediate = await pool.query(
-        `SELECT SUM(points) as total_points,
-                SUM(out_off) as total_out
+        `SELECT 
+            COALESCE(SUM(points),0) as total_points,
+            COALESCE(SUM(out_off),0) as total_out
          FROM intermediate_assessment_scores
          WHERE learner_id = $1 AND batch_no = $2`,
         [learnerId, batchNo]
       );
 
       let intermediatePercent = 0;
-      if (intermediate.rows[0].total_out) {
+
+      if (intermediate.rows[0].total_out > 0) {
         intermediatePercent =
           (intermediate.rows[0].total_points /
             intermediate.rows[0].total_out) *
@@ -2940,34 +2942,46 @@ app.get("/api/scorecard/:batchNo", async (req, res) => {
       }
 
       // =============================
-      // FINAL ASSESSMENTS
+      // FINAL SUBJECTS
       // =============================
       const finalAssessments = await pool.query(
-        `SELECT assessment_name,
-                SUM(points) as total_points,
-                SUM(out_off) as total_out
+        `SELECT 
+            assessment_name,
+            COALESCE(SUM(points),0) as total_points,
+            COALESCE(SUM(out_off),0) as total_out
          FROM final_assessment_scores
          WHERE learner_id = $1 AND batch_no = $2
          GROUP BY assessment_name`,
         [learnerId, batchNo]
       );
 
-      let digital = 0,
-        cmos = 0,
-        tcl = 0,
-        physical = 0;
+      let digital = 0;
+      let cmos = 0;
+      let tcl = 0;
+      let physical = 0;
 
       finalAssessments.rows.forEach((row) => {
-        const percent =
-          (row.total_points / row.total_out) * 100;
+        if (!row.assessment_name) return;
 
-        if (row.assessment_name.includes("Digital"))
+        let percent = 0;
+        if (row.total_out > 0) {
+          percent =
+            (row.total_points / row.total_out) *
+            100;
+        }
+
+        const name = row.assessment_name.toLowerCase();
+
+        if (name.includes("digital"))
           digital = percent;
-        if (row.assessment_name.includes("CMOS"))
+
+        else if (name.includes("cmos"))
           cmos = percent;
-        if (row.assessment_name.includes("TCL"))
+
+        else if (name.includes("tcl"))
           tcl = percent;
-        if (row.assessment_name.includes("Physical"))
+
+        else if (name.includes("physical"))
           physical = percent;
       });
 
@@ -2975,14 +2989,19 @@ app.get("/api/scorecard/:batchNo", async (req, res) => {
       // FINAL PROJECT
       // =============================
       const projectRes = await pool.query(
-        `SELECT points, out_off
+        `SELECT 
+            COALESCE(points,0) as points,
+            COALESCE(out_off,0) as out_off
          FROM final_project_scores
          WHERE learner_id = $1 AND batch_no = $2`,
         [learnerId, batchNo]
       );
 
       let project = 0;
-      if (projectRes.rows.length) {
+      if (
+        projectRes.rows.length &&
+        projectRes.rows[0].out_off > 0
+      ) {
         project =
           (projectRes.rows[0].points /
             projectRes.rows[0].out_off) *
@@ -2993,14 +3012,19 @@ app.get("/api/scorecard/:batchNo", async (req, res) => {
       // VIVA
       // =============================
       const vivaRes = await pool.query(
-        `SELECT points, out_off
+        `SELECT 
+            COALESCE(points,0) as points,
+            COALESCE(out_off,0) as out_off
          FROM viva_scores
          WHERE learner_id = $1 AND batch_no = $2`,
         [learnerId, batchNo]
       );
 
       let viva = 0;
-      if (vivaRes.rows.length) {
+      if (
+        vivaRes.rows.length &&
+        vivaRes.rows[0].out_off > 0
+      ) {
         viva =
           (vivaRes.rows[0].points /
             vivaRes.rows[0].out_off) *
@@ -3008,7 +3032,7 @@ app.get("/api/scorecard/:batchNo", async (req, res) => {
       }
 
       // =============================
-      // WEIGHTAGE (PDFT)
+      // WEIGHTAGE
       // =============================
 
       const finalGroup =
@@ -3024,7 +3048,9 @@ app.get("/api/scorecard/:batchNo", async (req, res) => {
       // =============================
       // GRADE
       // =============================
+
       let grade = "F";
+
       if (overall >= 90) grade = "A";
       else if (overall >= 80) grade = "B";
       else if (overall >= 70) grade = "C";
@@ -3032,6 +3058,7 @@ app.get("/api/scorecard/:batchNo", async (req, res) => {
 
       const certification =
         overall >= 70 ? "YES" : "NO";
+
       const placement =
         overall >= 80 ? "YES" : "NO";
 
@@ -3054,12 +3081,14 @@ app.get("/api/scorecard/:batchNo", async (req, res) => {
 
     res.json({ data: results });
   } catch (err) {
-    console.error(err);
+    console.error("SCORECARD ERROR:", err);
     res.status(500).json({
       error: "Scorecard calculation failed",
+      details: err.message,
     });
   }
 });
+
 
 
 // Download PDF
