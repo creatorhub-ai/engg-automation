@@ -2902,13 +2902,15 @@ app.get('/api/download/csv/:batchNo/:assessmentType', async (req, res) => {
 });
 
 // ==============================
-// SCORECARD API - FIXED (uses Supabase, not pool.query)
+// SCORECARD API - FULLY FIXED
+// All marks converted to /100 before weightage
+// Weightage: Intermediate 10% | Theory(D+C+T) 20% | Physical 30% | Project 30% | Viva 10%
 // ==============================
 app.get("/api/scorecard/:batchNo", async (req, res) => {
   const { batchNo } = req.params;
 
   try {
-    // 1. Fetch learners via Supabase
+    // ── 1. Fetch learners ──────────────────────────────────────────────────
     const { data: learners, error: learnersErr } = await supabase
       .from("learners_data")
       .select("id, name, email")
@@ -2931,137 +2933,170 @@ app.get("/api/scorecard/:batchNo", async (req, res) => {
     for (const learner of learners) {
       const learnerId = learner.id;
 
-      // =============================
-      // INTERMEDIATE
-      // =============================
+      // ── 2. INTERMEDIATE ───────────────────────────────────────────────────
+      // Sum all intermediate rows → convert to /100
       const { data: intermediateRows, error: intermediateErr } = await supabase
         .from("intermediate_assessment_scores")
         .select("points, out_off")
         .eq("learner_id", learnerId)
         .eq("batch_no", batchNo);
 
-      let intermediatePercent = 0;
+      let intermediateOutOf100 = 0;
       if (!intermediateErr && intermediateRows && intermediateRows.length > 0) {
         const totalPoints = intermediateRows.reduce(
-          (sum, r) => sum + (Number(r.points) || 0),
-          0
+          (sum, r) => sum + (Number(r.points)  || 0), 0
         );
         const totalOut = intermediateRows.reduce(
-          (sum, r) => sum + (Number(r.out_off) || 0),
-          0
+          (sum, r) => sum + (Number(r.out_off) || 0), 0
         );
         if (totalOut > 0) {
-          intermediatePercent = (totalPoints / totalOut) * 100;
+          intermediateOutOf100 = (totalPoints / totalOut) * 100;
         }
       }
 
-      // =============================
-      // FINAL ASSESSMENTS (grouped by assessment_name)
-      // =============================
+      // ── 3. FINAL ASSESSMENTS (Digital / CMOS / TCL / Physical) ───────────
+      // Fetch all rows for this learner, then group by subject name
       const { data: finalRows, error: finalErr } = await supabase
         .from("final_assessment_scores")
         .select("assessment_name, points, out_off")
         .eq("learner_id", learnerId)
         .eq("batch_no", batchNo);
 
-      let digital = 0;
-      let cmos = 0;
-      let tcl = 0;
-      let physical = 0;
+      // subjectMap accumulates raw points & out_off per canonical key
+      const subjectMap = {};
 
       if (!finalErr && finalRows && finalRows.length > 0) {
-        // Group by assessment_name in JS
-        const grouped = {};
         finalRows.forEach((row) => {
-          const name = (row.assessment_name || "").toLowerCase();
-          if (!grouped[name]) {
-            grouped[name] = { total_points: 0, total_out: 0 };
-          }
-          grouped[name].total_points += Number(row.points) || 0;
-          grouped[name].total_out += Number(row.out_off) || 0;
-        });
+          const rawName = (row.assessment_name || "").toLowerCase().trim();
+          const pts  = Number(row.points)  || 0;
+          const outf = Number(row.out_off) || 0;
 
-        Object.entries(grouped).forEach(([name, vals]) => {
-          let percent = 0;
-          if (vals.total_out > 0) {
-            percent = (vals.total_points / vals.total_out) * 100;
+          // Map to canonical key based on keywords in the assessment_name
+          let key = "";
+          if      (rawName.includes("digital"))                          key = "digital";
+          else if (rawName.includes("cmos"))                             key = "cmos";
+          else if (rawName.includes("tcl"))                              key = "tcl";
+          else if (rawName.includes("physical") || rawName.includes("phy")) key = "physical";
+          else                                                            key = rawName; // fallback
+
+          if (!subjectMap[key]) {
+            subjectMap[key] = { total_points: 0, total_out: 0 };
           }
-          if (name.includes("digital")) digital = percent;
-          else if (name.includes("cmos")) cmos = percent;
-          else if (name.includes("tcl")) tcl = percent;
-          else if (name.includes("physical")) physical = percent;
+          subjectMap[key].total_points += pts;
+          subjectMap[key].total_out    += outf;
         });
       }
 
-      // =============================
-      // FINAL PROJECT
-      // =============================
+      // Helper: convert a subject bucket to percentage out of 100
+      const subjectPct = (key) => {
+        const s = subjectMap[key];
+        if (!s || s.total_out === 0) return 0;
+        return (s.total_points / s.total_out) * 100;
+      };
+
+      // Individual subject percentages (for display columns)
+      const digitalOutOf100  = subjectPct("digital");
+      const cmosOutOf100     = subjectPct("cmos");
+      const tclOutOf100      = subjectPct("tcl");
+      const physicalOutOf100 = subjectPct("physical");
+
+      // Theory group = Digital + CMOS + TCL combined into one percentage
+      const theoryKeys = ["digital", "cmos", "tcl"].filter((k) => subjectMap[k]);
+      let theoryOutOf100 = 0;
+      if (theoryKeys.length > 0) {
+        const theoryTotalPoints = theoryKeys.reduce(
+          (s, k) => s + subjectMap[k].total_points, 0
+        );
+        const theoryTotalOut = theoryKeys.reduce(
+          (s, k) => s + subjectMap[k].total_out, 0
+        );
+        if (theoryTotalOut > 0) {
+          theoryOutOf100 = (theoryTotalPoints / theoryTotalOut) * 100;
+        }
+      }
+
+      // ── 4. FINAL PROJECT ─────────────────────────────────────────────────
       const { data: projectRows, error: projectErr } = await supabase
         .from("final_project_scores")
         .select("points, out_off")
         .eq("learner_id", learnerId)
         .eq("batch_no", batchNo);
 
-      let project = 0;
+      let projectOutOf100 = 0;
       if (!projectErr && projectRows && projectRows.length > 0) {
-        const row = projectRows[0];
-        if (Number(row.out_off) > 0) {
-          project = (Number(row.points) / Number(row.out_off)) * 100;
+        const totalPoints = projectRows.reduce(
+          (sum, r) => sum + (Number(r.points)  || 0), 0
+        );
+        const totalOut = projectRows.reduce(
+          (sum, r) => sum + (Number(r.out_off) || 0), 0
+        );
+        if (totalOut > 0) {
+          projectOutOf100 = (totalPoints / totalOut) * 100;
         }
       }
 
-      // =============================
-      // VIVA
-      // =============================
+      // ── 5. VIVA ───────────────────────────────────────────────────────────
       const { data: vivaRows, error: vivaErr } = await supabase
         .from("viva_scores")
         .select("points, out_off")
         .eq("learner_id", learnerId)
         .eq("batch_no", batchNo);
 
-      let viva = 0;
+      let vivaOutOf100 = 0;
       if (!vivaErr && vivaRows && vivaRows.length > 0) {
-        const row = vivaRows[0];
-        if (Number(row.out_off) > 0) {
-          viva = (Number(row.points) / Number(row.out_off)) * 100;
+        const totalPoints = vivaRows.reduce(
+          (sum, r) => sum + (Number(r.points)  || 0), 0
+        );
+        const totalOut = vivaRows.reduce(
+          (sum, r) => sum + (Number(r.out_off) || 0), 0
+        );
+        if (totalOut > 0) {
+          vivaOutOf100 = (totalPoints / totalOut) * 100;
         }
       }
 
-      // =============================
-      // WEIGHTAGE CALCULATION
-      // =============================
-      const finalGroup = (digital + cmos + tcl) / 3;
-
+      // ── 6. WEIGHTED OVERALL ───────────────────────────────────────────────
+      // Intermediate          10%
+      // Theory (D + C + T)    20%
+      // Physical Design       30%
+      // Final Project         30%
+      // Viva                  10%
       const overall =
-        intermediatePercent * 0.1 +
-        finalGroup * 0.2 +
-        physical * 0.3 +
-        project * 0.3 +
-        viva * 0.1;
+        intermediateOutOf100 * 0.10 +
+        theoryOutOf100       * 0.20 +
+        physicalOutOf100     * 0.30 +
+        projectOutOf100      * 0.30 +
+        vivaOutOf100         * 0.10;
 
-      // =============================
-      // GRADE
-      // =============================
+      // ── 7. GRADE ─────────────────────────────────────────────────────────
       let grade = "F";
-      if (overall >= 90) grade = "A";
+      if      (overall >= 90) grade = "A";
       else if (overall >= 80) grade = "B";
       else if (overall >= 70) grade = "C";
       else if (overall >= 60) grade = "D";
 
       const certification = overall >= 70 ? "YES" : "NO";
-      const placement = overall >= 80 ? "YES" : "NO";
+      const placement     = overall >= 80 ? "YES" : "NO";
 
       results.push({
-        name: learner.name,
+        name:  learner.name,
         email: learner.email,
+
+        // Individual subject percentages (each already out of 100)
         breakdown: {
-          digital: digital.toFixed(2),
-          cmos: cmos.toFixed(2),
-          tcl: tcl.toFixed(2),
-          physical: physical.toFixed(2),
+          digital:  digitalOutOf100.toFixed(2),
+          cmos:     cmosOutOf100.toFixed(2),
+          tcl:      tclOutOf100.toFixed(2),
+          physical: physicalOutOf100.toFixed(2),
         },
-        project: project.toFixed(2),
-        overall: overall.toFixed(2),
+
+        // Group percentages used in weightage formula
+        intermediate: intermediateOutOf100.toFixed(2),
+        theory:       theoryOutOf100.toFixed(2),   // D+C+T combined
+        project:      projectOutOf100.toFixed(2),
+        viva:         vivaOutOf100.toFixed(2),
+
+        overall:      overall.toFixed(2),
         grade,
         certification,
         placement,
