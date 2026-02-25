@@ -2822,46 +2822,110 @@ app.get("/api/get_learners", async (req, res) => {
 app.get('/api/assessments/:batchNo/:assessmentType', async (req, res) => {
   try {
     const { batchNo, assessmentType } = req.params;
-    let query;
 
+    // ── 1. Determine which scores table to query ──────────────────────────────
+    let tableName;
     switch (assessmentType.toLowerCase()) {
       case 'weekly':
-        query = supabase
-          .from('weekly_assessment_scores')
-          .select('*')
-          .eq('batch_no', batchNo)
-          .order('learner_id')
-          .order('assessment_date', { ascending: false });
+        tableName = 'weekly_assessment_scores';
         break;
       case 'intermediate':
-        query = supabase
-          .from('intermediate_assessment_scores')
-          .select('*')
-          .eq('batch_no', batchNo)
-          .order('learner_id')
-          .order('assessment_date', { ascending: false });
+        tableName = 'intermediate_assessment_scores';
         break;
       case 'module':
-        query = supabase
-          .from('module_level_assessment_scores')
-          .select('*')
-          .eq('batch_no', batchNo)
-          .order('learner_id')
-          .order('assessment_date', { ascending: false });
+        tableName = 'module_level_assessment_scores';
+        break;
+      case 'final':                          // ← NEW
+        tableName = 'final_assessment_scores';
         break;
       default:
         return res.status(400).json({ error: 'Invalid assessment type' });
     }
 
-    const { data, error } = await query;
+    // ── 2. Fetch raw scores ───────────────────────────────────────────────────
+    const { data: scores, error: scoresErr } = await supabase
+      .from(tableName)
+      .select('*')
+      .eq('batch_no', batchNo)
+      .order('learner_id')
+      .order('assessment_date', { ascending: false });
 
-    if (error) {
-      return res.status(500).json({ error: error.message });
+    if (scoresErr) {
+      console.error(`[assessments] ${tableName} error:`, scoresErr);
+      return res.status(500).json({ error: scoresErr.message });
     }
 
-    res.json({ data });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
+    if (!scores || scores.length === 0) {
+      return res.json({ data: [] });
+    }
+
+    // ── 3. Collect unique learner_ids and course_planner_ids ─────────────────
+    const learnerIds   = [...new Set(scores.map(r => r.learner_id).filter(Boolean))];
+    const plannerIds   = [...new Set(scores.map(r => r.course_planner_id).filter(Boolean))];
+
+    // ── 4. Fetch learner names in one batch query ─────────────────────────────
+    let learnerMap = {};   // { learner_id → { name, email } }
+    if (learnerIds.length > 0) {
+      const { data: learners, error: learnersErr } = await supabase
+        .from('learners_data')
+        .select('id, name, email')
+        .in('id', learnerIds);
+
+      if (learnersErr) {
+        console.error('[assessments] learners lookup error:', learnersErr);
+      } else {
+        (learners || []).forEach(l => {
+          learnerMap[l.id] = { name: l.name || '', email: l.email || '' };
+        });
+      }
+    }
+
+    // ── 5. Fetch topic names in one batch query ───────────────────────────────
+    let plannerMap = {};   // { course_planner_id → topic_name }
+    if (plannerIds.length > 0) {
+      const { data: plannerRows, error: plannerErr } = await supabase
+        .from('course_planner_data')
+        .select('id, topic_name')
+        .in('id', plannerIds);
+
+      if (plannerErr) {
+        console.error('[assessments] planner lookup error:', plannerErr);
+      } else {
+        (plannerRows || []).forEach(p => {
+          plannerMap[p.id] = p.topic_name || '';
+        });
+      }
+    }
+
+    // ── 6. Enrich each row; omit course_planner_id from output ───────────────
+    const enriched = scores.map(row => {
+      const learner   = learnerMap[row.learner_id]         || {};
+      const topicName = plannerMap[row.course_planner_id]  || row.assessment_name || '';
+
+      // Build the output object — deliberately exclude course_planner_id and learner_id
+      const out = {
+        learner_name:    learner.name  || String(row.learner_id),
+        learner_email:   learner.email || '',
+        batch_no:        row.batch_no,
+        assessment_date: row.assessment_date,
+        topic_name:      topicName,
+        out_off:         row.out_off,
+        points:          row.points,
+        percentage:      row.percentage,
+      };
+
+      // Include week_no or module_no only if present in the source row
+      if (row.week_no   !== undefined && row.week_no   !== null) out.week_no   = row.week_no;
+      if (row.module_no !== undefined && row.module_no !== null) out.module_no = row.module_no;
+
+      return out;
+    });
+
+    return res.json({ data: enriched });
+
+  } catch (err) {
+    console.error('[assessments] unexpected error:', err);
+    return res.status(500).json({ error: err.message });
   }
 });
 
@@ -4417,52 +4481,6 @@ app.get("/api/assessment-dates", async (req, res) => {
     res.json([]); // 👈 ABSOLUTE SAFETY
   }
 });
-
-app.get("/apiperiods/:batchNo/:type", async (req, res) => {
-  try {
-    const { batchNo, type } = req.params;
-
-    if (!batchNo || !type) {
-      return res.status(400).json({ error: "Missing parameters: batchNo and type are required" });
-    }
-
-    const textMap = {
-      "weekly-assessment":       "Weekly Assessment",
-      "intermediate-assessment": "Intermediate Assessment",
-      "module-level-assessment": "Module Level Assessment",
-      "weekly-quiz":             "Quiz",
-      "final-assessment":        "Final Assessment",   // ← this was missing from the first route
-    };
-
-    const searchText = textMap[type];
-
-    if (!searchText) {
-      return res.status(400).json({
-        error: `Invalid assessment type: "${type}". Valid types: ${Object.keys(textMap).join(", ")}`,
-      });
-    }
-
-    const { data, error } = await supabase
-      .from("course_planner_data")
-      .select("date, week_no, module_no, topic_name")
-      .eq("batch_no", batchNo)
-      .ilike("topic_name", `%${searchText}%`)
-      .order("date", { ascending: true });
-
-    if (error) {
-      console.error(`apiperiods DB error [${batchNo}/${type}]:`, error.message);
-      return res.status(500).json({ error: "Database error" });
-    }
-
-    console.log(`apiperiods [${batchNo}/${type}] → ${data?.length ?? 0} rows`);
-    res.json(Array.isArray(data) ? data : []);
-
-  } catch (err) {
-    console.error("apiperiods crash:", err.message);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
 
 
 // Add or update Weekly Assessment Score
