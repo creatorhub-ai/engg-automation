@@ -2902,141 +2902,135 @@ app.get('/api/download/csv/:batchNo/:assessmentType', async (req, res) => {
 });
 
 // ==============================
-// SCORECARD API
+// SCORECARD API - FIXED (uses Supabase, not pool.query)
 // ==============================
 app.get("/api/scorecard/:batchNo", async (req, res) => {
   const { batchNo } = req.params;
 
   try {
-    const learners = await pool.query(
-      `SELECT id, name, email 
-       FROM learners_data 
-       WHERE batch_no = $1`,
-      [batchNo]
-    );
+    // 1. Fetch learners via Supabase
+    const { data: learners, error: learnersErr } = await supabase
+      .from("learners_data")
+      .select("id, name, email")
+      .eq("batch_no", batchNo);
+
+    if (learnersErr) {
+      console.error("SCORECARD learners error:", learnersErr);
+      return res.status(500).json({
+        error: "Failed to fetch learners",
+        details: learnersErr.message,
+      });
+    }
+
+    if (!learners || learners.length === 0) {
+      return res.json({ data: [] });
+    }
 
     const results = [];
 
-    for (const learner of learners.rows) {
+    for (const learner of learners) {
       const learnerId = learner.id;
 
       // =============================
       // INTERMEDIATE
       // =============================
-      const intermediate = await pool.query(
-        `SELECT 
-            COALESCE(SUM(points),0) as total_points,
-            COALESCE(SUM(out_off),0) as total_out
-         FROM intermediate_assessment_scores
-         WHERE learner_id = $1 AND batch_no = $2`,
-        [learnerId, batchNo]
-      );
+      const { data: intermediateRows, error: intermediateErr } = await supabase
+        .from("intermediate_assessment_scores")
+        .select("points, out_off")
+        .eq("learner_id", learnerId)
+        .eq("batch_no", batchNo);
 
       let intermediatePercent = 0;
-
-      if (intermediate.rows[0].total_out > 0) {
-        intermediatePercent =
-          (intermediate.rows[0].total_points /
-            intermediate.rows[0].total_out) *
-          100;
+      if (!intermediateErr && intermediateRows && intermediateRows.length > 0) {
+        const totalPoints = intermediateRows.reduce(
+          (sum, r) => sum + (Number(r.points) || 0),
+          0
+        );
+        const totalOut = intermediateRows.reduce(
+          (sum, r) => sum + (Number(r.out_off) || 0),
+          0
+        );
+        if (totalOut > 0) {
+          intermediatePercent = (totalPoints / totalOut) * 100;
+        }
       }
 
       // =============================
-      // FINAL SUBJECTS
+      // FINAL ASSESSMENTS (grouped by assessment_name)
       // =============================
-      const finalAssessments = await pool.query(
-        `SELECT 
-            assessment_name,
-            COALESCE(SUM(points),0) as total_points,
-            COALESCE(SUM(out_off),0) as total_out
-         FROM final_assessment_scores
-         WHERE learner_id = $1 AND batch_no = $2
-         GROUP BY assessment_name`,
-        [learnerId, batchNo]
-      );
+      const { data: finalRows, error: finalErr } = await supabase
+        .from("final_assessment_scores")
+        .select("assessment_name, points, out_off")
+        .eq("learner_id", learnerId)
+        .eq("batch_no", batchNo);
 
       let digital = 0;
       let cmos = 0;
       let tcl = 0;
       let physical = 0;
 
-      finalAssessments.rows.forEach((row) => {
-        if (!row.assessment_name) return;
+      if (!finalErr && finalRows && finalRows.length > 0) {
+        // Group by assessment_name in JS
+        const grouped = {};
+        finalRows.forEach((row) => {
+          const name = (row.assessment_name || "").toLowerCase();
+          if (!grouped[name]) {
+            grouped[name] = { total_points: 0, total_out: 0 };
+          }
+          grouped[name].total_points += Number(row.points) || 0;
+          grouped[name].total_out += Number(row.out_off) || 0;
+        });
 
-        let percent = 0;
-        if (row.total_out > 0) {
-          percent =
-            (row.total_points / row.total_out) *
-            100;
-        }
-
-        const name = row.assessment_name.toLowerCase();
-
-        if (name.includes("digital"))
-          digital = percent;
-
-        else if (name.includes("cmos"))
-          cmos = percent;
-
-        else if (name.includes("tcl"))
-          tcl = percent;
-
-        else if (name.includes("physical"))
-          physical = percent;
-      });
+        Object.entries(grouped).forEach(([name, vals]) => {
+          let percent = 0;
+          if (vals.total_out > 0) {
+            percent = (vals.total_points / vals.total_out) * 100;
+          }
+          if (name.includes("digital")) digital = percent;
+          else if (name.includes("cmos")) cmos = percent;
+          else if (name.includes("tcl")) tcl = percent;
+          else if (name.includes("physical")) physical = percent;
+        });
+      }
 
       // =============================
       // FINAL PROJECT
       // =============================
-      const projectRes = await pool.query(
-        `SELECT 
-            COALESCE(points,0) as points,
-            COALESCE(out_off,0) as out_off
-         FROM final_project_scores
-         WHERE learner_id = $1 AND batch_no = $2`,
-        [learnerId, batchNo]
-      );
+      const { data: projectRows, error: projectErr } = await supabase
+        .from("final_project_scores")
+        .select("points, out_off")
+        .eq("learner_id", learnerId)
+        .eq("batch_no", batchNo);
 
       let project = 0;
-      if (
-        projectRes.rows.length &&
-        projectRes.rows[0].out_off > 0
-      ) {
-        project =
-          (projectRes.rows[0].points /
-            projectRes.rows[0].out_off) *
-          100;
+      if (!projectErr && projectRows && projectRows.length > 0) {
+        const row = projectRows[0];
+        if (Number(row.out_off) > 0) {
+          project = (Number(row.points) / Number(row.out_off)) * 100;
+        }
       }
 
       // =============================
       // VIVA
       // =============================
-      const vivaRes = await pool.query(
-        `SELECT 
-            COALESCE(points,0) as points,
-            COALESCE(out_off,0) as out_off
-         FROM viva_scores
-         WHERE learner_id = $1 AND batch_no = $2`,
-        [learnerId, batchNo]
-      );
+      const { data: vivaRows, error: vivaErr } = await supabase
+        .from("viva_scores")
+        .select("points, out_off")
+        .eq("learner_id", learnerId)
+        .eq("batch_no", batchNo);
 
       let viva = 0;
-      if (
-        vivaRes.rows.length &&
-        vivaRes.rows[0].out_off > 0
-      ) {
-        viva =
-          (vivaRes.rows[0].points /
-            vivaRes.rows[0].out_off) *
-          100;
+      if (!vivaErr && vivaRows && vivaRows.length > 0) {
+        const row = vivaRows[0];
+        if (Number(row.out_off) > 0) {
+          viva = (Number(row.points) / Number(row.out_off)) * 100;
+        }
       }
 
       // =============================
-      // WEIGHTAGE
+      // WEIGHTAGE CALCULATION
       // =============================
-
-      const finalGroup =
-        (digital + cmos + tcl) / 3;
+      const finalGroup = (digital + cmos + tcl) / 3;
 
       const overall =
         intermediatePercent * 0.1 +
@@ -3048,19 +3042,14 @@ app.get("/api/scorecard/:batchNo", async (req, res) => {
       // =============================
       // GRADE
       // =============================
-
       let grade = "F";
-
       if (overall >= 90) grade = "A";
       else if (overall >= 80) grade = "B";
       else if (overall >= 70) grade = "C";
       else if (overall >= 60) grade = "D";
 
-      const certification =
-        overall >= 70 ? "YES" : "NO";
-
-      const placement =
-        overall >= 80 ? "YES" : "NO";
+      const certification = overall >= 70 ? "YES" : "NO";
+      const placement = overall >= 80 ? "YES" : "NO";
 
       results.push({
         name: learner.name,
