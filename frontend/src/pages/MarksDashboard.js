@@ -330,42 +330,42 @@ export default function MarksDashboard({ user }) {
 
                     {/* Individual subject columns */}
                     <TableCell align="center" sx={{ fontWeight: 700, bgcolor: "#e3f2fd", whiteSpace: "nowrap" }}>
-                      Intermediate %
+                      Intermediate Assessment %
                     </TableCell>
                     <TableCell align="center" sx={{ fontWeight: 700, bgcolor: "#f3e5f5", whiteSpace: "nowrap" }}>
-                      Digital %
+                      Digital Assessment %
                     </TableCell>
                     <TableCell align="center" sx={{ fontWeight: 700, bgcolor: "#f3e5f5", whiteSpace: "nowrap" }}>
-                      CMOS %
+                      CMOS Assessment %
                     </TableCell>
                     <TableCell align="center" sx={{ fontWeight: 700, bgcolor: "#f3e5f5", whiteSpace: "nowrap" }}>
-                      TCL %
+                      TCL Assessment %
                     </TableCell>
                     <TableCell align="center" sx={{ fontWeight: 700, bgcolor: "#e8f5e9", whiteSpace: "nowrap" }}>
                       Theory Group %
                     </TableCell>
                     <TableCell align="center" sx={{ fontWeight: 700, bgcolor: "#fff3e0", whiteSpace: "nowrap" }}>
-                      Physical %
+                      Physical Assessment %
                     </TableCell>
                     <TableCell align="center" sx={{ fontWeight: 700, bgcolor: "#fce4ec", whiteSpace: "nowrap" }}>
-                      Project %
+                      Project Assessment %
                     </TableCell>
                     <TableCell align="center" sx={{ fontWeight: 700, bgcolor: "#e0f7fa", whiteSpace: "nowrap" }}>
-                      Viva %
+                      Viva Assessment %
                     </TableCell>
 
                     {/* Weighted result */}
                     <TableCell align="center" sx={{ fontWeight: 700, whiteSpace: "nowrap" }}>
-                      Overall %
+                      Overall Percentage %
                     </TableCell>
                     <TableCell align="center" sx={{ fontWeight: 700, whiteSpace: "nowrap" }}>
                       Grade
                     </TableCell>
                     <TableCell align="center" sx={{ fontWeight: 700, whiteSpace: "nowrap" }}>
-                      Certification
+                      Eligibility for Certification
                     </TableCell>
                     <TableCell align="center" sx={{ fontWeight: 700, whiteSpace: "nowrap" }}>
-                      Placement
+                      Eligibility for Placement
                     </TableCell>
                   </TableRow>
                 </TableHead>
