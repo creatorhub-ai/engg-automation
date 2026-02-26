@@ -69,8 +69,8 @@ const PDFT_OUT_OF_RULES = [
 
 function getPdftOutOf(topicName, assessmentType) {
   if (!topicName && !assessmentType) return null;
-  const combined = `${topicName || ""} ${ASSESSMENT_MAP[assessmentType]?.label || ""}`.toLowerCase();
-
+  const combined =
+    `${topicName || ""} ${ASSESSMENT_MAP[assessmentType]?.label || ""}`.toLowerCase();
   for (const rule of PDFT_OUT_OF_RULES) {
     if (rule.keywords.every((kw) => combined.includes(kw))) {
       return rule.outOf;
@@ -103,6 +103,37 @@ function isAdminOrManager(user) {
 /* ─── Check if batch is PDFT ─────────────────────────────────────────────── */
 function isPdftBatch(batchNo) {
   return batchNo?.toUpperCase().includes("PDFT");
+}
+
+/*
+ * ─── Deduplicate periods from API ────────────────────────────────────────────
+ *
+ * The API may return multiple rows per planner entry (e.g. one row per learner).
+ * We need exactly ONE dropdown option per unique assessment slot.
+ *
+ * Dedup rules:
+ *  - If item.id is present  → use "id::<id>" as the key.
+ *    Two different assessments on the same date have DIFFERENT ids, so both
+ *    survive. Multiple rows for the SAME assessment share the same id, so
+ *    only the first survives.
+ *
+ *  - If item.id is absent   → fall back to "dt::<date>::<topicName>".
+ *    This still preserves two assessments on the same date when their topic
+ *    names differ (e.g. "CMOS" vs "TCL"), while collapsing duplicate rows
+ *    for the same assessment.
+ */
+function deduplicatePeriods(data) {
+  const seen = new Map();
+  (data || []).forEach((item) => {
+    const key =
+      item.id != null
+        ? `id::${item.id}`
+        : `dt::${item.date}::${(item.topic_name || "").trim().toLowerCase()}`;
+    if (!seen.has(key)) {
+      seen.set(key, item);
+    }
+  });
+  return Array.from(seen.values());
 }
 
 function MarkSheet() {
@@ -171,37 +202,36 @@ function MarkSheet() {
   /* ── Load periods ─────────────────────────────────────────────────────── */
   useEffect(() => {
     if (!batchNo) return;
+
     if (isAutoDateAssessment) {
       setSelectedDate(todayDate);
       setSelectedCoursePlannerId("");
       setSelectedWeekNo("");
       setTopicName(ASSESSMENT_MAP[assessmentType].label);
       setPeriods([]);
-      // Auto-populate out_of for PDFT batches
       if (isPdft) {
         const fixed = getPdftOutOf("", assessmentType);
-        if (fixed !== null) {
-          setOutOff(String(fixed));
-        }
+        if (fixed !== null) setOutOff(String(fixed));
       }
       return;
     }
+
     const apiType = ASSESSMENT_MAP[assessmentType].api;
     fetch(`${API_BASE}/apiperiods/${batchNo}/${apiType}`)
       .then((res) => res.json())
       .then((data) => {
-        // De-duplicate by planner id (each row = one unique assessment slot)
-        // Two assessments on same date with different topics will have different ids
-        const uniqueMap = new Map();
-        (data || []).forEach((item) => {
-          const key =
-            item.id ?? `${item.week_no}-${item.date}-${item.topic_name}`;
-          if (!uniqueMap.has(key)) uniqueMap.set(key, item);
+        const unique = deduplicatePeriods(data);
+        // Sort chronologically; same-date entries sorted alphabetically by topic
+        unique.sort((a, b) => {
+          const dateDiff = new Date(a.date) - new Date(b.date);
+          if (dateDiff !== 0) return dateDiff;
+          return (a.topic_name || "").localeCompare(b.topic_name || "");
         });
-        setPeriods(Array.from(uniqueMap.values()));
+        setPeriods(unique);
       })
       .catch(() => setPeriods([]));
 
+    // Reset all selections when batch or assessment type changes
     setPeriodValue("");
     setSelectedDate("");
     setSelectedCoursePlannerId("");
@@ -211,7 +241,7 @@ function MarkSheet() {
     setOutOff("");
   }, [batchNo, assessmentType]);
 
-  /* ── Window Logic ─────────────────────────── */
+  /* ── Window Logic ─────────────────────────────────────────────────────── */
   useEffect(() => {
     if (isAutoDateAssessment) {
       setWindowOpen(true);
@@ -236,7 +266,7 @@ function MarkSheet() {
 
   /* ── Load existing marks when period is selected ─────────────────────── */
   const loadExistingMarks = useCallback(
-    async (plannerId, date, weekNo) => {
+    async (plannerId, date) => {
       if (!batchNo || !plannerId || !date) return;
       setLoadingMarks(true);
       try {
@@ -247,17 +277,14 @@ function MarkSheet() {
         if (!res.ok) return;
         const data = await res.json();
         if (Array.isArray(data) && data.length > 0) {
-          // Populate out_off from saved data
           const savedOutOf = data[0]?.out_off;
-          if (savedOutOf) {
-            setOutOff(String(savedOutOf));
-          }
-          // Populate marks per learner
+          if (savedOutOf) setOutOff(String(savedOutOf));
           const marksMap = {};
           data.forEach((row) => {
             marksMap[row.learner_id] = {
               points: String(row.points ?? ""),
-              percentage: row.percentage !== null ? String(row.percentage) : "",
+              percentage:
+                row.percentage !== null ? String(row.percentage) : "",
             };
           });
           setMarks(marksMap);
@@ -275,8 +302,11 @@ function MarkSheet() {
   const handlePeriodSelect = (e) => {
     const val = e.target.value;
     setPeriodValue(val);
+
+    // Value format: "plannerId::weekNo::date::topicName"
     const [plannerId, weekPart, datePart, ...topicParts] = val.split("::");
     const topic = topicParts.join("::");
+
     setSelectedCoursePlannerId(plannerId || "");
     setSelectedWeekNo(weekPart || "");
     setSelectedDate(datePart || "");
@@ -284,17 +314,15 @@ function MarkSheet() {
     setMarks({});
     setOutOff("");
 
-    // Auto-populate out_of for PDFT batches
+    // Auto-populate Out Of for PDFT batches based on topic name
     if (isPdft) {
       const fixed = getPdftOutOf(topic, assessmentType);
-      if (fixed !== null) {
-        setOutOff(String(fixed));
-      }
+      if (fixed !== null) setOutOff(String(fixed));
     }
 
-    // Load existing marks (will also overwrite out_off if already saved)
+    // Load any previously saved marks for this slot (also loads saved out_off)
     if (plannerId && datePart) {
-      loadExistingMarks(plannerId, datePart, weekPart);
+      loadExistingMarks(plannerId, datePart);
     }
   };
 
@@ -326,7 +354,9 @@ function MarkSheet() {
             ...updated[id],
             percentage:
               Number(val) > 0
-                ? Math.round((Number(updated[id].points) / Number(val)) * 100)
+                ? Math.round(
+                    (Number(updated[id].points) / Number(val)) * 100
+                  )
                 : "",
           };
         }
@@ -359,7 +389,9 @@ function MarkSheet() {
         setMessage("✅ Out Of updated successfully.");
       } else {
         const err = await res.json().catch(() => ({}));
-        setMessage(`❌ Failed to update Out Of: ${err.error || "Unknown error"}`);
+        setMessage(
+          `❌ Failed to update Out Of: ${err.error || "Unknown error"}`
+        );
       }
     } catch (e) {
       setMessage("❌ Network error while updating Out Of.");
@@ -433,7 +465,9 @@ function MarkSheet() {
         }
       }
       if (failCount === 0) {
-        setMessage(`✅ Marks saved successfully for ${savedCount} learner(s).`);
+        setMessage(
+          `✅ Marks saved successfully for ${savedCount} learner(s).`
+        );
       } else {
         setMessage(
           `⚠️ Saved ${savedCount} record(s). ${failCount} failed — check console.`
@@ -445,12 +479,10 @@ function MarkSheet() {
     }
   };
 
-  /* ── Derived: is out_of field locked? ────────────────────────────────── */
+  /* ── Derived: is Out Of field locked? ────────────────────────────────── */
   // Admins/Managers can ALWAYS edit Out Of regardless of window or PDFT.
   // Regular users: locked if window is closed OR if it's a PDFT fixed value.
-  const outOfLocked = canEditOutOf
-    ? false
-    : !windowOpen || isPdft;
+  const outOfLocked = canEditOutOf ? false : !windowOpen || isPdft;
 
   /* ── Render ───────────────────────────────────────────────────────────── */
   if (loadingBatches)
@@ -468,7 +500,15 @@ function MarkSheet() {
         </Typography>
 
         {/* ── Filters row ─────────────────────────────────────────────────── */}
-        <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap", mb: 3, alignItems: "flex-end" }}>
+        <Box
+          sx={{
+            display: "flex",
+            gap: 2,
+            flexWrap: "wrap",
+            mb: 3,
+            alignItems: "flex-end",
+          }}
+        >
           {/* Assessment Type */}
           <FormControl sx={{ minWidth: 220 }}>
             <InputLabel>Assessment Type</InputLabel>
@@ -520,42 +560,56 @@ function MarkSheet() {
             </Select>
           </FormControl>
 
-          {/* Period picker (planner-based assessments) */}
+          {/* Period picker (planner-based assessments only) */}
           {!isAutoDateAssessment && (
-            <FormControl sx={{ minWidth: 360 }}>
+            <FormControl sx={{ minWidth: 380 }}>
               <InputLabel>Assessment Date / Topic</InputLabel>
               <Select
                 value={periodValue}
                 label="Assessment Date / Topic"
                 onChange={handlePeriodSelect}
               >
-                {periods.length === 0 && (
+                {periods.length === 0 ? (
                   <MenuItem disabled value="">
-                    {batchNo ? "No assessments found" : "Select a batch first"}
+                    {batchNo
+                      ? "No assessments found"
+                      : "Select a batch first"}
                   </MenuItem>
-                )}
-                {periods.map((p, idx) => {
+                ) : (
                   /*
+                   * Each period is one unique assessment slot from course_planner_data.
+                   *
+                   * Same-date, different-topic assessments (e.g. CMOS and TCL on
+                   * 23-03-2026) appear as SEPARATE options because deduplicatePeriods()
+                   * keys by planner id (or date+topic), so both survive dedup.
+                   *
+                   * Multiple rows for the SAME assessment (same id / same date+topic)
+                   * are collapsed into a single option.
+                   *
                    * Value format: "plannerId::weekNo::date::topicName"
-                   * Each assessment slot (different planner id) gets its own entry.
-                   * Two assessments on the same date with different topics are
-                   * shown as separate options.
                    */
-                  const plannerId = p.id ?? idx;
-                  const weekNo = p.week_no ?? p.module_no ?? "";
-                  const val = `${plannerId}::${weekNo}::${p.date}::${p.topic_name}`;
-                  const weekLabel = p.week_no
-                    ? `Week ${p.week_no}`
-                    : p.module_no
-                    ? `Module ${p.module_no}`
-                    : "";
-                  return (
-                    <MenuItem key={val} value={val}>
-                      {weekLabel ? `${weekLabel} — ` : ""}
-                      {p.date} — {p.topic_name}
-                    </MenuItem>
-                  );
-                })}
+                  periods.map((p) => {
+                    const plannerId =
+                      p.id != null ? p.id : `${p.date}-${p.topic_name}`;
+                    const weekNo = p.week_no ?? p.module_no ?? "";
+                    const val = `${plannerId}::${weekNo}::${p.date}::${p.topic_name}`;
+                    const weekLabel = p.week_no
+                      ? `Week ${p.week_no}`
+                      : p.module_no
+                      ? `Module ${p.module_no}`
+                      : "";
+
+                    return (
+                      <MenuItem
+                        key={`${plannerId}-${p.date}-${p.topic_name}`}
+                        value={val}
+                      >
+                        {weekLabel ? `${weekLabel} — ` : ""}
+                        {p.date} — {p.topic_name}
+                      </MenuItem>
+                    );
+                  })
+                )}
               </Select>
             </FormControl>
           )}
@@ -594,7 +648,7 @@ function MarkSheet() {
               </span>
             </Tooltip>
 
-            {/* Save Out Of button — only for Admin / Manager, only when a date is selected */}
+            {/* Save Out Of — visible only for Admin / Manager when a date is active */}
             {canEditOutOf && selectedDate && (
               <Button
                 variant="outlined"
@@ -627,8 +681,8 @@ function MarkSheet() {
         {topicName && (
           <Box sx={{ mb: 2, p: 1.5, bgcolor: "#f5f5f5", borderRadius: 1 }}>
             <Typography variant="body2" color="text.secondary">
-              <strong>Assessment:</strong> {topicName} &nbsp;|&nbsp;
-              <strong>Date:</strong> {selectedDate} &nbsp;|&nbsp;
+              <strong>Assessment:</strong> {topicName}&nbsp;|&nbsp;
+              <strong>Date:</strong> {selectedDate}&nbsp;|&nbsp;
               <strong>Out of:</strong> {outOff || "—"}
               {selectedCoursePlannerId && (
                 <>
@@ -697,11 +751,13 @@ function MarkSheet() {
           </Table>
         ) : (
           batchNo && (
-            <Alert severity="info">No learners found for batch {batchNo}.</Alert>
+            <Alert severity="info">
+              No learners found for batch {batchNo}.
+            </Alert>
           )
         )}
 
-        {/* ── Save button ──────────────────────────────────────────────────── */}
+        {/* ── Save Marks button ────────────────────────────────────────────── */}
         <Button
           sx={{ mt: 3 }}
           variant="contained"
