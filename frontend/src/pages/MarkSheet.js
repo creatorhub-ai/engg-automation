@@ -120,7 +120,6 @@ function MarkSheet() {
   const [topicName, setTopicName] = useState("");
   const [marks, setMarks] = useState({});
   const [outOff, setOutOff] = useState("");
-  const [outOffEditing, setOutOffEditing] = useState(""); // temp value while admin edits
   const [windowOpen, setWindowOpen] = useState(true);
   const [windowCloseDate, setWindowCloseDate] = useState("");
   const [message, setMessage] = useState("");
@@ -183,7 +182,6 @@ function MarkSheet() {
         const fixed = getPdftOutOf("", assessmentType);
         if (fixed !== null) {
           setOutOff(String(fixed));
-          setOutOffEditing(String(fixed));
         }
       }
       return;
@@ -211,7 +209,6 @@ function MarkSheet() {
     setTopicName("");
     setMarks({});
     setOutOff("");
-    setOutOffEditing("");
   }, [batchNo, assessmentType]);
 
   /* ── Window Logic ─────────────────────────── */
@@ -254,7 +251,6 @@ function MarkSheet() {
           const savedOutOf = data[0]?.out_off;
           if (savedOutOf) {
             setOutOff(String(savedOutOf));
-            setOutOffEditing(String(savedOutOf));
           }
           // Populate marks per learner
           const marksMap = {};
@@ -287,18 +283,16 @@ function MarkSheet() {
     setTopicName(topic);
     setMarks({});
     setOutOff("");
-    setOutOffEditing("");
 
     // Auto-populate out_of for PDFT batches
     if (isPdft) {
       const fixed = getPdftOutOf(topic, assessmentType);
       if (fixed !== null) {
         setOutOff(String(fixed));
-        setOutOffEditing(String(fixed));
       }
     }
 
-    // Load existing marks (will also load saved out_off if present)
+    // Load existing marks (will also overwrite out_off if already saved)
     if (plannerId && datePart) {
       loadExistingMarks(plannerId, datePart, weekPart);
     }
@@ -322,9 +316,8 @@ function MarkSheet() {
   /* ── Out Of change (admin/manager only) ───────────────────────────────── */
   const handleOutOfChange = (v) => {
     const val = v.replace(/\D/g, "");
-    setOutOffEditing(val);
     setOutOff(val);
-    // Recalculate percentages
+    // Recalculate percentages for already-entered marks
     setMarks((prev) => {
       const updated = { ...prev };
       Object.keys(updated).forEach((id) => {
@@ -333,9 +326,7 @@ function MarkSheet() {
             ...updated[id],
             percentage:
               Number(val) > 0
-                ? Math.round(
-                    (Number(updated[id].points) / Number(val)) * 100
-                  )
+                ? Math.round((Number(updated[id].points) / Number(val)) * 100)
                 : "",
           };
         }
@@ -346,7 +337,7 @@ function MarkSheet() {
 
   /* ── Save Out Of (admin/manager only) ────────────────────────────────── */
   const handleSaveOutOf = async () => {
-    if (!outOffEditing || !batchNo) return;
+    if (!outOff || !batchNo) return;
     setSavingOutOf(true);
     try {
       const cfg = ASSESSMENT_MAP[assessmentType];
@@ -357,7 +348,7 @@ function MarkSheet() {
           ? Number(selectedCoursePlannerId)
           : undefined,
         assessment_date: selectedDate,
-        out_off: Number(outOffEditing),
+        out_off: Number(outOff),
       };
       const res = await fetch(`${API_BASE}/api/marks/update-out-of`, {
         method: "POST",
@@ -365,7 +356,6 @@ function MarkSheet() {
         body: JSON.stringify(payload),
       });
       if (res.ok) {
-        setOutOff(outOffEditing);
         setMessage("✅ Out Of updated successfully.");
       } else {
         const err = await res.json().catch(() => ({}));
@@ -456,8 +446,11 @@ function MarkSheet() {
   };
 
   /* ── Derived: is out_of field locked? ────────────────────────────────── */
-  // For PDFT batches, out_of is auto-set. Only admins can override.
-  const outOfLocked = !windowOpen || (isPdft && !canEditOutOf);
+  // Admins/Managers can ALWAYS edit Out Of regardless of window or PDFT.
+  // Regular users: locked if window is closed OR if it's a PDFT fixed value.
+  const outOfLocked = canEditOutOf
+    ? false
+    : !windowOpen || isPdft;
 
   /* ── Render ───────────────────────────────────────────────────────────── */
   if (loadingBatches)
@@ -491,7 +484,6 @@ function MarkSheet() {
                 setTopicName("");
                 setMarks({});
                 setOutOff("");
-                setOutOffEditing("");
               }}
             >
               <MenuItem value="weekly">Weekly Assessment</MenuItem>
@@ -518,7 +510,6 @@ function MarkSheet() {
                 setTopicName("");
                 setMarks({});
                 setOutOff("");
-                setOutOffEditing("");
               }}
             >
               {availableBatches.map((b) => (
@@ -591,12 +582,10 @@ function MarkSheet() {
               <span>
                 <TextField
                   label="Out Of"
-                  value={canEditOutOf ? outOffEditing : outOff}
+                  value={outOff}
                   disabled={outOfLocked}
                   sx={{ width: 110 }}
-                  onChange={(e) => {
-                    if (canEditOutOf) handleOutOfChange(e.target.value);
-                  }}
+                  onChange={(e) => handleOutOfChange(e.target.value)}
                   inputProps={{ inputMode: "numeric" }}
                   helperText={
                     isPdft && outOff && !canEditOutOf ? "Fixed" : ""
@@ -605,13 +594,13 @@ function MarkSheet() {
               </span>
             </Tooltip>
 
-            {/* Save Out Of button — only for Admin / Manager */}
-            {canEditOutOf && selectedCoursePlannerId && (
+            {/* Save Out Of button — only for Admin / Manager, only when a date is selected */}
+            {canEditOutOf && selectedDate && (
               <Button
                 variant="outlined"
                 size="small"
                 onClick={handleSaveOutOf}
-                disabled={savingOutOf || !outOffEditing}
+                disabled={savingOutOf || !outOff}
                 startIcon={
                   savingOutOf ? (
                     <CircularProgress size={14} color="inherit" />
