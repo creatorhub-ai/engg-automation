@@ -63,28 +63,6 @@ const parseDate = (str) => {
   return new Date(y, m - 1, d);
 };
 
-function isWindowOpen(assessmentType, assessmentDate) {
-  const date = new Date(assessmentDate);
-  const now = new Date();
-
-  let close = new Date(date);
-
-  if (assessmentType === "weekly-assessment") {
-    close.setDate(close.getDate() + 3);
-  } else if (
-    assessmentType === "intermediate-assessment" ||
-    assessmentType === "module-level-assessment"
-  ) {
-    close.setDate(close.getDate() + 5);
-  } else if (assessmentType === "final-assessment") {
-    close.setDate(close.getDate() + 7);
-  }
-
-  close.setHours(23, 59, 59, 999);
-
-  return now <= close;
-}
-
 function MarkSheet() {
   const [batchNo, setBatchNo] = useState("");
   const [assessmentType, setAssessmentType] = useState("weekly");
@@ -122,7 +100,7 @@ function MarkSheet() {
     return () => clearInterval(i);
   }, []);
 
-  /* ── Load batches ─────────────────────────────────────────────────────── */
+  /* ── Load batches ───────────────────────────────── */
   useEffect(() => {
     fetch(`${API_BASE}/api/batches`)
       .then((res) => res.json())
@@ -140,7 +118,7 @@ function MarkSheet() {
       .finally(() => setLoadingBatches(false));
   }, []);
 
-  /* ── Load learners ────────────────────────────────────────────────────── */
+  /* ── Load learners ──────────────────────────────── */
   useEffect(() => {
     if (!batchNo) return setLearners([]);
     setLoadingLearners(true);
@@ -150,11 +128,10 @@ function MarkSheet() {
       .finally(() => setLoadingLearners(false));
   }, [batchNo]);
 
-  /* ── Load periods ─────────────────────────────────────────────────────── */
+  /* ── Load periods ───────────────────────────────── */
   useEffect(() => {
     if (!batchNo) return;
 
-    // Auto-date assessments don't need periods from the planner
     if (isAutoDateAssessment) {
       setSelectedDate(todayDate);
       setSelectedCoursePlannerId("");
@@ -169,11 +146,8 @@ function MarkSheet() {
     fetch(`${API_BASE}/apiperiods/${batchNo}/${apiType}`)
       .then((res) => res.json())
       .then((data) => {
-        // De-duplicate by the composite key that uniquely identifies one assessment slot
-        // Include planner_id so we can distinguish same-date assessments
         const uniqueMap = new Map();
         (data || []).forEach((item) => {
-          // Use planner id as the unique key — each row in course_planner_data is one assessment
           const key = item.id ?? `${item.week_no}-${item.date}-${item.topic_name}`;
           if (!uniqueMap.has(key)) uniqueMap.set(key, item);
         });
@@ -181,7 +155,6 @@ function MarkSheet() {
       })
       .catch(() => setPeriods([]));
 
-    // Reset selections whenever batch or type changes
     setPeriodValue("");
     setSelectedDate("");
     setSelectedCoursePlannerId("");
@@ -190,7 +163,37 @@ function MarkSheet() {
     setMarks({});
   }, [batchNo, assessmentType]);
 
-  /* ── Window Logic FIXED ─────────────────────────── */
+  /* ── LOAD EXISTING MARKS (NEW) ───────────────────── */
+  useEffect(() => {
+    if (!batchNo || !selectedDate) return;
+
+    const cfg = ASSESSMENT_MAP[assessmentType];
+
+    fetch(
+      `${API_BASE}/api/marks/${cfg.api}?batch_no=${batchNo}&assessment_date=${selectedDate}&course_planner_id=${selectedCoursePlannerId || ""}`
+    )
+      .then((res) => res.json())
+      .then((data) => {
+        if (!Array.isArray(data) || data.length === 0) return;
+
+        const loaded = {};
+        data.forEach((row) => {
+          loaded[row.learner_id] = {
+            points: row.points,
+            percentage:
+              row.out_off > 0
+                ? Math.round((row.points / row.out_off) * 100)
+                : "",
+          };
+        });
+
+        setMarks(loaded);
+        if (data[0]?.out_off) setOutOff(data[0].out_off);
+      })
+      .catch(() => {});
+  }, [batchNo, selectedDate, selectedCoursePlannerId, assessmentType]);
+
+  /* ── Window Logic ─────────────────────────── */
   useEffect(() => {
     if (isAutoDateAssessment) {
       setIsWindowOpen(true);
@@ -199,40 +202,24 @@ function MarkSheet() {
 
     if (!selectedDate) return;
 
-    const assessmentDate = parseDate(selectedDate);
-    if (!assessmentDate) return;
-
-    let close = new Date(assessmentDate);
-
+    let close = new Date(parseDate(selectedDate));
     const type = ASSESSMENT_MAP[assessmentType]?.type;
 
-    if (type === "weekly") {
-      // Friday → Monday 11:59 PM (add 3 days)
-      close.setDate(close.getDate() + 3);
-    } else if (type === "mid") {
-      // Friday → Wednesday 11:59 PM (add 5 days)
-      close.setDate(close.getDate() + 5);
-    } else if (type === "final") {
-      // 7 days
-      close.setDate(close.getDate() + 7);
-    }
+    if (type === "weekly") close.setDate(close.getDate() + 3);
+    else if (type === "mid") close.setDate(close.getDate() + 5);
+    else if (type === "final") close.setDate(close.getDate() + 7);
 
     close.setHours(23, 59, 59, 999);
 
-    const isOpen = currentDate <= close;
-
-    setIsWindowOpen(isOpen);
+    setIsWindowOpen(currentDate <= close);
     setWindowCloseDate(close.toLocaleDateString("en-GB"));
   }, [selectedDate, assessmentType, currentDate]);
 
-  
-
-  /* ── Period selection ─────────────────────────────────────────────────── */
+  /* ── Period selection ───────────────────────────── */
   const handlePeriodSelect = (e) => {
     const val = e.target.value;
     setPeriodValue(val);
 
-    // Value format: "plannerId::weekNo::date::topicName"
     const [plannerId, weekPart, datePart, ...topicParts] = val.split("::");
     setSelectedCoursePlannerId(plannerId || "");
     setSelectedWeekNo(weekPart || "");
@@ -241,7 +228,7 @@ function MarkSheet() {
     setMarks({});
   };
 
-  /* ── Marks input ──────────────────────────────────────────────────────── */
+  /* ── Marks input ───────────────────────────── */
   const handleMarksInput = (id, val) => {
     const points = val.replace(/\D/g, "");
     setMarks((prev) => ({
@@ -256,21 +243,15 @@ function MarkSheet() {
     }));
   };
 
-  /* ── Save ─────────────────────────────────────────────────────────────── */
+  /* ── Save ───────────────────────────── */
   const handleSave = async () => {
     if (!isWindowOpen) {
-      setMessage("❌ Marks entry window closed. Cannot save.");
+      setMessage("❌ Marks entry window closed.");
       return;
     }
 
     if (!batchNo || !selectedDate || !outOff) {
-      setMessage("❌ Please complete all required fields.");
-      return;
-    }
-
-    // For non-auto assessments, require a period to be selected
-    if (!isAutoDateAssessment && !selectedCoursePlannerId) {
-      setMessage("❌ Please select an assessment date from the dropdown.");
+      setMessage("❌ Complete all required fields.");
       return;
     }
 
@@ -285,73 +266,30 @@ function MarkSheet() {
     setSaving(true);
     setMessage("");
 
-    let savedCount = 0;
-    let failCount = 0;
-
-    try {
-      for (const l of learnersWithMarks) {
-        const payload = {
-          learner_id:       l.id,
-          batch_no:         batchNo,
-          assessment_date:  selectedDate,
-          assessment_name:  topicName || cfg.label,
-          out_off:          Number(outOff),
-          points:           Number(marks[l.id].points),
-          percentage:       marks[l.id].percentage || null,
-
-          // ─── KEY FIX ──────────────────────────────────────────────────────
-          // Send course_planner_id directly so the backend uses it as-is.
-          // This ensures two assessments on the same date each get their own
-          // row in final_assessment_scores (different course_planner_id = different unique key).
+    for (const l of learnersWithMarks) {
+      await fetch(`${API_BASE}/api/marks/${cfg.api}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          learner_id: l.id,
+          batch_no: batchNo,
+          assessment_date: selectedDate,
+          assessment_name: topicName || cfg.label,
+          out_off: Number(outOff),
+          points: Number(marks[l.id].points),
+          percentage: marks[l.id].percentage,
           course_planner_id: selectedCoursePlannerId
             ? Number(selectedCoursePlannerId)
             : undefined,
-        };
-
-        // Add week_no or module_no for planner-based assessments
-        if (!isAutoDateAssessment) {
-          if (assessmentType === "module") {
-            payload.module_no = Number(selectedWeekNo);
-          } else {
-            payload.week_no = Number(selectedWeekNo);
-          }
-        }
-
-        try {
-          const response = await fetch(`${API_BASE}/api/marks/${cfg.api}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-          });
-
-          if (!response.ok) {
-            const errBody = await response.json().catch(() => ({}));
-            console.error("Save failed for", l.name, errBody);
-            failCount++;
-          } else {
-            savedCount++;
-          }
-        } catch (fetchErr) {
-          console.error("Network error for", l.name, fetchErr);
-          failCount++;
-        }
-      }
-
-      if (failCount === 0) {
-        setMessage(`✅ Marks saved successfully for ${savedCount} learner(s).`);
-        setMarks({});
-      } else {
-        setMessage(
-          `⚠️ Saved ${savedCount} record(s). ${failCount} failed — check console.`
-        );
-      }
-    } finally {
-      setSaving(false);
-      setTimeout(() => setMessage(""), 5000);
+        }),
+      });
     }
+
+    setSaving(false);
+    setMessage("✅ Marks saved successfully.");
+    setTimeout(() => setMessage(""), 4000);
   };
 
-  /* ── Render ───────────────────────────────────────────────────────────── */
   if (loadingBatches)
     return (
       <Box sx={{ display: "flex", justifyContent: "center", mt: 5 }}>
@@ -366,8 +304,19 @@ function MarkSheet() {
           Assessment Marks Entry
         </Typography>
 
+        {/* ── Role badge ─────────────────────────────────────────────────── */}
+        {userRole && (
+          <Box sx={{ mb: 2 }}>
+            <Chip
+              label={`Role: ${userRole}`}
+              color={canEditOutOf ? "primary" : "default"}
+              size="small"
+            />
+          </Box>
+        )}
+
         {/* ── Filters row ─────────────────────────────────────────────────── */}
-        <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap", mb: 3 }}>
+        <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap", mb: 3, alignItems: "flex-end" }}>
           {/* Assessment Type */}
           <FormControl sx={{ minWidth: 220 }}>
             <InputLabel>Assessment Type</InputLabel>
@@ -382,6 +331,8 @@ function MarkSheet() {
                 setSelectedWeekNo("");
                 setTopicName("");
                 setMarks({});
+                setOutOff("");
+                setOutOffOpen(true);
               }}
             >
               <MenuItem value="weekly">Weekly Assessment</MenuItem>
@@ -399,7 +350,12 @@ function MarkSheet() {
             <Select
               value={batchNo}
               label="Batch"
-              onChange={(e) => setBatchNo(e.target.value)}
+              onChange={(e) => {
+                setBatchNo(e.target.value);
+                setMarks({});
+                setOutOff("");
+                setOutOffOpen(true);
+              }}
             >
               {availableBatches.map((b) => (
                 <MenuItem key={b} value={b}>
@@ -409,9 +365,9 @@ function MarkSheet() {
             </Select>
           </FormControl>
 
-          {/* Period picker (planner-based assessments) */}
+          {/* Period picker */}
           {!isAutoDateAssessment && (
-            <FormControl sx={{ minWidth: 340 }}>
+            <FormControl sx={{ minWidth: 360 }}>
               <InputLabel>Assessment Date / Topic</InputLabel>
               <Select
                 value={periodValue}
@@ -424,18 +380,13 @@ function MarkSheet() {
                   </MenuItem>
                 )}
                 {periods.map((p, idx) => {
-                  /*
-                   * Value format: "plannerId::weekNo::date::topicName"
-                   * Using plannerId as the first segment is the key change —
-                   * it makes two assessments on the same date produce different
-                   * values, so each gets its own entry in the DB.
-                   */
                   const plannerId = p.id ?? idx;
                   const weekNo    = p.week_no ?? p.module_no ?? "";
                   const val       = `${plannerId}::${weekNo}::${p.date}::${p.topic_name}`;
                   return (
                     <MenuItem key={val} value={val}>
-                      {p.week_no ? `Week ${p.week_no}` : ""} ({p.date}) — {p.topic_name}
+                      {p.week_no ? `Week ${p.week_no} ` : ""}
+                      ({p.date}) — {p.topic_name}
                     </MenuItem>
                   );
                 })}
@@ -443,7 +394,7 @@ function MarkSheet() {
             </FormControl>
           )}
 
-          {/* Auto-date display (Final Project / Viva) */}
+          {/* Auto-date display */}
           {isAutoDateAssessment && (
             <TextField
               label="Assessment Date"
@@ -453,44 +404,106 @@ function MarkSheet() {
             />
           )}
 
-          {/* Out Of */}
-          <TextField
-            label="Out Of"
-            value={outOff}
-            disabled={!isWindowOpen}
-            sx={{ width: 110 }}
-            onChange={(e) => {
-              const v = e.target.value.replace(/\D/g, "");
-              setOutOff(v);
-              // Recalculate all percentages when out_of changes
-              setMarks((prev) => {
-                const updated = { ...prev };
-                Object.keys(updated).forEach((id) => {
-                  if (updated[id]?.points) {
-                    updated[id] = {
-                      ...updated[id],
-                      percentage:
-                        Number(v) > 0
-                          ? Math.round(
-                              (Number(updated[id].points) / Number(v)) * 100
-                            )
-                          : "",
-                    };
+          {/* Out Of + Save Out Of button */}
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            <Tooltip
+              title={
+                !outOffOpen && !canEditOutOf
+                  ? "Out Of is fixed for this PDFT assessment. Contact Admin to change."
+                  : ""
+              }
+            >
+              <span>
+                <TextField
+                  label={
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+                      Out Of
+                      {!outOffOpen && <LockIcon sx={{ fontSize: 14 }} />}
+                    </Box>
                   }
-                });
-                return updated;
-              });
-            }}
-          />
+                  value={outOff}
+                  disabled={!windowOpen || outOfReadOnly}
+                  sx={{ width: 110 }}
+                  onChange={(e) => {
+                    const v = e.target.value.replace(/\D/g, "");
+                    setOutOff(v);
+                    setMarks((prev) => {
+                      const updated = { ...prev };
+                      Object.keys(updated).forEach((id) => {
+                        if (updated[id]?.points) {
+                          updated[id] = {
+                            ...updated[id],
+                            percentage:
+                              Number(v) > 0
+                                ? Math.round(
+                                    (Number(updated[id].points) / Number(v)) *
+                                      100
+                                  )
+                                : "",
+                          };
+                        }
+                      });
+                      return updated;
+                    });
+                  }}
+                />
+              </span>
+            </Tooltip>
+
+            {/* Save Out Of — visible only to Admin / Manager */}
+            {canEditOutOf && (
+              <Tooltip title="Save this Out Of value as the default for this topic">
+                <span>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={
+                      savingOutOf ? (
+                        <CircularProgress size={14} color="inherit" />
+                      ) : (
+                        <SaveIcon fontSize="small" />
+                      )
+                    }
+                    onClick={handleSaveOutOf}
+                    disabled={savingOutOf || !outOff || !batchNo}
+                    sx={{ height: 40, whiteSpace: "nowrap" }}
+                  >
+                    {savingOutOf ? "Saving…" : "Save Out Of"}
+                  </Button>
+                </span>
+              </Tooltip>
+            )}
+
+            {/* Edit unlock for Admin / Manager when locked */}
+            {canEditOutOf && !outOffOpen && (
+              <Tooltip title="Override locked Out Of value">
+                <IconButton
+                  size="small"
+                  onClick={() => setOutOffOpen(true)}
+                  color="warning"
+                >
+                  <EditIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            )}
+          </Box>
         </Box>
+
+        {/* ── PDFT info banner ────────────────────────────────────────────── */}
+        {isPdftBatch && !outOffOpen && (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            <strong>PDFT Batch:</strong> Out Of is auto-set to{" "}
+            <strong>{outOff}</strong> for this assessment type/topic.
+            {canEditOutOf
+              ? " You can override it using the edit button."
+              : " Contact Admin or Manager to change this value."}
+          </Alert>
+        )}
 
         {/* ── Window status banner ─────────────────────────────────────────── */}
         {!isAutoDateAssessment && selectedDate && (
-          <Alert
-            severity={isWindowOpen ? "success" : "error"}
-            sx={{ mb: 2 }}
-          >
-            {isWindowOpen
+          <Alert severity={windowOpen ? "success" : "error"} sx={{ mb: 2 }}>
+            {windowOpen
               ? `✅ Marks entry window is OPEN. Closes on ${windowCloseDate}.`
               : `🔒 Marks entry window CLOSED on ${windowCloseDate}. Contact admin for extension.`}
           </Alert>
@@ -504,14 +517,17 @@ function MarkSheet() {
               <strong>Date:</strong> {selectedDate} &nbsp;|&nbsp;
               <strong>Out of:</strong> {outOff || "—"}
               {selectedCoursePlannerId && (
-                <>&nbsp;|&nbsp;<strong>Planner ID:</strong> {selectedCoursePlannerId}</>
+                <>
+                  &nbsp;|&nbsp;<strong>Planner ID:</strong>{" "}
+                  {selectedCoursePlannerId}
+                </>
               )}
             </Typography>
           </Box>
         )}
 
         {/* ── Learners table ───────────────────────────────────────────────── */}
-        {loadingLearners ? (
+        {loadingLearners || loadingExisting ? (
           <Box sx={{ display: "flex", justifyContent: "center", my: 3 }}>
             <CircularProgress size={28} />
           </Box>
@@ -526,64 +542,96 @@ function MarkSheet() {
                   Marks {outOff ? `(out of ${outOff})` : ""}
                 </TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>%</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {learners.map((l, idx) => (
-                <TableRow
-                  key={l.id}
-                  sx={{ "&:nth-of-type(odd)": { bgcolor: "#fafafa" } }}
-                >
-                  <TableCell>{idx + 1}</TableCell>
-                  <TableCell>{l.name}</TableCell>
-                  <TableCell sx={{ fontSize: 12, color: "text.secondary" }}>
-                    {l.email}
-                  </TableCell>
-                  <TableCell>
-                    <TextField
-                      size="small"
-                      sx={{ width: 90 }}
-                      disabled={!isWindowOpen}
-                      value={marks[l.id]?.points || ""}
-                      onChange={(e) => handleMarksInput(l.id, e.target.value)}
-                      inputProps={{ inputMode: "numeric" }}
-                    />
-                  </TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>
-                    {marks[l.id]?.percentage !== undefined &&
-                    marks[l.id]?.percentage !== ""
-                      ? `${marks[l.id].percentage}%`
-                      : "—"}
-                  </TableCell>
-                </TableRow>
-              ))}
+              {learners.map((l, idx) => {
+                const hasExisting = marks[l.id]?.points !== undefined && marks[l.id]?.points !== "";
+                return (
+                  <TableRow
+                    key={l.id}
+                    sx={{
+                      "&:nth-of-type(odd)": { bgcolor: "#fafafa" },
+                      ...(hasExisting ? { bgcolor: "#f0fff4 !important" } : {}),
+                    }}
+                  >
+                    <TableCell>{idx + 1}</TableCell>
+                    <TableCell>{l.name}</TableCell>
+                    <TableCell sx={{ fontSize: 12, color: "text.secondary" }}>
+                      {l.email}
+                    </TableCell>
+                    <TableCell>
+                      <TextField
+                        size="small"
+                        sx={{ width: 90 }}
+                        disabled={!windowOpen}
+                        value={marks[l.id]?.points || ""}
+                        onChange={(e) =>
+                          handleMarksInput(l.id, e.target.value)
+                        }
+                        inputProps={{ inputMode: "numeric" }}
+                      />
+                    </TableCell>
+                    <TableCell sx={{ fontWeight: 600 }}>
+                      {marks[l.id]?.percentage !== undefined &&
+                      marks[l.id]?.percentage !== ""
+                        ? `${marks[l.id].percentage}%`
+                        : "—"}
+                    </TableCell>
+                    <TableCell>
+                      {hasExisting ? (
+                        <Chip
+                          label="Saved"
+                          color="success"
+                          size="small"
+                          variant="outlined"
+                        />
+                      ) : (
+                        <Chip
+                          label="Not entered"
+                          color="default"
+                          size="small"
+                          variant="outlined"
+                        />
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         ) : (
           batchNo && (
-            <Alert severity="info">No learners found for batch {batchNo}.</Alert>
+            <Alert severity="info">
+              No learners found for batch {batchNo}.
+            </Alert>
           )
         )}
 
-        {/* ── Save button ──────────────────────────────────────────────────── */}
+        {/* ── Save Marks button ────────────────────────────────────────────── */}
         <Button
           sx={{ mt: 3 }}
           variant="contained"
           onClick={handleSave}
           disabled={
             saving ||
-            !isWindowOpen ||
+            !windowOpen ||
             !batchNo ||
             !selectedDate ||
             !outOff ||
             (!isAutoDateAssessment && !selectedCoursePlannerId)
           }
-          startIcon={saving ? <CircularProgress size={18} color="inherit" /> : null}
+          startIcon={
+            saving ? (
+              <CircularProgress size={18} color="inherit" />
+            ) : null
+          }
         >
           {saving ? "Saving…" : "Save Marks"}
         </Button>
 
-        {/* ── Status message ───────────────────────────────────────────────── */}
+        {/* ── Status message ────────────────────────────────────────────────── */}
         {message && (
           <Alert
             sx={{ mt: 2 }}
