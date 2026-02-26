@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   Box,
   Paper,
@@ -16,6 +16,7 @@ import {
   TableBody,
   Alert,
   CircularProgress,
+  Tooltip,
 } from "@mui/material";
 
 const API_BASE =
@@ -55,6 +56,29 @@ const ASSESSMENT_MAP = {
   },
 };
 
+/* ─── PDFT fixed Out Of values by topic keyword ─────────────────────────── */
+const PDFT_OUT_OF_RULES = [
+  { keywords: ["intermediate"], outOf: 25 },
+  { keywords: ["digital design"], outOf: 30 },
+  { keywords: ["cmos"], outOf: 20 },
+  { keywords: ["tcl"], outOf: 25 },
+  { keywords: ["physical design"], outOf: 100 },
+  { keywords: ["final project"], outOf: 100 },
+  { keywords: ["viva"], outOf: 25 },
+];
+
+function getPdftOutOf(topicName, assessmentType) {
+  if (!topicName && !assessmentType) return null;
+  const combined = `${topicName || ""} ${ASSESSMENT_MAP[assessmentType]?.label || ""}`.toLowerCase();
+
+  for (const rule of PDFT_OUT_OF_RULES) {
+    if (rule.keywords.every((kw) => combined.includes(kw))) {
+      return rule.outOf;
+    }
+  }
+  return null;
+}
+
 const todayDate = new Date().toISOString().split("T")[0];
 
 const parseDate = (str) => {
@@ -63,34 +87,51 @@ const parseDate = (str) => {
   return new Date(y, m - 1, d);
 };
 
+/* ─── Get user info from localStorage ───────────────────────────────────── */
+function getCurrentUser() {
+  try {
+    return JSON.parse(localStorage.getItem("user") || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function isAdminOrManager(user) {
+  return user?.role === "Admin" || user?.role === "Manager";
+}
+
+/* ─── Check if batch is PDFT ─────────────────────────────────────────────── */
+function isPdftBatch(batchNo) {
+  return batchNo?.toUpperCase().includes("PDFT");
+}
+
 function MarkSheet() {
   const [batchNo, setBatchNo] = useState("");
   const [assessmentType, setAssessmentType] = useState("weekly");
-
   const [availableBatches, setAvailableBatches] = useState([]);
   const [loadingBatches, setLoadingBatches] = useState(true);
-
   const [learners, setLearners] = useState([]);
   const [loadingLearners, setLoadingLearners] = useState(false);
-
   const [periods, setPeriods] = useState([]);
   const [periodValue, setPeriodValue] = useState("");
-
   const [selectedCoursePlannerId, setSelectedCoursePlannerId] = useState("");
   const [selectedWeekNo, setSelectedWeekNo] = useState("");
   const [selectedDate, setSelectedDate] = useState("");
   const [topicName, setTopicName] = useState("");
-
   const [marks, setMarks] = useState({});
   const [outOff, setOutOff] = useState("");
-
-  const [isWindowOpen, setIsWindowOpen] = useState(true);
+  const [outOffEditing, setOutOffEditing] = useState(""); // temp value while admin edits
+  const [windowOpen, setWindowOpen] = useState(true);
   const [windowCloseDate, setWindowCloseDate] = useState("");
-
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
+  const [savingOutOf, setSavingOutOf] = useState(false);
+  const [loadingMarks, setLoadingMarks] = useState(false);
   const [currentDate, setCurrentDate] = useState(new Date());
 
+  const currentUser = getCurrentUser();
+  const canEditOutOf = isAdminOrManager(currentUser);
+  const isPdft = isPdftBatch(batchNo);
   const isAutoDateAssessment =
     assessmentType === "final_project" || assessmentType === "viva";
 
@@ -100,7 +141,7 @@ function MarkSheet() {
     return () => clearInterval(i);
   }, []);
 
-  /* ── Load batches ───────────────────────────────── */
+  /* ── Load batches ─────────────────────────────────────────────────────── */
   useEffect(() => {
     fetch(`${API_BASE}/api/batches`)
       .then((res) => res.json())
@@ -118,7 +159,7 @@ function MarkSheet() {
       .finally(() => setLoadingBatches(false));
   }, []);
 
-  /* ── Load learners ──────────────────────────────── */
+  /* ── Load learners ────────────────────────────────────────────────────── */
   useEffect(() => {
     if (!batchNo) return setLearners([]);
     setLoadingLearners(true);
@@ -128,27 +169,35 @@ function MarkSheet() {
       .finally(() => setLoadingLearners(false));
   }, [batchNo]);
 
-  /* ── Load periods ───────────────────────────────── */
+  /* ── Load periods ─────────────────────────────────────────────────────── */
   useEffect(() => {
     if (!batchNo) return;
-
     if (isAutoDateAssessment) {
       setSelectedDate(todayDate);
       setSelectedCoursePlannerId("");
       setSelectedWeekNo("");
       setTopicName(ASSESSMENT_MAP[assessmentType].label);
       setPeriods([]);
+      // Auto-populate out_of for PDFT batches
+      if (isPdft) {
+        const fixed = getPdftOutOf("", assessmentType);
+        if (fixed !== null) {
+          setOutOff(String(fixed));
+          setOutOffEditing(String(fixed));
+        }
+      }
       return;
     }
-
     const apiType = ASSESSMENT_MAP[assessmentType].api;
-
     fetch(`${API_BASE}/apiperiods/${batchNo}/${apiType}`)
       .then((res) => res.json())
       .then((data) => {
+        // De-duplicate by planner id (each row = one unique assessment slot)
+        // Two assessments on same date with different topics will have different ids
         const uniqueMap = new Map();
         (data || []).forEach((item) => {
-          const key = item.id ?? `${item.week_no}-${item.date}-${item.topic_name}`;
+          const key =
+            item.id ?? `${item.week_no}-${item.date}-${item.topic_name}`;
           if (!uniqueMap.has(key)) uniqueMap.set(key, item);
         });
         setPeriods(Array.from(uniqueMap.values()));
@@ -161,74 +210,101 @@ function MarkSheet() {
     setSelectedWeekNo("");
     setTopicName("");
     setMarks({});
+    setOutOff("");
+    setOutOffEditing("");
   }, [batchNo, assessmentType]);
-
-  /* ── LOAD EXISTING MARKS (NEW) ───────────────────── */
-  useEffect(() => {
-    if (!batchNo || !selectedDate) return;
-
-    const cfg = ASSESSMENT_MAP[assessmentType];
-
-    fetch(
-      `${API_BASE}/api/marks/${cfg.api}?batch_no=${batchNo}&assessment_date=${selectedDate}&course_planner_id=${selectedCoursePlannerId || ""}`
-    )
-      .then((res) => res.json())
-      .then((data) => {
-        if (!Array.isArray(data) || data.length === 0) return;
-
-        const loaded = {};
-        data.forEach((row) => {
-          loaded[row.learner_id] = {
-            points: row.points,
-            percentage:
-              row.out_off > 0
-                ? Math.round((row.points / row.out_off) * 100)
-                : "",
-          };
-        });
-
-        setMarks(loaded);
-        if (data[0]?.out_off) setOutOff(data[0].out_off);
-      })
-      .catch(() => {});
-  }, [batchNo, selectedDate, selectedCoursePlannerId, assessmentType]);
 
   /* ── Window Logic ─────────────────────────── */
   useEffect(() => {
     if (isAutoDateAssessment) {
-      setIsWindowOpen(true);
+      setWindowOpen(true);
       return;
     }
-
     if (!selectedDate) return;
-
-    let close = new Date(parseDate(selectedDate));
+    const assessmentDate = parseDate(selectedDate);
+    if (!assessmentDate) return;
+    let close = new Date(assessmentDate);
     const type = ASSESSMENT_MAP[assessmentType]?.type;
-
-    if (type === "weekly") close.setDate(close.getDate() + 3);
-    else if (type === "mid") close.setDate(close.getDate() + 5);
-    else if (type === "final") close.setDate(close.getDate() + 7);
-
+    if (type === "weekly") {
+      close.setDate(close.getDate() + 3);
+    } else if (type === "mid") {
+      close.setDate(close.getDate() + 5);
+    } else if (type === "final") {
+      close.setDate(close.getDate() + 7);
+    }
     close.setHours(23, 59, 59, 999);
-
-    setIsWindowOpen(currentDate <= close);
+    setWindowOpen(currentDate <= close);
     setWindowCloseDate(close.toLocaleDateString("en-GB"));
   }, [selectedDate, assessmentType, currentDate]);
 
-  /* ── Period selection ───────────────────────────── */
+  /* ── Load existing marks when period is selected ─────────────────────── */
+  const loadExistingMarks = useCallback(
+    async (plannerId, date, weekNo) => {
+      if (!batchNo || !plannerId || !date) return;
+      setLoadingMarks(true);
+      try {
+        const cfg = ASSESSMENT_MAP[assessmentType];
+        const res = await fetch(
+          `${API_BASE}/api/marks/${cfg.api}?batch_no=${batchNo}&course_planner_id=${plannerId}&assessment_date=${date}`
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          // Populate out_off from saved data
+          const savedOutOf = data[0]?.out_off;
+          if (savedOutOf) {
+            setOutOff(String(savedOutOf));
+            setOutOffEditing(String(savedOutOf));
+          }
+          // Populate marks per learner
+          const marksMap = {};
+          data.forEach((row) => {
+            marksMap[row.learner_id] = {
+              points: String(row.points ?? ""),
+              percentage: row.percentage !== null ? String(row.percentage) : "",
+            };
+          });
+          setMarks(marksMap);
+        }
+      } catch (e) {
+        console.error("Failed to load existing marks", e);
+      } finally {
+        setLoadingMarks(false);
+      }
+    },
+    [batchNo, assessmentType]
+  );
+
+  /* ── Period selection ─────────────────────────────────────────────────── */
   const handlePeriodSelect = (e) => {
     const val = e.target.value;
     setPeriodValue(val);
-
     const [plannerId, weekPart, datePart, ...topicParts] = val.split("::");
+    const topic = topicParts.join("::");
     setSelectedCoursePlannerId(plannerId || "");
     setSelectedWeekNo(weekPart || "");
     setSelectedDate(datePart || "");
-    setTopicName(topicParts.join("::"));
+    setTopicName(topic);
     setMarks({});
+    setOutOff("");
+    setOutOffEditing("");
+
+    // Auto-populate out_of for PDFT batches
+    if (isPdft) {
+      const fixed = getPdftOutOf(topic, assessmentType);
+      if (fixed !== null) {
+        setOutOff(String(fixed));
+        setOutOffEditing(String(fixed));
+      }
+    }
+
+    // Load existing marks (will also load saved out_off if present)
+    if (plannerId && datePart) {
+      loadExistingMarks(plannerId, datePart, weekPart);
+    }
   };
 
-  /* ── Marks input ───────────────────────────── */
+  /* ── Marks input ──────────────────────────────────────────────────────── */
   const handleMarksInput = (id, val) => {
     const points = val.replace(/\D/g, "");
     setMarks((prev) => ({
@@ -243,53 +319,147 @@ function MarkSheet() {
     }));
   };
 
-  /* ── Save ───────────────────────────── */
+  /* ── Out Of change (admin/manager only) ───────────────────────────────── */
+  const handleOutOfChange = (v) => {
+    const val = v.replace(/\D/g, "");
+    setOutOffEditing(val);
+    setOutOff(val);
+    // Recalculate percentages
+    setMarks((prev) => {
+      const updated = { ...prev };
+      Object.keys(updated).forEach((id) => {
+        if (updated[id]?.points) {
+          updated[id] = {
+            ...updated[id],
+            percentage:
+              Number(val) > 0
+                ? Math.round(
+                    (Number(updated[id].points) / Number(val)) * 100
+                  )
+                : "",
+          };
+        }
+      });
+      return updated;
+    });
+  };
+
+  /* ── Save Out Of (admin/manager only) ────────────────────────────────── */
+  const handleSaveOutOf = async () => {
+    if (!outOffEditing || !batchNo) return;
+    setSavingOutOf(true);
+    try {
+      const cfg = ASSESSMENT_MAP[assessmentType];
+      const payload = {
+        batch_no: batchNo,
+        assessment_type: cfg.api,
+        course_planner_id: selectedCoursePlannerId
+          ? Number(selectedCoursePlannerId)
+          : undefined,
+        assessment_date: selectedDate,
+        out_off: Number(outOffEditing),
+      };
+      const res = await fetch(`${API_BASE}/api/marks/update-out-of`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        setOutOff(outOffEditing);
+        setMessage("✅ Out Of updated successfully.");
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setMessage(`❌ Failed to update Out Of: ${err.error || "Unknown error"}`);
+      }
+    } catch (e) {
+      setMessage("❌ Network error while updating Out Of.");
+    } finally {
+      setSavingOutOf(false);
+      setTimeout(() => setMessage(""), 4000);
+    }
+  };
+
+  /* ── Save Marks ───────────────────────────────────────────────────────── */
   const handleSave = async () => {
-    if (!isWindowOpen) {
-      setMessage("❌ Marks entry window closed.");
+    if (!windowOpen) {
+      setMessage("❌ Marks entry window closed. Cannot save.");
       return;
     }
-
     if (!batchNo || !selectedDate || !outOff) {
-      setMessage("❌ Complete all required fields.");
+      setMessage("❌ Please complete all required fields.");
       return;
     }
-
+    if (!isAutoDateAssessment && !selectedCoursePlannerId) {
+      setMessage("❌ Please select an assessment date from the dropdown.");
+      return;
+    }
     const cfg = ASSESSMENT_MAP[assessmentType];
     const learnersWithMarks = learners.filter((l) => marks[l.id]?.points);
-
     if (learnersWithMarks.length === 0) {
       setMessage("❌ No marks entered.");
       return;
     }
-
     setSaving(true);
     setMessage("");
-
-    for (const l of learnersWithMarks) {
-      await fetch(`${API_BASE}/api/marks/${cfg.api}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+    let savedCount = 0;
+    let failCount = 0;
+    try {
+      for (const l of learnersWithMarks) {
+        const payload = {
           learner_id: l.id,
           batch_no: batchNo,
           assessment_date: selectedDate,
           assessment_name: topicName || cfg.label,
           out_off: Number(outOff),
           points: Number(marks[l.id].points),
-          percentage: marks[l.id].percentage,
+          percentage: marks[l.id].percentage || null,
           course_planner_id: selectedCoursePlannerId
             ? Number(selectedCoursePlannerId)
             : undefined,
-        }),
-      });
+        };
+        if (!isAutoDateAssessment) {
+          if (assessmentType === "module") {
+            payload.module_no = Number(selectedWeekNo);
+          } else {
+            payload.week_no = Number(selectedWeekNo);
+          }
+        }
+        try {
+          const response = await fetch(`${API_BASE}/api/marks/${cfg.api}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          if (!response.ok) {
+            const errBody = await response.json().catch(() => ({}));
+            console.error("Save failed for", l.name, errBody);
+            failCount++;
+          } else {
+            savedCount++;
+          }
+        } catch (fetchErr) {
+          console.error("Network error for", l.name, fetchErr);
+          failCount++;
+        }
+      }
+      if (failCount === 0) {
+        setMessage(`✅ Marks saved successfully for ${savedCount} learner(s).`);
+      } else {
+        setMessage(
+          `⚠️ Saved ${savedCount} record(s). ${failCount} failed — check console.`
+        );
+      }
+    } finally {
+      setSaving(false);
+      setTimeout(() => setMessage(""), 5000);
     }
-
-    setSaving(false);
-    setMessage("✅ Marks saved successfully.");
-    setTimeout(() => setMessage(""), 4000);
   };
 
+  /* ── Derived: is out_of field locked? ────────────────────────────────── */
+  // For PDFT batches, out_of is auto-set. Only admins can override.
+  const outOfLocked = !windowOpen || (isPdft && !canEditOutOf);
+
+  /* ── Render ───────────────────────────────────────────────────────────── */
   if (loadingBatches)
     return (
       <Box sx={{ display: "flex", justifyContent: "center", mt: 5 }}>
@@ -303,17 +473,6 @@ function MarkSheet() {
         <Typography variant="h4" sx={{ mb: 3 }}>
           Assessment Marks Entry
         </Typography>
-
-        {/* ── Role badge ─────────────────────────────────────────────────── */}
-        {userRole && (
-          <Box sx={{ mb: 2 }}>
-            <Chip
-              label={`Role: ${userRole}`}
-              color={canEditOutOf ? "primary" : "default"}
-              size="small"
-            />
-          </Box>
-        )}
 
         {/* ── Filters row ─────────────────────────────────────────────────── */}
         <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap", mb: 3, alignItems: "flex-end" }}>
@@ -332,7 +491,7 @@ function MarkSheet() {
                 setTopicName("");
                 setMarks({});
                 setOutOff("");
-                setOutOffOpen(true);
+                setOutOffEditing("");
               }}
             >
               <MenuItem value="weekly">Weekly Assessment</MenuItem>
@@ -352,9 +511,14 @@ function MarkSheet() {
               label="Batch"
               onChange={(e) => {
                 setBatchNo(e.target.value);
+                setPeriodValue("");
+                setSelectedDate("");
+                setSelectedCoursePlannerId("");
+                setSelectedWeekNo("");
+                setTopicName("");
                 setMarks({});
                 setOutOff("");
-                setOutOffOpen(true);
+                setOutOffEditing("");
               }}
             >
               {availableBatches.map((b) => (
@@ -365,7 +529,7 @@ function MarkSheet() {
             </Select>
           </FormControl>
 
-          {/* Period picker */}
+          {/* Period picker (planner-based assessments) */}
           {!isAutoDateAssessment && (
             <FormControl sx={{ minWidth: 360 }}>
               <InputLabel>Assessment Date / Topic</InputLabel>
@@ -380,13 +544,24 @@ function MarkSheet() {
                   </MenuItem>
                 )}
                 {periods.map((p, idx) => {
+                  /*
+                   * Value format: "plannerId::weekNo::date::topicName"
+                   * Each assessment slot (different planner id) gets its own entry.
+                   * Two assessments on the same date with different topics are
+                   * shown as separate options.
+                   */
                   const plannerId = p.id ?? idx;
-                  const weekNo    = p.week_no ?? p.module_no ?? "";
-                  const val       = `${plannerId}::${weekNo}::${p.date}::${p.topic_name}`;
+                  const weekNo = p.week_no ?? p.module_no ?? "";
+                  const val = `${plannerId}::${weekNo}::${p.date}::${p.topic_name}`;
+                  const weekLabel = p.week_no
+                    ? `Week ${p.week_no}`
+                    : p.module_no
+                    ? `Module ${p.module_no}`
+                    : "";
                   return (
                     <MenuItem key={val} value={val}>
-                      {p.week_no ? `Week ${p.week_no} ` : ""}
-                      ({p.date}) — {p.topic_name}
+                      {weekLabel ? `${weekLabel} — ` : ""}
+                      {p.date} — {p.topic_name}
                     </MenuItem>
                   );
                 })}
@@ -394,7 +569,7 @@ function MarkSheet() {
             </FormControl>
           )}
 
-          {/* Auto-date display */}
+          {/* Auto-date display (Final Project / Viva) */}
           {isAutoDateAssessment && (
             <TextField
               label="Assessment Date"
@@ -404,101 +579,51 @@ function MarkSheet() {
             />
           )}
 
-          {/* Out Of + Save Out Of button */}
+          {/* Out Of */}
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
             <Tooltip
               title={
-                !outOffOpen && !canEditOutOf
-                  ? "Out Of is fixed for this PDFT assessment. Contact Admin to change."
+                isPdft && !canEditOutOf
+                  ? "Out Of is fixed for PDFT batches"
                   : ""
               }
             >
               <span>
                 <TextField
-                  label={
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-                      Out Of
-                      {!outOffOpen && <LockIcon sx={{ fontSize: 14 }} />}
-                    </Box>
-                  }
-                  value={outOff}
-                  disabled={!windowOpen || outOfReadOnly}
+                  label="Out Of"
+                  value={canEditOutOf ? outOffEditing : outOff}
+                  disabled={outOfLocked}
                   sx={{ width: 110 }}
                   onChange={(e) => {
-                    const v = e.target.value.replace(/\D/g, "");
-                    setOutOff(v);
-                    setMarks((prev) => {
-                      const updated = { ...prev };
-                      Object.keys(updated).forEach((id) => {
-                        if (updated[id]?.points) {
-                          updated[id] = {
-                            ...updated[id],
-                            percentage:
-                              Number(v) > 0
-                                ? Math.round(
-                                    (Number(updated[id].points) / Number(v)) *
-                                      100
-                                  )
-                                : "",
-                          };
-                        }
-                      });
-                      return updated;
-                    });
+                    if (canEditOutOf) handleOutOfChange(e.target.value);
                   }}
+                  inputProps={{ inputMode: "numeric" }}
+                  helperText={
+                    isPdft && outOff && !canEditOutOf ? "Fixed" : ""
+                  }
                 />
               </span>
             </Tooltip>
 
-            {/* Save Out Of — visible only to Admin / Manager */}
-            {canEditOutOf && (
-              <Tooltip title="Save this Out Of value as the default for this topic">
-                <span>
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    startIcon={
-                      savingOutOf ? (
-                        <CircularProgress size={14} color="inherit" />
-                      ) : (
-                        <SaveIcon fontSize="small" />
-                      )
-                    }
-                    onClick={handleSaveOutOf}
-                    disabled={savingOutOf || !outOff || !batchNo}
-                    sx={{ height: 40, whiteSpace: "nowrap" }}
-                  >
-                    {savingOutOf ? "Saving…" : "Save Out Of"}
-                  </Button>
-                </span>
-              </Tooltip>
-            )}
-
-            {/* Edit unlock for Admin / Manager when locked */}
-            {canEditOutOf && !outOffOpen && (
-              <Tooltip title="Override locked Out Of value">
-                <IconButton
-                  size="small"
-                  onClick={() => setOutOffOpen(true)}
-                  color="warning"
-                >
-                  <EditIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
+            {/* Save Out Of button — only for Admin / Manager */}
+            {canEditOutOf && selectedCoursePlannerId && (
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={handleSaveOutOf}
+                disabled={savingOutOf || !outOffEditing}
+                startIcon={
+                  savingOutOf ? (
+                    <CircularProgress size={14} color="inherit" />
+                  ) : null
+                }
+                sx={{ whiteSpace: "nowrap", height: 40 }}
+              >
+                {savingOutOf ? "Saving…" : "Save Out Of"}
+              </Button>
             )}
           </Box>
         </Box>
-
-        {/* ── PDFT info banner ────────────────────────────────────────────── */}
-        {isPdftBatch && !outOffOpen && (
-          <Alert severity="info" sx={{ mb: 2 }}>
-            <strong>PDFT Batch:</strong> Out Of is auto-set to{" "}
-            <strong>{outOff}</strong> for this assessment type/topic.
-            {canEditOutOf
-              ? " You can override it using the edit button."
-              : " Contact Admin or Manager to change this value."}
-          </Alert>
-        )}
 
         {/* ── Window status banner ─────────────────────────────────────────── */}
         {!isAutoDateAssessment && selectedDate && (
@@ -518,8 +643,14 @@ function MarkSheet() {
               <strong>Out of:</strong> {outOff || "—"}
               {selectedCoursePlannerId && (
                 <>
-                  &nbsp;|&nbsp;<strong>Planner ID:</strong>{" "}
-                  {selectedCoursePlannerId}
+                  &nbsp;|&nbsp;
+                  <strong>Planner ID:</strong> {selectedCoursePlannerId}
+                </>
+              )}
+              {isPdft && outOff && (
+                <>
+                  &nbsp;|&nbsp;
+                  <strong style={{ color: "#1976d2" }}>PDFT Fixed</strong>
                 </>
               )}
             </Typography>
@@ -527,7 +658,7 @@ function MarkSheet() {
         )}
 
         {/* ── Learners table ───────────────────────────────────────────────── */}
-        {loadingLearners || loadingExisting ? (
+        {loadingLearners || loadingMarks ? (
           <Box sx={{ display: "flex", justifyContent: "center", my: 3 }}>
             <CircularProgress size={28} />
           </Box>
@@ -542,74 +673,46 @@ function MarkSheet() {
                   Marks {outOff ? `(out of ${outOff})` : ""}
                 </TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>%</TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {learners.map((l, idx) => {
-                const hasExisting = marks[l.id]?.points !== undefined && marks[l.id]?.points !== "";
-                return (
-                  <TableRow
-                    key={l.id}
-                    sx={{
-                      "&:nth-of-type(odd)": { bgcolor: "#fafafa" },
-                      ...(hasExisting ? { bgcolor: "#f0fff4 !important" } : {}),
-                    }}
-                  >
-                    <TableCell>{idx + 1}</TableCell>
-                    <TableCell>{l.name}</TableCell>
-                    <TableCell sx={{ fontSize: 12, color: "text.secondary" }}>
-                      {l.email}
-                    </TableCell>
-                    <TableCell>
-                      <TextField
-                        size="small"
-                        sx={{ width: 90 }}
-                        disabled={!windowOpen}
-                        value={marks[l.id]?.points || ""}
-                        onChange={(e) =>
-                          handleMarksInput(l.id, e.target.value)
-                        }
-                        inputProps={{ inputMode: "numeric" }}
-                      />
-                    </TableCell>
-                    <TableCell sx={{ fontWeight: 600 }}>
-                      {marks[l.id]?.percentage !== undefined &&
-                      marks[l.id]?.percentage !== ""
-                        ? `${marks[l.id].percentage}%`
-                        : "—"}
-                    </TableCell>
-                    <TableCell>
-                      {hasExisting ? (
-                        <Chip
-                          label="Saved"
-                          color="success"
-                          size="small"
-                          variant="outlined"
-                        />
-                      ) : (
-                        <Chip
-                          label="Not entered"
-                          color="default"
-                          size="small"
-                          variant="outlined"
-                        />
-                      )}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
+              {learners.map((l, idx) => (
+                <TableRow
+                  key={l.id}
+                  sx={{ "&:nth-of-type(odd)": { bgcolor: "#fafafa" } }}
+                >
+                  <TableCell>{idx + 1}</TableCell>
+                  <TableCell>{l.name}</TableCell>
+                  <TableCell sx={{ fontSize: 12, color: "text.secondary" }}>
+                    {l.email}
+                  </TableCell>
+                  <TableCell>
+                    <TextField
+                      size="small"
+                      sx={{ width: 90 }}
+                      disabled={!windowOpen}
+                      value={marks[l.id]?.points || ""}
+                      onChange={(e) => handleMarksInput(l.id, e.target.value)}
+                      inputProps={{ inputMode: "numeric" }}
+                    />
+                  </TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>
+                    {marks[l.id]?.percentage !== undefined &&
+                    marks[l.id]?.percentage !== ""
+                      ? `${marks[l.id].percentage}%`
+                      : "—"}
+                  </TableCell>
+                </TableRow>
+              ))}
             </TableBody>
           </Table>
         ) : (
           batchNo && (
-            <Alert severity="info">
-              No learners found for batch {batchNo}.
-            </Alert>
+            <Alert severity="info">No learners found for batch {batchNo}.</Alert>
           )
         )}
 
-        {/* ── Save Marks button ────────────────────────────────────────────── */}
+        {/* ── Save button ──────────────────────────────────────────────────── */}
         <Button
           sx={{ mt: 3 }}
           variant="contained"
@@ -623,15 +726,13 @@ function MarkSheet() {
             (!isAutoDateAssessment && !selectedCoursePlannerId)
           }
           startIcon={
-            saving ? (
-              <CircularProgress size={18} color="inherit" />
-            ) : null
+            saving ? <CircularProgress size={18} color="inherit" /> : null
           }
         >
           {saving ? "Saving…" : "Save Marks"}
         </Button>
 
-        {/* ── Status message ────────────────────────────────────────────────── */}
+        {/* ── Status message ───────────────────────────────────────────────── */}
         {message && (
           <Alert
             sx={{ mt: 2 }}

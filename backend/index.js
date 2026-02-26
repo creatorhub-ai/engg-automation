@@ -145,6 +145,16 @@ mailTransporter.verify((error, success) => {
   }
 });
 
+// ─── TABLE NAME MAP ──────────────────────────────────────────────────────────
+const ASSESSMENT_TABLE_MAP = {
+  "weekly-assessment":       "weekly_assessment_scores",
+  "intermediate-assessment": "intermediate_assessment_scores",
+  "module-level-assessment": "module_level_assessment_scores",
+  "final-assessment":        "final_assessment_scores",
+  "final-project":           "final_project_scores",
+  "viva":                    "viva_scores",
+};
+
 const validateMarkEntryWindow = (assessmentDate, assessmentType) => {
   try {
     const daysWindowMap = {
@@ -1026,7 +1036,46 @@ app.get("/api/marks/window-status", async (req, res) => {
 });
 
 // 2) POST /api/marks/:assessmentType
+app.get("/api/marks/:assessmentType", async (req, res) => {
+  const { assessmentType } = req.params;
+  const { batch_no, course_planner_id, assessment_date } = req.query;
 
+  const table = ASSESSMENT_TABLE_MAP[assessmentType];
+  if (!table) return res.status(400).json({ error: "Invalid assessment type" });
+  if (!batch_no || !assessment_date)
+    return res.status(400).json({ error: "batch_no and assessment_date are required" });
+
+  try {
+    let query;
+    let values;
+
+    if (course_planner_id) {
+      query = `
+        SELECT learner_id, out_off, points, percentage, assessment_name
+        FROM ${table}
+        WHERE batch_no = $1
+          AND course_planner_id = $2
+          AND assessment_date = $3
+      `;
+      values = [batch_no, Number(course_planner_id), assessment_date];
+    } else {
+      // Auto-date assessments (final_project, viva) — no planner id
+      query = `
+        SELECT learner_id, out_off, points, percentage, assessment_name
+        FROM ${table}
+        WHERE batch_no = $1
+          AND assessment_date = $2
+      `;
+      values = [batch_no, assessment_date];
+    }
+
+    const result = await pool.query(query, values);
+    return res.json(result.rows);
+  } catch (err) {
+    console.error("GET marks error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
 
 // 3) POST /api/marks/extension-request
 app.post("/api/marks/extension-request", async (req, res) => {
@@ -4914,6 +4963,48 @@ app.get('/api/marks/:category', async (req, res) => {
     res.json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+//update the out of marks in the marks sheet page
+app.post("/api/marks/update-out-of", async (req, res) => {
+  const { batch_no, assessment_type, course_planner_id, assessment_date, out_off } = req.body;
+
+  if (!batch_no || !assessment_type || !assessment_date || out_off == null)
+    return res.status(400).json({ error: "batch_no, assessment_type, assessment_date, out_off are required" });
+
+  const table = ASSESSMENT_TABLE_MAP[assessment_type];
+  if (!table) return res.status(400).json({ error: "Invalid assessment type" });
+
+  try {
+    let query;
+    let values;
+
+    if (course_planner_id) {
+      query = `
+        UPDATE ${table}
+        SET out_off = $1
+        WHERE batch_no = $2
+          AND course_planner_id = $3
+          AND assessment_date = $4
+      `;
+      values = [Number(out_off), batch_no, Number(course_planner_id), assessment_date];
+    } else {
+      // Auto-date assessments
+      query = `
+        UPDATE ${table}
+        SET out_off = $1
+        WHERE batch_no = $2
+          AND assessment_date = $3
+      `;
+      values = [Number(out_off), batch_no, assessment_date];
+    }
+
+    const result = await pool.query(query, values);
+    return res.json({ updated: result.rowCount });
+  } catch (err) {
+    console.error("Update out_off error:", err);
+    return res.status(500).json({ error: err.message });
   }
 });
 
