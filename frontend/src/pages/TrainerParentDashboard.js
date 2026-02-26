@@ -59,7 +59,7 @@ export default function TrainerParentDashboard({ user, token }) {
             sx={{ fontWeight: 700 }}
           />
           <Tab
-            label="📝 Marks Entry"
+            label="📝 Marks Dashboard"
             value="marks-entry"
           />
           <Tab
