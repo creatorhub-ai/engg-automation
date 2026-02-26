@@ -87,7 +87,6 @@ const parseDate = (str) => {
   return new Date(y, m - 1, d);
 };
 
-/* ─── Get user info from localStorage ───────────────────────────────────── */
 function getCurrentUser() {
   try {
     return JSON.parse(localStorage.getItem("user") || "{}");
@@ -100,35 +99,37 @@ function isAdminOrManager(user) {
   return user?.role === "Admin" || user?.role === "Manager";
 }
 
-/* ─── Check if batch is PDFT ─────────────────────────────────────────────── */
 function isPdftBatch(batchNo) {
   return batchNo?.toUpperCase().includes("PDFT");
 }
 
 /*
- * ─── Deduplicate periods from API ────────────────────────────────────────────
+ * ─── Deduplicate periods ──────────────────────────────────────────────────────
  *
- * The API may return multiple rows per planner entry (e.g. one row per learner).
- * We need exactly ONE dropdown option per unique assessment slot.
+ * The API returns one row PER LEARNER for each assessment slot.
+ * e.g. 3 learners × 1 slot = 3 identical rows → must collapse to 1 option.
  *
- * Dedup rules:
- *  - If item.id is present  → use "id::<id>" as the key.
- *    Two different assessments on the same date have DIFFERENT ids, so both
- *    survive. Multiple rows for the SAME assessment share the same id, so
- *    only the first survives.
+ * At the same time, two different assessments on the same date
+ * (e.g. CMOS and TCL on 2026-03-25) must remain as 2 separate options.
  *
- *  - If item.id is absent   → fall back to "dt::<date>::<topicName>".
- *    This still preserves two assessments on the same date when their topic
- *    names differ (e.g. "CMOS" vs "TCL"), while collapsing duplicate rows
- *    for the same assessment.
+ * Strategy:
+ *   Key = date  +  normalised topic_name
+ *   → All rows for the same slot share the same key → collapse to first row.
+ *   → Rows for different topics on the same date have different keys → both kept.
+ *
+ * We deliberately do NOT key by item.id because the id in the returned rows
+ * is often the learner_id (different per learner) rather than the
+ * course_planner_data.id, which causes every row to appear as a unique slot.
+ *
+ * However, we DO keep the course_planner_id field from the row (if present)
+ * so we can send it back when saving marks.
  */
 function deduplicatePeriods(data) {
   const seen = new Map();
   (data || []).forEach((item) => {
-    const key =
-      item.id != null
-        ? `id::${item.id}`
-        : `dt::${item.date}::${(item.topic_name || "").trim().toLowerCase()}`;
+    // Normalise topic so minor whitespace/case differences don't create duplicates
+    const normTopic = (item.topic_name || "").trim().toLowerCase();
+    const key = `${item.date}::${normTopic}`;
     if (!seen.has(key)) {
       seen.set(key, item);
     }
@@ -231,7 +232,6 @@ function MarkSheet() {
       })
       .catch(() => setPeriods([]));
 
-    // Reset all selections when batch or assessment type changes
     setPeriodValue("");
     setSelectedDate("");
     setSelectedCoursePlannerId("");
@@ -320,7 +320,7 @@ function MarkSheet() {
       if (fixed !== null) setOutOff(String(fixed));
     }
 
-    // Load any previously saved marks for this slot (also loads saved out_off)
+    // Load any previously saved marks (also loads saved out_off)
     if (plannerId && datePart) {
       loadExistingMarks(plannerId, datePart);
     }
@@ -345,7 +345,6 @@ function MarkSheet() {
   const handleOutOfChange = (v) => {
     const val = v.replace(/\D/g, "");
     setOutOff(val);
-    // Recalculate percentages for already-entered marks
     setMarks((prev) => {
       const updated = { ...prev };
       Object.keys(updated).forEach((id) => {
@@ -480,8 +479,6 @@ function MarkSheet() {
   };
 
   /* ── Derived: is Out Of field locked? ────────────────────────────────── */
-  // Admins/Managers can ALWAYS edit Out Of regardless of window or PDFT.
-  // Regular users: locked if window is closed OR if it's a PDFT fixed value.
   const outOfLocked = canEditOutOf ? false : !windowOpen || isPdft;
 
   /* ── Render ───────────────────────────────────────────────────────────── */
@@ -576,21 +573,16 @@ function MarkSheet() {
                       : "Select a batch first"}
                   </MenuItem>
                 ) : (
-                  /*
-                   * Each period is one unique assessment slot from course_planner_data.
-                   *
-                   * Same-date, different-topic assessments (e.g. CMOS and TCL on
-                   * 23-03-2026) appear as SEPARATE options because deduplicatePeriods()
-                   * keys by planner id (or date+topic), so both survive dedup.
-                   *
-                   * Multiple rows for the SAME assessment (same id / same date+topic)
-                   * are collapsed into a single option.
-                   *
-                   * Value format: "plannerId::weekNo::date::topicName"
-                   */
                   periods.map((p) => {
+                    /*
+                     * Value format: "plannerId::weekNo::date::topicName"
+                     *
+                     * plannerId = course_planner_id from the row (used when saving).
+                     * Two assessments on the same date have different topic_names
+                     * so they produce different values and appear as separate options.
+                     */
                     const plannerId =
-                      p.id != null ? p.id : `${p.date}-${p.topic_name}`;
+                      p.course_planner_id ?? p.id ?? `${p.date}-${p.topic_name}`;
                     const weekNo = p.week_no ?? p.module_no ?? "";
                     const val = `${plannerId}::${weekNo}::${p.date}::${p.topic_name}`;
                     const weekLabel = p.week_no
@@ -601,7 +593,7 @@ function MarkSheet() {
 
                     return (
                       <MenuItem
-                        key={`${plannerId}-${p.date}-${p.topic_name}`}
+                        key={`${p.date}-${p.topic_name}`}
                         value={val}
                       >
                         {weekLabel ? `${weekLabel} — ` : ""}
