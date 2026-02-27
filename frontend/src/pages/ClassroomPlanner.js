@@ -88,9 +88,7 @@ function isDateOverlap(start1, end1, start2, end2) {
 
 function normalizeRowKeys(row) {
   const normalized = {};
-  Object.keys(row).forEach((key) => {
-    normalized[key.trim()] = row[key];
-  });
+  Object.keys(row).forEach((key) => { normalized[key.trim()] = row[key]; });
   return normalized;
 }
 
@@ -110,7 +108,6 @@ function planClassroomsForOffline(rows) {
     { name: "Cauvery", capacity: 35 },
     { name: "Bhavani", capacity: 35 },
   ];
-
   const shifts = ["morning", "evening"];
   const plans = [];
   const unallocated = [];
@@ -127,41 +124,25 @@ function planClassroomsForOffline(rows) {
     });
 
   filteredRows.sort((a, b) => {
-    const dateA = parseExcelDate(a["A.START DATE"]);
-    const dateB = parseExcelDate(b["A.START DATE"]);
-    const diff = dateA - dateB;
+    const diff = parseExcelDate(a["A.START DATE"]) - parseExcelDate(b["A.START DATE"]);
     if (diff !== 0) return diff;
-    const endA = parseExcelDate(a["A.DUE DATE"]);
-    const endB = parseExcelDate(b["A.DUE DATE"]);
-    const endDiff = endA - endB;
+    const endDiff = parseExcelDate(a["A.DUE DATE"]) - parseExcelDate(b["A.DUE DATE"]);
     if (endDiff !== 0) return endDiff;
     return (a["COURSE"] || "").localeCompare(b["COURSE"] || "");
   });
 
   filteredRows.forEach((row) => {
     const course = row["COURSE"];
-    const mode = "OFFLINE";
-    const aStartDate = parseExcelDate(row["A.START DATE"]);
-    const aEndDate = parseExcelDate(row["A.DUE DATE"]);
-    const aStart = toIsoDateString(aStartDate);
-    const aEnd = toIsoDateString(aEndDate);
+    const aStart = toIsoDateString(parseExcelDate(row["A.START DATE"]));
+    const aEnd = toIsoDateString(parseExcelDate(row["A.DUE DATE"]));
     const enrolled = Number(row["ENROLLED"] || 0);
     const batchCapacity = Number(row["CAPACITY"] || 0);
 
     if (enrolled > batchCapacity) {
       plans.push({
-        batch_no: course,
-        mode,
-        a_start: aStart,
-        a_end: aEnd,
-        enrolled,
-        capacity: batchCapacity,
-        classroom_name: "",
-        slot: "",
-        isAllocated: false,
-        trainer_name: row["trainer_name"] || "UNASSIGNED",
-        // module-level trainers will be populated separately
-        module_trainers: [],
+        batch_no: course, mode: "OFFLINE", a_start: aStart, a_end: aEnd,
+        enrolled, capacity: batchCapacity, classroom_name: "", slot: "",
+        isAllocated: false, trainer_name: "UNASSIGNED", module_trainers: [],
       });
       unallocated.push({ batch_no: course, enrolled, a_start: aStart, a_end: aEnd });
       return;
@@ -176,17 +157,11 @@ function planClassroomsForOffline(rows) {
       for (const slot of shifts) {
         const key = getKey(room.name, slot);
         if (!occupancyIndex[key]) occupancyIndex[key] = [];
-        const overlap = occupancyIndex[key].some((b) =>
-          isDateOverlap(aStart, aEnd, b.start, b.end)
-        );
+        const overlap = occupancyIndex[key].some((b) => isDateOverlap(aStart, aEnd, b.start, b.end));
         if (!overlap) {
           assignedRoom = `${room.name} [${room.capacity}]`;
           assignedSlot = slot;
-          occupancyIndex[key].push({
-            start: new Date(aStart).toISOString(),
-            end: new Date(aEnd).toISOString(),
-            course,
-          });
+          occupancyIndex[key].push({ start: aStart, end: aEnd, course });
           allocated = true;
           break;
         }
@@ -194,22 +169,13 @@ function planClassroomsForOffline(rows) {
       if (allocated) break;
     }
 
-    if (!allocated) {
-      unallocated.push({ batch_no: course, enrolled, a_start: aStart, a_end: aEnd });
-    }
+    if (!allocated) unallocated.push({ batch_no: course, enrolled, a_start: aStart, a_end: aEnd });
 
     plans.push({
-      batch_no: course,
-      mode,
-      a_start: aStart,
-      a_end: aEnd,
-      enrolled,
-      capacity: batchCapacity,
-      classroom_name: assignedRoom,
-      slot: assignedSlot,
-      isAllocated: allocated,
-      trainer_name: "UNASSIGNED",
-      module_trainers: [],
+      batch_no: course, mode: "OFFLINE", a_start: aStart, a_end: aEnd,
+      enrolled, capacity: batchCapacity, classroom_name: assignedRoom,
+      slot: assignedSlot, isAllocated: allocated,
+      trainer_name: "UNASSIGNED", module_trainers: [],
     });
   });
 
@@ -219,13 +185,10 @@ function planClassroomsForOffline(rows) {
 function getBatchColorMap(allMatrixTable) {
   const batchSet = new Set();
   allMatrixTable.forEach((row) =>
-    row.forEach((cell) => {
-      if (Array.isArray(cell)) cell.forEach((bn) => batchSet.add(bn));
-    })
+    row.forEach((cell) => { if (Array.isArray(cell)) cell.forEach((bn) => batchSet.add(bn)); })
   );
-  const batchArr = Array.from(batchSet).filter(Boolean).sort();
   const batchColorMap = {};
-  batchArr.forEach((bn, idx) => {
+  Array.from(batchSet).filter(Boolean).sort().forEach((bn, idx) => {
     batchColorMap[bn] = colorPalette[idx % colorPalette.length];
   });
   return batchColorMap;
@@ -256,23 +219,22 @@ export default function ClassroomPlanner() {
   const [trainerOverlapInfo, setTrainerOverlapInfo] = useState({});
 
   const computeAndSetWeeks = useCallback((normalizedPlans) => {
-    const allDates = normalizedPlans
-      .flatMap((p) => [p.a_start, p.a_end])
-      .filter(Boolean);
+    const allDates = normalizedPlans.flatMap((p) => [p.a_start, p.a_end]).filter(Boolean);
     if (allDates.length) {
-      const start = allDates.reduce((a, b) => (a < b ? a : b));
-      const end = allDates.reduce((a, b) => (a > b ? a : b));
-      setWeeks(getWeeksInRange(start, end));
+      setWeeks(getWeeksInRange(
+        allDates.reduce((a, b) => (a < b ? a : b)),
+        allDates.reduce((a, b) => (a > b ? a : b))
+      ));
     } else {
       setWeeks([]);
     }
   }, []);
 
-  // ============================================================
-  // FIX 1 & 2: loadExistingMatrix now also fetches module-level
-  // trainer assignments and capacity from course_planner_data
-  // so the trainer matrix and license summary work after refresh.
-  // ============================================================
+  // ─────────────────────────────────────────────────────────────────────────
+  // loadExistingMatrix
+  // Reads classroom_occupancy (now has capacity column) + batch_module_trainers
+  // (new dedicated table) so ALL sections render correctly after page reload.
+  // ─────────────────────────────────────────────────────────────────────────
   const loadExistingMatrix = useCallback(async () => {
     try {
       setLoading(true);
@@ -281,9 +243,7 @@ export default function ClassroomPlanner() {
       const res = await fetch(`${API_BASE}/api/get-classroom-matrix`);
       if (!res.ok) {
         setProcessingStatus("No saved matrix found.");
-        setPlans([]);
-        setWeeks([]);
-        setUnallocatedBatches([]);
+        setPlans([]); setWeeks([]); setUnallocatedBatches([]);
         return;
       }
 
@@ -292,30 +252,23 @@ export default function ClassroomPlanner() {
 
       if (!occupancyRows?.length) {
         setProcessingStatus("No saved data.");
-        setPlans([]);
-        setWeeks([]);
-        setUnallocatedBatches([]);
+        setPlans([]); setWeeks([]); setUnallocatedBatches([]);
         return;
       }
 
       const sortedRows = [...occupancyRows].sort((a, b) => {
-        const sa = a.occupancy_start || "";
-        const sb = b.occupancy_start || "";
+        const sa = a.occupancy_start || "", sb = b.occupancy_start || "";
         if (sa !== sb) return sa.localeCompare(sb);
-        const ea = a.occupancy_end || "";
-        const eb = b.occupancy_end || "";
+        const ea = a.occupancy_end || "", eb = b.occupancy_end || "";
         if (ea !== eb) return ea.localeCompare(eb);
         return (a.batch_no || "").localeCompare(b.batch_no || "");
       });
 
-      // FIX 1 & 2: Fetch module-level trainer assignments from backend
-      // so trainer matrix & license summary are populated on refresh
+      // Fetch per-module trainer data from the new batch_module_trainers table
       const batchNos = sortedRows.map((r) => r.batch_no).filter(Boolean);
-      let moduleTrainerMap = {}; // batch_no -> [{module_name, module_type, trainer_name}]
-      let batchCapacityMap = {}; // batch_no -> capacity
-
+      let moduleTrainerMap = {};
       try {
-        const mtRes = await fetch(`${API_BASE}/api/get-module-trainers`, {
+        const mtRes = await fetch(`${API_BASE}/api/get-batch-module-trainers`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ batch_nos: batchNos }),
@@ -323,7 +276,6 @@ export default function ClassroomPlanner() {
         if (mtRes.ok) {
           const mtData = await mtRes.json();
           moduleTrainerMap = mtData.moduleTrainerMap || {};
-          batchCapacityMap = mtData.batchCapacityMap || {};
         }
       } catch (e) {
         console.warn("Could not fetch module trainers (non-fatal):", e);
@@ -331,12 +283,9 @@ export default function ClassroomPlanner() {
 
       const normalizedPlans = sortedRows.map((r) => {
         const moduleTrainers = moduleTrainerMap[r.batch_no] || [];
-        // Derive primary trainer_name for display (first non-unassigned)
         const primaryTrainer =
-          moduleTrainers.find(
-            (mt) => mt.trainer_name && mt.trainer_name !== "UNASSIGNED"
-          )?.trainer_name || r.trainer_name || "UNASSIGNED";
-
+          moduleTrainers.find((mt) => mt.trainer_name && mt.trainer_name !== "UNASSIGNED")
+            ?.trainer_name || r.trainer_name || "UNASSIGNED";
         return {
           batch_no: r.batch_no,
           classroom_name: r.classroom_name || "",
@@ -344,27 +293,18 @@ export default function ClassroomPlanner() {
           a_start: r.occupancy_start,
           a_end: r.occupancy_end,
           enrolled: r.enrolled || 0,
-          // FIX 2: use capacity from course_planner_data if available
-          capacity: batchCapacityMap[r.batch_no] || r.capacity || r.enrolled || 0,
+          capacity: r.capacity || r.enrolled || 0, // uses the new capacity column
           mode: "OFFLINE",
           trainer_name: primaryTrainer,
           module_trainers: moduleTrainers,
         };
       });
 
-      const unallocated = normalizedPlans.filter(
-        (p) => !p.classroom_name || !p.slot
-      );
-
+      const unallocated = normalizedPlans.filter((p) => !p.classroom_name || !p.slot);
       setPlans(normalizedPlans);
-      setUnallocatedBatches(
-        unallocated.map((p) => ({
-          batch_no: p.batch_no,
-          enrolled: p.enrolled,
-          a_start: p.a_start,
-          a_end: p.a_end,
-        }))
-      );
+      setUnallocatedBatches(unallocated.map((p) => ({
+        batch_no: p.batch_no, enrolled: p.enrolled, a_start: p.a_start, a_end: p.a_end,
+      })));
       computeAndSetWeeks(normalizedPlans);
       setProcessingStatus(`Loaded ${occupancyRows.length} saved batches.`);
     } catch (e) {
@@ -381,8 +321,7 @@ export default function ClassroomPlanner() {
         const res = await fetch(`${API_BASE}/api/licenses`);
         if (!res.ok) return;
         const data = await res.json();
-        const list = Array.isArray(data) ? data : data.licenses || [];
-        setLicenses(list);
+        setLicenses(Array.isArray(data) ? data : data.licenses || []);
       } catch (e) {
         console.error("loadLicenses error", e);
         setLicenseError("Failed to load licenses.");
@@ -393,15 +332,11 @@ export default function ClassroomPlanner() {
   }, [loadExistingMatrix]);
 
   const classrooms = useMemo(() => {
-    const allocatedRooms = [
-      ...new Set(
-        plans
-          .filter((p) => p.classroom_name && p.slot)
-          .map((p) => p.classroom_name)
-      ),
-    ];
-    if (unallocatedBatches.length > 0) allocatedRooms.push("UNALLOCATED");
-    return allocatedRooms;
+    const rooms = [...new Set(
+      plans.filter((p) => p.classroom_name && p.slot).map((p) => p.classroom_name)
+    )];
+    if (unallocatedBatches.length > 0) rooms.push("UNALLOCATED");
+    return rooms;
   }, [plans, unallocatedBatches]);
 
   const slots = ["morning", "evening"];
@@ -425,11 +360,10 @@ export default function ClassroomPlanner() {
               .map((p) => p.batch_no);
           } else {
             batches = plans
-              .filter(
-                (p) =>
-                  p.classroom_name === room &&
-                  p.slot === slot &&
-                  isDateOverlap(p.a_start, p.a_end, startIso, endIso)
+              .filter((p) =>
+                p.classroom_name === room &&
+                p.slot === slot &&
+                isDateOverlap(p.a_start, p.a_end, startIso, endIso)
               )
               .map((p) => p.batch_no);
           }
@@ -441,28 +375,34 @@ export default function ClassroomPlanner() {
     return t;
   }, [classrooms, slots, weeks, plans, unallocatedBatches]);
 
-  // ============================================================
-  // FIX 3: Trainer matrix now groups by trainer+moduleType
-  // Each plan has module_trainers: [{module_name, module_type, trainer_name}]
-  // We show all unique trainers (across module types) in the matrix
-  // ============================================================
+  // Build unique trainer list from module_trainers (supports multiple per batch)
   const trainers = useMemo(() => {
     const unique = new Set();
+    let hasUnassigned = false;
     plans.forEach((p) => {
-      if (p.module_trainers && p.module_trainers.length > 0) {
+      if (p.module_trainers?.length) {
         p.module_trainers.forEach((mt) => {
-          if (mt.trainer_name) unique.add(mt.trainer_name);
+          if (mt.trainer_name && mt.trainer_name !== "UNASSIGNED") {
+            unique.add(mt.trainer_name);
+          } else {
+            hasUnassigned = true;
+          }
         });
       } else {
-        unique.add(p.trainer_name || "UNASSIGNED");
+        if (p.trainer_name && p.trainer_name !== "UNASSIGNED") {
+          unique.add(p.trainer_name);
+        } else {
+          hasUnassigned = true;
+        }
       }
     });
-    return Array.from(unique).sort();
+    const sorted = Array.from(unique).sort();
+    if (hasUnassigned) sorted.push("UNASSIGNED");
+    return sorted;
   }, [plans]);
 
   const trainerTable = useMemo(() => {
-    const t = [];
-    trainers.forEach((trainer) => {
+    return trainers.map((trainer) => {
       const row = [trainer];
       weeks.forEach((week) => {
         const weekStart = week.weekStart;
@@ -470,22 +410,19 @@ export default function ClassroomPlanner() {
         weekEnd.setDate(weekEnd.getDate() + 6);
         const startIso = weekStart.toISOString().slice(0, 10);
         const endIso = weekEnd.toISOString().slice(0, 10);
-
         const batches = plans
           .filter((p) => {
             if (!isDateOverlap(p.a_start, p.a_end, startIso, endIso)) return false;
-            if (p.module_trainers && p.module_trainers.length > 0) {
+            if (p.module_trainers?.length) {
               return p.module_trainers.some((mt) => mt.trainer_name === trainer);
             }
             return (p.trainer_name || "UNASSIGNED") === trainer;
           })
           .map((p) => p.batch_no);
-
         row.push(batches.filter(Boolean));
       });
-      t.push(row);
+      return row;
     });
-    return t;
   }, [trainers, weeks, plans]);
 
   const batchColorMap = useMemo(() => getBatchColorMap(table), [table]);
@@ -494,7 +431,6 @@ export default function ClassroomPlanner() {
     plans.forEach((p) => { m[p.batch_no] = p; });
     return m;
   }, [plans]);
-
   const trainerBatchColorMap = useMemo(() => getBatchColorMap(trainerTable), [trainerTable]);
 
   const getLicenseInfoForBatch = (batchNo, classroomCapacity, enrolled) => {
@@ -508,54 +444,35 @@ export default function ClassroomPlanner() {
       const licenseCount = Number(lic.count || 0);
       const requiredLicenses = Math.max(Number(enrolled || 0), Number(classroomCapacity || 0));
       const additionalNeeded = Math.max(0, requiredLicenses - licenseCount);
-      return {
-        license_name: lic.license_name,
-        count: licenseCount,
-        required: requiredLicenses,
-        additional_needed: additionalNeeded,
-      };
+      return { license_name: lic.license_name, count: licenseCount, required: requiredLicenses, additional_needed: additionalNeeded };
     });
   };
 
   const handleBatchClick = (batch) => {
     if (!batch) return;
-    const base = batchDetailMap[batch] || null;
+    const base = batchDetailMap[batch];
     if (!base) { setSelectedBatch(null); return; }
-    const licenseInfo = getLicenseInfoForBatch(base.batch_no, base.capacity, base.enrolled);
-    setSelectedBatch({ ...base, licenseInfo });
+    setSelectedBatch({ ...base, licenseInfo: getLicenseInfoForBatch(base.batch_no, base.capacity, base.enrolled) });
   };
 
-  // ============================================================
-  // FIX 3: fetchTrainerForBatches now calls the new
-  // /api/get-batch-trainers-by-module endpoint which returns
-  // per-module trainer assignments instead of one per batch
-  // ============================================================
   const fetchModuleTrainersForBatches = async (batchNos, offlinePlans) => {
     try {
       const batch_date_ranges = {};
       (offlinePlans || []).forEach((p) => {
-        if (p.batch_no && p.a_start && p.a_end) {
+        if (p.batch_no && p.a_start && p.a_end)
           batch_date_ranges[p.batch_no] = { start: p.a_start, end: p.a_end };
-        }
       });
-
-      const res = await fetch(`${API_BASE}/api/get-batch-trainers-by-module`, {
+      const res = await fetch(`${API_BASE}/api/assign-batch-trainers-by-module`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ batch_nos: batchNos, batch_date_ranges }),
       });
-
       if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        console.error("get-batch-trainers-by-module error:", errData);
+        console.error("assign-batch-trainers-by-module error:", await res.json().catch(() => ({})));
         return { moduleTrainerMap: {}, overlapInfo: {} };
       }
-
       const data = await res.json();
-      return {
-        moduleTrainerMap: data.moduleTrainerMap || {},
-        overlapInfo: data.overlapInfo || {},
-      };
+      return { moduleTrainerMap: data.moduleTrainerMap || {}, overlapInfo: data.overlapInfo || {} };
     } catch (e) {
       console.error("fetchModuleTrainersForBatches error:", e);
       return { moduleTrainerMap: {}, overlapInfo: {} };
@@ -565,83 +482,53 @@ export default function ClassroomPlanner() {
   const handleFileUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     setLoading(true);
     setError("");
     setProcessingStatus("Reading file...");
-    setPlans([]);
-    setWeeks([]);
-    setSelectedBatch(null);
-    setSaveStatus("");
-    setTrainerOverlapInfo({});
-
+    setPlans([]); setWeeks([]); setSelectedBatch(null); setSaveStatus(""); setTrainerOverlapInfo({});
     try {
-      const data = await file.arrayBuffer();
-      setProcessingStatus("Parsing spreadsheet...");
-      const wb = XLSX.read(data, { type: "array" });
-      const sheetName = wb.SheetNames[0];
-      const sheet = wb.Sheets[sheetName];
-      const rows = XLSX.utils.sheet_to_json(sheet, { defval: "", raw: false });
+      const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "", raw: false });
 
       setProcessingStatus("Allocating classrooms...");
       const { plans: offlinePlans, unallocated } = planClassroomsForOffline(rows);
 
-      // FIX 3: Use module-level trainer assignment
-      setProcessingStatus("Fetching module-level trainer assignments...");
+      setProcessingStatus("Assigning trainers per module type...");
       const batchNos = offlinePlans.map((p) => p.batch_no).filter(Boolean);
-      const { moduleTrainerMap, overlapInfo } = await fetchModuleTrainersForBatches(
-        batchNos,
-        offlinePlans
-      );
+      const { moduleTrainerMap, overlapInfo } = await fetchModuleTrainersForBatches(batchNos, offlinePlans);
       setTrainerOverlapInfo(overlapInfo);
 
-      // Enrich plans with per-module trainer data
       const enrichedPlans = offlinePlans.map((p) => {
         const moduleTrainers = moduleTrainerMap[p.batch_no] || [];
-        // Primary trainer = first assigned module trainer (for backward compat display)
-        const primaryTrainer =
-          moduleTrainers.find(
-            (mt) => mt.trainer_name && mt.trainer_name !== "UNASSIGNED"
-          )?.trainer_name || "UNASSIGNED";
-
         return {
           ...p,
-          trainer_name: primaryTrainer,
+          trainer_name: moduleTrainers.find((mt) => mt.trainer_name && mt.trainer_name !== "UNASSIGNED")?.trainer_name || "UNASSIGNED",
           module_trainers: moduleTrainers,
         };
       });
 
-      const sortedEnrichedPlans = [...enrichedPlans].sort((a, b) => {
+      const sortedPlans = [...enrichedPlans].sort((a, b) => {
         if (a.a_start !== b.a_start) return a.a_start.localeCompare(b.a_start);
         if (a.a_end !== b.a_end) return a.a_end.localeCompare(b.a_end);
         return (a.batch_no || "").localeCompare(b.batch_no || "");
       });
 
-      setPlans(sortedEnrichedPlans);
+      setPlans(sortedPlans);
       setUnallocatedBatches(
-        unallocated
-          .slice()
+        [...unallocated]
           .sort((a, b) => (a.a_start || "").localeCompare(b.a_start || ""))
-          .map((u) => ({
-            batch_no: u.batch_no,
-            enrolled: u.enrolled,
-            a_start: u.a_start,
-            a_end: u.a_end,
-          }))
+          .map((u) => ({ batch_no: u.batch_no, enrolled: u.enrolled, a_start: u.a_start, a_end: u.a_end }))
       );
 
       if (!offlinePlans.length) {
-        setError("No OFFLINE batches found in the file. Only MODE = OFFLINE rows are planned.");
+        setError("No OFFLINE batches found in the file.");
       } else {
-        const allDates = [];
-        offlinePlans.forEach((p) => {
-          if (p.a_start) allDates.push(p.a_start);
-          if (p.a_end) allDates.push(p.a_end);
-        });
-        if (allDates.length > 0) {
-          const matrixStart = allDates.reduce((a, b) => (a < b ? a : b));
-          const matrixEnd = allDates.reduce((a, b) => (a > b ? a : b));
-          setWeeks(getWeeksInRange(matrixStart, matrixEnd));
+        const allDates = offlinePlans.flatMap((p) => [p.a_start, p.a_end]).filter(Boolean);
+        if (allDates.length) {
+          setWeeks(getWeeksInRange(
+            allDates.reduce((a, b) => (a < b ? a : b)),
+            allDates.reduce((a, b) => (a > b ? a : b))
+          ));
         }
         setProcessingStatus(`Completed! Planned ${offlinePlans.length} OFFLINE batches.`);
       }
@@ -654,45 +541,32 @@ export default function ClassroomPlanner() {
   };
 
   const handleDownloadXlsx = async () => {
-    if (!plans.length) {
-      setError("No data to export. Please upload a file with OFFLINE batches.");
-      return;
-    }
-
+    if (!plans.length) { setError("No data to export."); return; }
     try {
       const workbook = new ExcelJS.Workbook();
 
-      // === CLASSROOM MATRIX SHEET ===
       const matrixSheet = workbook.addWorksheet("Classroom Matrix");
-      const headerRow = ["Classroom", "Slot", ...weeks.map((w) => `${w.month} W${w.weekNum}`)];
-      matrixSheet.addRow(headerRow);
-
-      const headerRowExcel = matrixSheet.getRow(1);
-      headerRowExcel.font = { bold: true, color: { argb: "FFFFFFFF" } };
-      headerRowExcel.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF333333" } };
-      headerRowExcel.alignment = { horizontal: "center", vertical: "center", wrapText: true };
+      matrixSheet.addRow(["Classroom", "Slot", ...weeks.map((w) => `${w.month} W${w.weekNum}`)]);
+      const mh = matrixSheet.getRow(1);
+      mh.font = { bold: true, color: { argb: "FFFFFFFF" } };
+      mh.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF333333" } };
+      mh.alignment = { horizontal: "center", vertical: "center", wrapText: true };
 
       table.forEach((row) => {
-        const outRow = [];
-        row.forEach((cell, idx) => {
-          if (idx < 2) {
-            outRow.push(idx === 1 ? slotDisplayMap[cell] || cell : cell);
-          } else {
-            outRow.push(Array.isArray(cell) ? cell.join(", ") : "");
-          }
-        });
+        const outRow = row.map((cell, idx) =>
+          idx < 2 ? (idx === 1 ? slotDisplayMap[cell] || cell : cell) : (Array.isArray(cell) ? cell.join(", ") : "")
+        );
         const excelRow = matrixSheet.addRow(outRow);
         row.forEach((cell, colIdx) => {
           if (colIdx >= 2 && Array.isArray(cell) && cell.length > 0) {
-            const firstBatch = cell[0];
-            const hexColor = batchColorMap[firstBatch];
+            const hexColor = batchColorMap[cell[0]];
             if (hexColor) {
               const rgb = hexToRGB(hexColor);
-              const rgbHex = `FF${rgb.r.toString(16).padStart(2, "0")}${rgb.g.toString(16).padStart(2, "0")}${rgb.b.toString(16).padStart(2, "0")}`.toUpperCase();
-              const excelCell = excelRow.getCell(colIdx + 1);
-              excelCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: rgbHex } };
-              excelCell.font = { bold: true, color: { argb: "FF222222" } };
-              excelCell.alignment = { horizontal: "center", vertical: "center", wrapText: true };
+              const rgbHex = `FF${rgb.r.toString(16).padStart(2,"0")}${rgb.g.toString(16).padStart(2,"0")}${rgb.b.toString(16).padStart(2,"0")}`.toUpperCase();
+              const ec = excelRow.getCell(colIdx + 1);
+              ec.fill = { type: "pattern", pattern: "solid", fgColor: { argb: rgbHex } };
+              ec.font = { bold: true, color: { argb: "FF222222" } };
+              ec.alignment = { horizontal: "center", vertical: "center", wrapText: true };
             }
           }
         });
@@ -701,66 +575,50 @@ export default function ClassroomPlanner() {
       });
       matrixSheet.columns = [{ width: 20 }, { width: 12 }, ...weeks.map(() => ({ width: 18 }))];
 
-      // === OFFLINE PLANS SHEET ===
       const plansSheet = workbook.addWorksheet("Offline Plans");
-      const plansHeader = [
-        "COURSE", "MODE", "A.START DATE", "A.DUE DATE", "CAPACITY", "ENROLLED",
-        "HAS_SUFFICIENT_CAPACITY", "LICENSE_ADDITIONAL_NEEDED",
-        "CLASSROOM_NAME", "SLOT", "MODULE_TYPE", "TRAINER",
-      ];
-      plansSheet.addRow(plansHeader);
-      const plansHeaderRow = plansSheet.getRow(1);
-      plansHeaderRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
-      plansHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF333333" } };
-      plansHeaderRow.alignment = { horizontal: "center", vertical: "center", wrapText: true };
+      plansSheet.addRow([
+        "COURSE","MODE","A.START DATE","A.DUE DATE","CAPACITY","ENROLLED",
+        "HAS_SUFFICIENT_CAPACITY","LICENSE_ADDITIONAL_NEEDED",
+        "CLASSROOM_NAME","SLOT","MODULE_TYPE","TRAINER",
+      ]);
+      const ph = plansSheet.getRow(1);
+      ph.font = { bold: true, color: { argb: "FFFFFFFF" } };
+      ph.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF333333" } };
+      ph.alignment = { horizontal: "center", vertical: "center", wrapText: true };
 
-      const sortedPlansForExport = [...plans].sort((a, b) => {
-        if (a.a_start !== b.a_start) return (a.a_start || "").localeCompare(b.a_start || "");
-        if (a.a_end !== b.a_end) return (a.a_end || "").localeCompare(b.a_end || "");
-        return (a.batch_no || "").localeCompare(b.batch_no || "");
-      });
-
-      sortedPlansForExport.forEach((p) => {
-        const licenseInfo = getLicenseInfoForBatch(p.batch_no, p.capacity, p.enrolled);
-        const totalShortage = licenseInfo.reduce((sum, l) => sum + (l.additional_needed || 0), 0);
-
-        if (p.module_trainers && p.module_trainers.length > 0) {
-          // One row per module trainer
+      [...plans].sort((a, b) => {
+        if (a.a_start !== b.a_start) return (a.a_start||"").localeCompare(b.a_start||"");
+        if (a.a_end !== b.a_end) return (a.a_end||"").localeCompare(b.a_end||"");
+        return (a.batch_no||"").localeCompare(b.batch_no||"");
+      }).forEach((p) => {
+        const li = getLicenseInfoForBatch(p.batch_no, p.capacity, p.enrolled);
+        const shortage = li.reduce((s, l) => s + (l.additional_needed || 0), 0);
+        if (p.module_trainers?.length) {
           p.module_trainers.forEach((mt, idx) => {
             plansSheet.addRow([
-              idx === 0 ? p.batch_no : "",
-              idx === 0 ? p.mode : "",
-              idx === 0 ? p.a_start : "",
-              idx === 0 ? p.a_end : "",
-              idx === 0 ? p.capacity : "",
-              idx === 0 ? p.enrolled : "",
-              idx === 0 ? (totalShortage === 0 ? "YES" : "NO") : "",
-              idx === 0 ? totalShortage : "",
-              idx === 0 ? p.classroom_name : "",
-              idx === 0 ? p.slot : "",
-              mt.module_type || "",
-              mt.trainer_name || "UNASSIGNED",
+              idx === 0 ? p.batch_no : "", idx === 0 ? p.mode : "",
+              idx === 0 ? p.a_start : "", idx === 0 ? p.a_end : "",
+              idx === 0 ? p.capacity : "", idx === 0 ? p.enrolled : "",
+              idx === 0 ? (shortage === 0 ? "YES" : "NO") : "", idx === 0 ? shortage : "",
+              idx === 0 ? p.classroom_name : "", idx === 0 ? p.slot : "",
+              mt.module_type || "", mt.trainer_name || "UNASSIGNED",
             ]);
           });
         } else {
           plansSheet.addRow([
             p.batch_no, p.mode, p.a_start, p.a_end, p.capacity, p.enrolled,
-            totalShortage === 0 ? "YES" : "NO", totalShortage,
+            shortage === 0 ? "YES" : "NO", shortage,
             p.classroom_name, p.slot, "", p.trainer_name || "UNASSIGNED",
           ]);
         }
       });
-
       plansSheet.columns = [
-        { width: 15 }, { width: 12 }, { width: 15 }, { width: 15 },
-        { width: 12 }, { width: 12 }, { width: 20 }, { width: 25 },
-        { width: 20 }, { width: 12 }, { width: 15 }, { width: 20 },
+        {width:15},{width:12},{width:15},{width:15},{width:12},{width:12},
+        {width:20},{width:25},{width:20},{width:12},{width:15},{width:20},
       ];
 
       const buffer = await workbook.xlsx.writeBuffer();
-      const blob = new Blob([buffer], {
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      });
+      const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
@@ -774,42 +632,25 @@ export default function ClassroomPlanner() {
   };
 
   const handleSaveMatrix = async () => {
-    if (!plans.length && !unallocatedBatches.length) {
-      setError("No matrix to save.");
-      return;
-    }
-
-    setSaving(true);
-    setSaveStatus("");
-    setError("");
-
+    if (!plans.length && !unallocatedBatches.length) { setError("No matrix to save."); return; }
+    setSaving(true); setSaveStatus(""); setError("");
     try {
       const allRows = [
         ...plans,
         ...unallocatedBatches.map((u) => ({
-          batch_no: u.batch_no,
-          classroom_name: null,
-          slot: null,
-          a_start: u.a_start,
-          a_end: u.a_end,
-          enrolled: u.enrolled,
-          capacity: u.capacity || 0,
-          trainer_name: u.trainer_name || null,
-          module_trainers: [],
+          batch_no: u.batch_no, classroom_name: null, slot: null,
+          a_start: u.a_start, a_end: u.a_end, enrolled: u.enrolled,
+          capacity: u.capacity || 0, trainer_name: null, module_trainers: [],
         })),
-      ];
-
-      const sortedForSave = [...allRows].sort((a, b) => {
-        const sa = a.a_start || "";
-        const sb = b.a_start || "";
+      ].sort((a, b) => {
+        const sa = a.a_start||"", sb = b.a_start||"";
         if (sa !== sb) return sa.localeCompare(sb);
-        const ea = a.a_end || "";
-        const eb = b.a_end || "";
+        const ea = a.a_end||"", eb = b.a_end||"";
         if (ea !== eb) return ea.localeCompare(eb);
-        return (a.batch_no || "").localeCompare(b.batch_no || "");
+        return (a.batch_no||"").localeCompare(b.batch_no||"");
       });
 
-      const occupancyRows = sortedForSave.map((p) => ({
+      const occupancyRows = allRows.map((p) => ({
         batch_no: p.batch_no?.trim(),
         classroom_name: p.classroom_name || null,
         slot: p.slot || null,
@@ -826,37 +667,15 @@ export default function ClassroomPlanner() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ occupancyRows }),
       });
-
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
 
       const { inserted, updated, skipped } = data.summary || {};
       setSaveStatus(`✅ ${inserted || 0} NEW + ${updated || 0} UPDATED + ${skipped || 0} unchanged`);
 
-      const currentPlansSnapshot = [...plans];
+      // Reload from DB — this now fetches batch_module_trainers too,
+      // so Trainer Matrix + License Summary + Conflicts all repopulate correctly
       await loadExistingMatrix();
-
-      setPlans((prev) => {
-        if (!prev.length) return currentPlansSnapshot;
-        return prev.map((dbPlan) => {
-          const localPlan = currentPlansSnapshot.find((lp) => lp.batch_no === dbPlan.batch_no);
-          if (localPlan) {
-            return {
-              ...dbPlan,
-              capacity: localPlan.capacity > dbPlan.capacity ? localPlan.capacity : dbPlan.capacity,
-              trainer_name:
-                dbPlan.trainer_name && dbPlan.trainer_name !== "UNASSIGNED"
-                  ? dbPlan.trainer_name
-                  : localPlan.trainer_name || "UNASSIGNED",
-              module_trainers:
-                dbPlan.module_trainers?.length
-                  ? dbPlan.module_trainers
-                  : localPlan.module_trainers || [],
-            };
-          }
-          return dbPlan;
-        });
-      });
     } catch (err) {
       console.error("Save error:", err);
       setError(err.message);
@@ -865,118 +684,67 @@ export default function ClassroomPlanner() {
     }
   };
 
-  const getWorstLicenseShortfall = (licenseInfo = []) => {
-    if (!licenseInfo.length) return null;
-    return licenseInfo.reduce(
+  const getWorstLicenseShortfall = (licenseInfo = []) =>
+    licenseInfo.reduce(
       (max, cur) => (cur.additional_needed > (max?.additional_needed || 0) ? cur : max),
       { additional_needed: 0 }
     );
-  };
 
   return (
     <Box sx={{ maxWidth: "98vw", mx: "auto", my: 4 }}>
       <Paper elevation={5} sx={{ p: 4, borderRadius: 3, mb: 4 }}>
-        <Typography variant="h4" color="primary" gutterBottom>
-          Classroom Planner
-        </Typography>
+        <Typography variant="h4" color="primary" gutterBottom>Classroom Planner</Typography>
         <Divider sx={{ mb: 3 }} />
 
         <Box sx={{ mb: 3, display: "flex", flexDirection: "column", gap: 2 }}>
           <Typography variant="subtitle1">
-            Upload CSV or XLSX file with columns: COURSE, MODE, A.START DATE, A.DUE DATE,
-            CAPACITY, ENROLLED. Only MODE = OFFLINE rows are planned.
-            Allocation is done date-wise (earliest start date gets first pick).
-            Each batch gets trainers assigned per module type (BASIC, CORE_THEORY, CORE_LAB).
+            Upload CSV or XLSX with columns: COURSE, MODE, A.START DATE, A.DUE DATE, CAPACITY, ENROLLED.
+            Only MODE = OFFLINE rows are planned. Trainers are assigned per module type (BASIC, CORE_THEORY, CORE_LAB).
           </Typography>
-
           <Button variant="contained" component="label" disabled={loading}>
             {loading ? <CircularProgress size={24} /> : "Upload File"}
-            <input
-              type="file"
-              hidden
-              accept=".csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
-              onChange={handleFileUpload}
-              disabled={loading}
-            />
+            <input type="file" hidden accept=".csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" onChange={handleFileUpload} disabled={loading} />
           </Button>
-
           <TextField
-            label="Download file name"
-            value={downloadFileName}
-            onChange={(e) => setDownloadFileName(e.target.value)}
-            fullWidth
-            disabled={loading}
-            InputProps={{
-              endAdornment: <InputAdornment position="end">.xlsx</InputAdornment>,
-            }}
+            label="Download file name" value={downloadFileName}
+            onChange={(e) => setDownloadFileName(e.target.value)} fullWidth disabled={loading}
+            InputProps={{ endAdornment: <InputAdornment position="end">.xlsx</InputAdornment> }}
           />
         </Box>
 
         <Box sx={{ display: "flex", alignItems: "center", gap: 2, my: 2, flexWrap: "wrap" }}>
           <Typography variant="subtitle1">Actions:</Typography>
-          <Button
-            variant="contained"
-            color="success"
-            onClick={handleDownloadXlsx}
-            disabled={loading || !plans.length}
-          >
-            Download XLSX
-          </Button>
-          <Button
-            variant="outlined"
-            color="primary"
-            onClick={handleSaveMatrix}
-            disabled={loading || saving || !plans.length}
-          >
+          <Button variant="contained" color="success" onClick={handleDownloadXlsx} disabled={loading || !plans.length}>Download XLSX</Button>
+          <Button variant="outlined" color="primary" onClick={handleSaveMatrix} disabled={loading || saving || !plans.length}>
             {saving ? <CircularProgress size={20} /> : "Save Matrix"}
           </Button>
-          {saveStatus && (
-            <Chip label={saveStatus} color="success" variant="filled" sx={{ ml: 1 }} />
-          )}
+          {saveStatus && <Chip label={saveStatus} color="success" variant="filled" sx={{ ml: 1 }} />}
         </Box>
 
         {loading && (
           <Box sx={{ display: "flex", alignItems: "center", gap: 2, mt: 2, p: 2, bgcolor: "primary.main", color: "white", borderRadius: 2 }}>
             <CircularProgress size={20} color="inherit" />
-            <Typography variant="body1" fontWeight="bold">
-              {processingStatus || "Processing..."}
-            </Typography>
+            <Typography variant="body1" fontWeight="bold">{processingStatus || "Processing..."}</Typography>
           </Box>
         )}
+        {!loading && processingStatus && <Chip label={processingStatus} color="info" variant="outlined" sx={{ mt: 2 }} />}
 
-        {!loading && processingStatus && (
-          <Chip label={processingStatus} color="info" variant="outlined" sx={{ mt: 2 }} />
-        )}
-
-        <Fade in={!!error}>
-          <Box>{error && <Alert severity="error" sx={{ mt: 3 }}>{error}</Alert>}</Box>
-        </Fade>
-
-        {licenseError && (
-          <Alert severity="warning" sx={{ mt: 2 }}>{licenseError}</Alert>
-        )}
+        <Fade in={!!error}><Box>{error && <Alert severity="error" sx={{ mt: 3 }}>{error}</Alert>}</Box></Fade>
+        {licenseError && <Alert severity="warning" sx={{ mt: 2 }}>{licenseError}</Alert>}
 
         <Fade in={!!selectedBatch}>
           <Box sx={{ mt: 3 }}>
             {selectedBatch && (
               <Alert severity="info" variant="outlined">
-                <Typography variant="subtitle1" fontWeight="bold">
-                  Batch Details: {selectedBatch.batch_no}
-                </Typography>
+                <Typography variant="subtitle1" fontWeight="bold">Batch Details: {selectedBatch.batch_no}</Typography>
                 <Box sx={{ mt: 1 }}>
-                  <Typography variant="body2">
-                    Capacity: {selectedBatch.capacity} | Enrolled: {selectedBatch.enrolled}
-                  </Typography>
-                  <Typography variant="body2">
-                    Dates: {selectedBatch.a_start} → {selectedBatch.a_end}
-                  </Typography>
+                  <Typography variant="body2">Capacity: {selectedBatch.capacity} | Enrolled: {selectedBatch.enrolled}</Typography>
+                  <Typography variant="body2">Dates: {selectedBatch.a_start} → {selectedBatch.a_end}</Typography>
                   <Typography variant="body2">
                     Classroom: {selectedBatch.classroom_name || "Not assigned"} | Slot:{" "}
                     {slotDisplayMap[selectedBatch.slot] || selectedBatch.slot || "Not assigned"}
                   </Typography>
-
-                  {/* FIX 3: Show module-level trainers in batch detail */}
-                  {selectedBatch.module_trainers && selectedBatch.module_trainers.length > 0 ? (
+                  {selectedBatch.module_trainers?.length > 0 ? (
                     <Box sx={{ mt: 1 }}>
                       <Typography variant="body2" fontWeight="bold">Trainers by Module Type:</Typography>
                       <TableContainer component={Paper} sx={{ maxWidth: 480, mt: 0.5 }}>
@@ -992,28 +760,11 @@ export default function ClassroomPlanner() {
                             {selectedBatch.module_trainers.map((mt, idx) => (
                               <TableRow key={idx}>
                                 <TableCell>
-                                  <Chip
-                                    label={mt.module_type}
-                                    size="small"
-                                    color={
-                                      mt.module_type === "CORE_THEORY"
-                                        ? "primary"
-                                        : mt.module_type === "CORE_LAB"
-                                        ? "secondary"
-                                        : "default"
-                                    }
-                                  />
+                                  <Chip label={mt.module_type} size="small"
+                                    color={mt.module_type === "CORE_THEORY" ? "primary" : mt.module_type === "CORE_LAB" ? "secondary" : "default"} />
                                 </TableCell>
                                 <TableCell>{mt.module_name || "-"}</TableCell>
-                                <TableCell
-                                  sx={{
-                                    color:
-                                      mt.trainer_name === "UNASSIGNED"
-                                        ? "error.main"
-                                        : "success.main",
-                                    fontWeight: 600,
-                                  }}
-                                >
+                                <TableCell sx={{ color: mt.trainer_name === "UNASSIGNED" ? "error.main" : "success.main", fontWeight: 600 }}>
                                   {mt.trainer_name || "UNASSIGNED"}
                                 </TableCell>
                               </TableRow>
@@ -1023,64 +774,37 @@ export default function ClassroomPlanner() {
                       </TableContainer>
                     </Box>
                   ) : (
-                    <Typography variant="body2">
-                      Trainer: {selectedBatch.trainer_name || "UNASSIGNED"}
-                    </Typography>
+                    <Typography variant="body2">Trainer: {selectedBatch.trainer_name || "UNASSIGNED"}</Typography>
                   )}
                 </Box>
-
-                {selectedBatch.licenseInfo && selectedBatch.licenseInfo.length > 0 && (
-                  <Box sx={{ mt: 2 }}>
-                    {(() => {
-                      const worst = getWorstLicenseShortfall(selectedBatch.licenseInfo);
-                      const totalShort = selectedBatch.licenseInfo.reduce(
-                        (sum, cur) => sum + (cur.additional_needed || 0),
-                        0
-                      );
-                      const isSufficient = totalShort <= 0;
-                      return (
-                        <>
-                          <Typography
-                            variant="body2"
-                            fontWeight="bold"
-                            color={isSufficient ? "success.main" : "error.main"}
-                          >
-                            License Status:{" "}
-                            {isSufficient
-                              ? "All licenses are sufficient for this batch."
-                              : `Insufficient license: ${worst.license_name} (have ${worst.count}, need ${worst.count + worst.additional_needed}).`}
-                          </Typography>
-                          <TableContainer component={Paper} sx={{ maxWidth: 480, mt: 1 }}>
-                            <Table size="small">
-                              <TableHead>
-                                <TableRow>
-                                  <TableCell>License Name</TableCell>
-                                  <TableCell>Count</TableCell>
-                                  <TableCell>Additional Needed</TableCell>
-                                </TableRow>
-                              </TableHead>
-                              <TableBody>
-                                {selectedBatch.licenseInfo.map((lic) => (
-                                  <TableRow key={lic.license_name}>
-                                    <TableCell>{lic.license_name}</TableCell>
-                                    <TableCell>{lic.count}</TableCell>
-                                    <TableCell
-                                      sx={{
-                                        color: lic.additional_needed > 0 ? "error.main" : "success.main",
-                                      }}
-                                    >
-                                      {lic.additional_needed}
-                                    </TableCell>
-                                  </TableRow>
-                                ))}
-                              </TableBody>
-                            </Table>
-                          </TableContainer>
-                        </>
-                      );
-                    })()}
-                  </Box>
-                )}
+                {selectedBatch.licenseInfo?.length > 0 && (() => {
+                  const worst = getWorstLicenseShortfall(selectedBatch.licenseInfo);
+                  const totalShort = selectedBatch.licenseInfo.reduce((s, c) => s + (c.additional_needed || 0), 0);
+                  return (
+                    <Box sx={{ mt: 2 }}>
+                      <Typography variant="body2" fontWeight="bold" color={totalShort <= 0 ? "success.main" : "error.main"}>
+                        License Status:{" "}
+                        {totalShort <= 0
+                          ? "All licenses are sufficient for this batch."
+                          : `Insufficient: ${worst.license_name} (have ${worst.count}, need ${worst.count + worst.additional_needed}).`}
+                      </Typography>
+                      <TableContainer component={Paper} sx={{ maxWidth: 480, mt: 1 }}>
+                        <Table size="small">
+                          <TableHead><TableRow><TableCell>License Name</TableCell><TableCell>Count</TableCell><TableCell>Additional Needed</TableCell></TableRow></TableHead>
+                          <TableBody>
+                            {selectedBatch.licenseInfo.map((lic) => (
+                              <TableRow key={lic.license_name}>
+                                <TableCell>{lic.license_name}</TableCell>
+                                <TableCell>{lic.count}</TableCell>
+                                <TableCell sx={{ color: lic.additional_needed > 0 ? "error.main" : "success.main" }}>{lic.additional_needed}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    </Box>
+                  );
+                })()}
               </Alert>
             )}
           </Box>
@@ -1089,23 +813,17 @@ export default function ClassroomPlanner() {
 
       {/* CLASSROOM MATRIX */}
       <Paper elevation={3} sx={{ p: 4, borderRadius: 3, minHeight: 320 }}>
-        <Typography variant="h5" fontWeight="bold" mb={2}>
-          Classroom Occupancy Matrix
-        </Typography>
+        <Typography variant="h5" fontWeight="bold" mb={2}>Classroom Occupancy Matrix</Typography>
         {loading ? (
           <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", height: 200 }}>
-            <CircularProgress />
-            <Typography sx={{ ml: 2 }}>Generating matrix...</Typography>
+            <CircularProgress /><Typography sx={{ ml: 2 }}>Generating matrix...</Typography>
           </Box>
         ) : !plans.length && !unallocatedBatches.length ? (
-          <Alert severity="info">
-            Upload a file with OFFLINE batches or rely on auto-loaded data to see the classroom occupancy matrix.
-          </Alert>
+          <Alert severity="info">Upload a file or load saved data to see the classroom occupancy matrix.</Alert>
         ) : (
           <>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
               Showing {plans.length} OFFLINE batches across {classrooms.length} classrooms.
-              (Date-wise allocation — earliest start date gets first pick)
             </Typography>
             <TableContainer sx={{ maxHeight: 450 }}>
               <Table size="small" stickyHeader>
@@ -1113,53 +831,25 @@ export default function ClassroomPlanner() {
                   <TableRow>
                     <TableCell>Classroom</TableCell>
                     <TableCell>Slot</TableCell>
-                    {weeks.map((w, idx) => (
-                      <TableCell key={idx} align="center">
-                        {w.month} {w.year} W{w.weekNum}
-                      </TableCell>
-                    ))}
+                    {weeks.map((w, idx) => <TableCell key={idx} align="center">{w.month} {w.year} W{w.weekNum}</TableCell>)}
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {table.map((row, idx) => (
-                    <TableRow
-                      key={idx}
-                      hover
-                      sx={row[0] === "UNALLOCATED" ? { backgroundColor: "#fff3f3" } : {}}
-                    >
+                    <TableRow key={idx} hover sx={row[0] === "UNALLOCATED" ? { backgroundColor: "#fff3f3" } : {}}>
                       {row.map((cell, jdx) =>
                         jdx < 2 ? (
-                          <TableCell
-                            key={jdx}
-                            sx={{
-                              whiteSpace: "pre-wrap",
-                              minWidth: jdx === 0 ? 140 : 80,
-                              fontWeight: jdx === 0 ? "bold" : 500,
-                            }}
-                          >
+                          <TableCell key={jdx} sx={{ whiteSpace: "pre-wrap", minWidth: jdx === 0 ? 140 : 80, fontWeight: jdx === 0 ? "bold" : 500 }}>
                             {jdx === 1 ? slotDisplayMap[cell] || cell : cell}
                           </TableCell>
                         ) : (
                           <TableCell key={jdx} sx={{ minWidth: 80, p: 0.5, textAlign: "center" }}>
                             <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 0.25 }}>
-                              {Array.isArray(cell)
-                                ? cell.filter(Boolean).map((batch, bid) => (
-                                    <Chip
-                                      key={bid}
-                                      label={batch}
-                                      size="small"
-                                      sx={{
-                                        backgroundColor: batchColorMap[batch] || "#e0e0e0",
-                                        color: "#222",
-                                        fontWeight: 600,
-                                        height: 24,
-                                        fontSize: "0.75rem",
-                                        cursor: "pointer",
-                                      }}
-                                      onClick={() => handleBatchClick(batch)}
-                                    />
-                                  ))
-                                : null}
+                              {Array.isArray(cell) && cell.filter(Boolean).map((batch, bid) => (
+                                <Chip key={bid} label={batch} size="small"
+                                  sx={{ backgroundColor: batchColorMap[batch] || "#e0e0e0", color: "#222", fontWeight: 600, height: 24, fontSize: "0.75rem", cursor: "pointer" }}
+                                  onClick={() => handleBatchClick(batch)} />
+                              ))}
                             </Box>
                           </TableCell>
                         )
@@ -1175,56 +865,35 @@ export default function ClassroomPlanner() {
 
       {/* TRAINER MATRIX */}
       <Paper elevation={3} sx={{ p: 4, borderRadius: 3, mt: 4 }}>
-        <Typography variant="h5" fontWeight="bold" mb={2}>
-          Trainer Allocation Matrix
-        </Typography>
+        <Typography variant="h5" fontWeight="bold" mb={2}>Trainer Allocation Matrix</Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Each trainer row shows which batches they teach in a given week, across all module types (BASIC, CORE_THEORY, CORE_LAB).
+          Each trainer row shows batches they handle (across BASIC, CORE_THEORY, CORE_LAB). A batch may appear under multiple trainers.
         </Typography>
         {!plans.length ? (
-          <Alert severity="info">Upload file or load saved data to see trainer allocation.</Alert>
+          <Alert severity="info">Upload a file or load saved data to see trainer allocation.</Alert>
         ) : (
           <TableContainer sx={{ maxHeight: 450 }}>
             <Table size="small" stickyHeader>
               <TableHead>
                 <TableRow>
                   <TableCell>Trainer</TableCell>
-                  {weeks.map((w, idx) => (
-                    <TableCell key={idx} align="center">
-                      {w.month} {w.year} W{w.weekNum}
-                    </TableCell>
-                  ))}
+                  {weeks.map((w, idx) => <TableCell key={idx} align="center">{w.month} {w.year} W{w.weekNum}</TableCell>)}
                 </TableRow>
               </TableHead>
               <TableBody>
                 {trainerTable.map((row, idx) => (
-                  <TableRow
-                    key={idx}
-                    sx={row[0] === "UNASSIGNED" ? { backgroundColor: "#fff3f3" } : {}}
-                  >
+                  <TableRow key={idx} sx={row[0] === "UNASSIGNED" ? { backgroundColor: "#fff3f3" } : {}}>
                     {row.map((cell, jdx) =>
                       jdx === 0 ? (
-                        <TableCell key={jdx} sx={{ fontWeight: "bold", minWidth: 140 }}>
-                          {cell}
-                        </TableCell>
+                        <TableCell key={jdx} sx={{ fontWeight: "bold", minWidth: 140 }}>{cell}</TableCell>
                       ) : (
                         <TableCell key={jdx} sx={{ textAlign: "center", p: 0.5 }}>
                           <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 0.25 }}>
-                            {Array.isArray(cell)
-                              ? cell.map((batch, bid) => (
-                                  <Chip
-                                    key={bid}
-                                    label={batch}
-                                    size="small"
-                                    sx={{
-                                      backgroundColor: trainerBatchColorMap[batch] || "#e0e0e0",
-                                      fontWeight: 600,
-                                      cursor: "pointer",
-                                    }}
-                                    onClick={() => handleBatchClick(batch)}
-                                  />
-                                ))
-                              : null}
+                            {Array.isArray(cell) && cell.map((batch, bid) => (
+                              <Chip key={bid} label={batch} size="small"
+                                sx={{ backgroundColor: trainerBatchColorMap[batch] || "#e0e0e0", fontWeight: 600, cursor: "pointer" }}
+                                onClick={() => handleBatchClick(batch)} />
+                            ))}
                           </Box>
                         </TableCell>
                       )
@@ -1240,84 +909,59 @@ export default function ClassroomPlanner() {
       {/* UNALLOCATED BATCHES */}
       {unallocatedBatches.length > 0 && (
         <Paper elevation={3} sx={{ p: 3, mt: 4 }}>
-          <Typography variant="h6" color="error" gutterBottom>
-            Unallocated Batches
-          </Typography>
+          <Typography variant="h6" color="error" gutterBottom>Unallocated Batches</Typography>
           <Table size="small">
             <TableHead>
-              <TableRow>
-                <TableCell>Batch</TableCell>
-                <TableCell>Enrolled</TableCell>
-                <TableCell>Start Date</TableCell>
-                <TableCell>End Date</TableCell>
-              </TableRow>
+              <TableRow><TableCell>Batch</TableCell><TableCell>Enrolled</TableCell><TableCell>Start Date</TableCell><TableCell>End Date</TableCell></TableRow>
             </TableHead>
             <TableBody>
-              {unallocatedBatches
-                .slice()
-                .sort((a, b) => (a.a_start || "").localeCompare(b.a_start || ""))
-                .map((u) => (
-                  <TableRow key={u.batch_no}>
-                    <TableCell>{u.batch_no}</TableCell>
-                    <TableCell>{u.enrolled}</TableCell>
-                    <TableCell>{u.a_start}</TableCell>
-                    <TableCell>{u.a_end}</TableCell>
-                  </TableRow>
-                ))}
+              {[...unallocatedBatches].sort((a, b) => (a.a_start||"").localeCompare(b.a_start||"")).map((u) => (
+                <TableRow key={u.batch_no}>
+                  <TableCell>{u.batch_no}</TableCell><TableCell>{u.enrolled}</TableCell>
+                  <TableCell>{u.a_start}</TableCell><TableCell>{u.a_end}</TableCell>
+                </TableRow>
+              ))}
             </TableBody>
           </Table>
         </Paper>
       )}
 
-      {/* TRAINER OVERLAP WARNINGS */}
+      {/* TRAINER SCHEDULING CONFLICTS */}
       {Object.keys(trainerOverlapInfo).length > 0 && (
         <Paper elevation={3} sx={{ p: 3, mt: 4, border: "2px solid #f44336" }}>
-          <Typography variant="h6" color="error" gutterBottom>
-            ⚠️ Trainer Scheduling Conflicts
-          </Typography>
+          <Typography variant="h6" color="error" gutterBottom>⚠️ Trainer Scheduling Conflicts</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            These batches could not be assigned a trainer — all eligible trainers have overlapping batches during these dates.
+            These module types could not be assigned a trainer — all eligible trainers have overlapping batches.
           </Typography>
           <TableContainer>
             <Table size="small">
               <TableHead>
                 <TableRow>
-                  <TableCell>Unassigned Batch</TableCell>
-                  <TableCell>Module Type</TableCell>
-                  <TableCell>Trainer</TableCell>
-                  <TableCell>Conflicting Batch</TableCell>
-                  <TableCell>Conflict Period</TableCell>
+                  <TableCell>Unassigned Batch</TableCell><TableCell>Module Type</TableCell>
+                  <TableCell>Trainer</TableCell><TableCell>Conflicting Batch</TableCell><TableCell>Conflict Period</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {Object.entries(trainerOverlapInfo).flatMap(([batchNo, moduleConflicts]) =>
                   (Array.isArray(moduleConflicts) ? moduleConflicts : []).flatMap((mc, i) =>
-                    (mc.conflicts || []).length > 0
+                    mc.conflicts?.length > 0
                       ? mc.conflicts.map((c, j) => (
                           <TableRow key={`${batchNo}-${i}-${j}`} sx={{ backgroundColor: "#fff3f3" }}>
                             <TableCell sx={{ fontWeight: "bold", color: "error.main" }}>{batchNo}</TableCell>
-                            <TableCell>
-                              <Chip label={mc.module_type || "-"} size="small" />
-                            </TableCell>
+                            <TableCell><Chip label={mc.module_type || "-"} size="small" /></TableCell>
                             <TableCell>{mc.trainer}</TableCell>
                             <TableCell>{c.batch_no}</TableCell>
-                            <TableCell sx={{ color: "error.main" }}>
-                              {typeof c.start === "string" ? c.start.slice(0, 10) : c.start}
-                              {" → "}
-                              {typeof c.end === "string" ? c.end.slice(0, 10) : c.end}
-                            </TableCell>
+                            <TableCell sx={{ color: "error.main" }}>{String(c.start||"").slice(0,10)} → {String(c.end||"").slice(0,10)}</TableCell>
                           </TableRow>
                         ))
-                      : [
-                          <TableRow key={`${batchNo}-${i}-no-conflict`} sx={{ backgroundColor: "#fff3f3" }}>
+                      : [(
+                          <TableRow key={`${batchNo}-${i}-none`} sx={{ backgroundColor: "#fff3f3" }}>
                             <TableCell sx={{ fontWeight: "bold", color: "error.main" }}>{batchNo}</TableCell>
-                            <TableCell>
-                              <Chip label={mc.module_type || "-"} size="small" />
-                            </TableCell>
+                            <TableCell><Chip label={mc.module_type || "-"} size="small" /></TableCell>
                             <TableCell>{mc.trainer}</TableCell>
                             <TableCell colSpan={2} sx={{ color: "text.secondary" }}>No free slot found</TableCell>
-                          </TableRow>,
-                        ]
+                          </TableRow>
+                        )]
                   )
                 )}
               </TableBody>
@@ -1326,49 +970,37 @@ export default function ClassroomPlanner() {
         </Paper>
       )}
 
-      {/* LICENSE REQUIREMENT SECTION */}
+      {/* LICENSE REQUIREMENT SUMMARY */}
       {plans.length > 0 && (
         <Paper elevation={3} sx={{ p: 3, mt: 4 }}>
-          <Typography variant="h6" color="primary" gutterBottom>
-            License Requirement Summary
-          </Typography>
+          <Typography variant="h6" color="primary" gutterBottom>License Requirement Summary</Typography>
           {(() => {
-            const licenseIssues = [];
-            plans.forEach((p) => {
-              if (!p.batch_no) return;
-              const licenseInfo = getLicenseInfoForBatch(p.batch_no, p.capacity, p.enrolled);
-              const shortages = licenseInfo.filter((l) => l.additional_needed > 0);
-              if (shortages.length > 0) licenseIssues.push({ batch_no: p.batch_no, shortages });
-            });
+            const issues = plans
+              .filter((p) => p.batch_no)
+              .map((p) => ({
+                batch_no: p.batch_no,
+                shortages: getLicenseInfoForBatch(p.batch_no, p.capacity, p.enrolled).filter((l) => l.additional_needed > 0),
+              }))
+              .filter((p) => p.shortages.length > 0);
 
-            if (licenseIssues.length === 0) {
-              return <Alert severity="success">✅ License is sufficient for all batches.</Alert>;
-            }
-
+            if (!issues.length) return <Alert severity="success">✅ License is sufficient for all batches.</Alert>;
             return (
               <Table size="small">
                 <TableHead>
                   <TableRow>
-                    <TableCell>Batch</TableCell>
-                    <TableCell>License</TableCell>
-                    <TableCell>Available</TableCell>
-                    <TableCell>Required (Capacity)</TableCell>
-                    <TableCell>Additional Needed</TableCell>
+                    <TableCell>Batch</TableCell><TableCell>License</TableCell><TableCell>Available</TableCell>
+                    <TableCell>Required (Capacity)</TableCell><TableCell>Additional Needed</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {licenseIssues.map((issue) =>
+                  {issues.map((issue) =>
                     issue.shortages.map((lic, idx) => (
                       <TableRow key={`${issue.batch_no}-${idx}`} sx={{ backgroundColor: "#fff3f3" }}>
-                        <TableCell sx={{ fontWeight: "bold", color: "error.main" }}>
-                          {issue.batch_no}
-                        </TableCell>
+                        <TableCell sx={{ fontWeight: "bold", color: "error.main" }}>{issue.batch_no}</TableCell>
                         <TableCell>{lic.license_name}</TableCell>
                         <TableCell>{lic.count}</TableCell>
                         <TableCell>{lic.required}</TableCell>
-                        <TableCell sx={{ color: "error.main", fontWeight: 600 }}>
-                          {lic.additional_needed}
-                        </TableCell>
+                        <TableCell sx={{ color: "error.main", fontWeight: 600 }}>{lic.additional_needed}</TableCell>
                       </TableRow>
                     ))
                   )}
