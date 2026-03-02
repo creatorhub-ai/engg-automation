@@ -51,18 +51,23 @@ function fileTimestamp(date) {
 }
 
 // ── Helper: pick best topic name for intermediate rows ──────────────────────
-// The backend joins course_planner_data by course_planner_id, but sometimes
-// the planner row for that date holds a non-intermediate topic first.
-// We prefer any topic that explicitly starts with "intermediate assessment"
-// and fall back to the raw value if none match.
-function resolveIntermediateTopic(topicName) {
-  if (!topicName) return "Intermediate Assessment";
-  const lower = topicName.toLowerCase();
-  // Already correct
-  if (lower.startsWith("intermediate")) return topicName;
-  // The backend may have returned a different topic for the same date;
-  // override with the canonical label so the column always reads correctly.
-  return "Intermediate Assessment";
+// The backend joins course_planner_data by course_planner_id. If the resolved
+// topic_name already contains "intermediate" anywhere (e.g. "Intermediate
+// Assessment - II"), keep it as-is. Only if the backend returned a completely
+// unrelated topic (doesn't mention "intermediate" at all) do we fall back to
+// the raw assessment_name, and finally to a generic label.
+function resolveIntermediateTopic(topicName, assessmentName) {
+  if (topicName && topicName.toLowerCase().includes("intermediate")) {
+    // Backend resolved the correct row — use it verbatim
+    return topicName;
+  }
+  // Backend linked to a wrong planner row; try the raw assessment_name stored
+  // directly on the scores row before falling back to a generic label
+  if (assessmentName && assessmentName.toLowerCase().includes("intermediate")) {
+    return assessmentName;
+  }
+  // Last resort — at least something meaningful
+  return topicName || assessmentName || "Intermediate Assessment";
 }
 
 export default function MarksDashboard({ user }) {
@@ -104,7 +109,7 @@ export default function MarksDashboard({ user }) {
           if (assessmentType === "intermediate") {
             return {
               ...row,
-              topic_name: resolveIntermediateTopic(row.topic_name),
+              topic_name: resolveIntermediateTopic(row.topic_name, row.assessment_name),
             };
           }
           return row;
