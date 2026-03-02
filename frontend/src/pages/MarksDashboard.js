@@ -32,6 +32,39 @@ const API_BASE =
   process.env.REACT_APP_API_URL ||
   "https://engg-automation.onrender.com";
 
+// ── Helper: format a Date as "DD/MM/YYYY HH:MM:SS" ─────────────────────────
+function formatTimestamp(date) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return (
+    `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ` +
+    `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+  );
+}
+
+// ── Helper: file-safe timestamp "YYYYMMDD_HHMMSS" ──────────────────────────
+function fileTimestamp(date) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return (
+    `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}` +
+    `_${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
+  );
+}
+
+// ── Helper: pick best topic name for intermediate rows ──────────────────────
+// The backend joins course_planner_data by course_planner_id, but sometimes
+// the planner row for that date holds a non-intermediate topic first.
+// We prefer any topic that explicitly starts with "intermediate assessment"
+// and fall back to the raw value if none match.
+function resolveIntermediateTopic(topicName) {
+  if (!topicName) return "Intermediate Assessment";
+  const lower = topicName.toLowerCase();
+  // Already correct
+  if (lower.startsWith("intermediate")) return topicName;
+  // The backend may have returned a different topic for the same date;
+  // override with the canonical label so the column always reads correctly.
+  return "Intermediate Assessment";
+}
+
 export default function MarksDashboard({ user }) {
   const [batchNo, setBatchNo]               = useState("");
   const [assessmentType, setAssessmentType] = useState("weekly");
@@ -66,8 +99,18 @@ export default function MarksDashboard({ user }) {
 
       const res = await axios.get(url);
       if (res.data && Array.isArray(res.data.data)) {
-        setMarksData(res.data.data);
-        setMessage(`✅ Loaded ${res.data.data.length} records`);
+        // ── Post-process: fix intermediate topic names on the client side ──
+        const processed = res.data.data.map((row) => {
+          if (assessmentType === "intermediate") {
+            return {
+              ...row,
+              topic_name: resolveIntermediateTopic(row.topic_name),
+            };
+          }
+          return row;
+        });
+        setMarksData(processed);
+        setMessage(`✅ Loaded ${processed.length} records`);
       } else {
         setMarksData([]);
         setMessage("No data found");
@@ -81,20 +124,16 @@ export default function MarksDashboard({ user }) {
   };
 
   // ── Column definitions for non-scorecard tables ──────────────────────────────
-  // course_planner_id is intentionally excluded for all non-scorecard types.
-  // learner_id is replaced by learner_name (enriched by backend).
-  // assessment_name is replaced by topic_name (enriched by backend).
   const getNonScorecardColumns = () => {
     if (!marksData.length || assessmentType === "scorecard") return [];
 
     const sampleRow = marksData[0];
     const cols = [
-      { key: "learner_name",  label: "Name"  },   // enriched in backend
-      { key: "learner_email", label: "Email" },    // enriched in backend
+      { key: "learner_name",  label: "Name"  },
+      { key: "learner_email", label: "Email" },
       { key: "batch_no",      label: "Batch" },
     ];
 
-    // Period identifier — module type uses module_no, everything else uses week_no
     if (assessmentType === "module") {
       if (sampleRow.module_no !== undefined) cols.push({ key: "module_no", label: "Module" });
     } else {
@@ -102,10 +141,7 @@ export default function MarksDashboard({ user }) {
     }
 
     cols.push({ key: "assessment_date", label: "Date" });
-
-    // Show resolved topic_name from course_planner_data (not raw assessment_name)
-    cols.push({ key: "topic_name", label: "Assessment" });
-
+    cols.push({ key: "topic_name",      label: "Assessment" });
     cols.push(
       { key: "out_off",    label: "Out Of"     },
       { key: "points",     label: "Points"     },
@@ -117,6 +153,10 @@ export default function MarksDashboard({ user }) {
 
   // ── Excel download ───────────────────────────────────────────────────────────
   const downloadExcel = () => {
+    const now       = new Date();
+    const tsDisplay = formatTimestamp(now);   // shown inside the sheet
+    const tsFile    = fileTimestamp(now);     // used in filename
+
     let exportData;
     if (assessmentType === "scorecard") {
       exportData = marksData.map((row) => ({
@@ -143,17 +183,48 @@ export default function MarksDashboard({ user }) {
         return obj;
       });
     }
-    const ws = XLSX.utils.json_to_sheet(exportData);
+
+    // Prepend a metadata row with batch, type and timestamp
+    const metaRow = {
+      "": `Batch: ${batchNo}  |  Type: ${assessmentType.toUpperCase()}  |  Downloaded: ${tsDisplay}`,
+    };
+
     const wb = XLSX.utils.book_new();
+
+    // Build worksheet manually so the meta row spans the first row
+    const ws = XLSX.utils.json_to_sheet([]);
+    // Write meta info in cell A1 as a plain string before the data
+    XLSX.utils.sheet_add_aoa(ws, [[`Batch: ${batchNo}  |  Type: ${assessmentType.toUpperCase()}  |  Downloaded: ${tsDisplay}`]], { origin: "A1" });
+    // Write the actual data table starting from row 3 (leaves a blank row gap)
+    XLSX.utils.sheet_add_json(ws, exportData, { origin: "A3" });
+
     XLSX.utils.book_append_sheet(wb, ws, "Marks Data");
-    XLSX.writeFile(wb, `marks_${batchNo}_${assessmentType}.xlsx`);
+    XLSX.writeFile(wb, `marks_${batchNo}_${assessmentType}_${tsFile}.xlsx`);
   };
 
   // ── PDF download ─────────────────────────────────────────────────────────────
   const downloadPDF = () => {
+    const now       = new Date();
+    const tsDisplay = formatTimestamp(now);
+    const tsFile    = fileTimestamp(now);
+
     const doc = new jsPDF({ orientation: "landscape" });
+
+    // Title
     doc.setFontSize(14);
-    doc.text(`Marks Report - ${batchNo}`, 14, 20);
+    doc.setFont(undefined, "bold");
+    doc.text(`Marks Report — ${batchNo}`, 14, 16);
+
+    // Subtitle with timestamp
+    doc.setFontSize(9);
+    doc.setFont(undefined, "normal");
+    doc.setTextColor(100);
+    doc.text(
+      `Assessment Type: ${assessmentType.toUpperCase()}   |   Downloaded: ${tsDisplay}`,
+      14,
+      23,
+    );
+    doc.setTextColor(0);
 
     if (assessmentType === "scorecard") {
       doc.autoTable({
@@ -173,18 +244,43 @@ export default function MarksDashboard({ user }) {
           row.viva, row.overall,
           row.grade, row.certification, row.placement,
         ]),
-        styles: { fontSize: 7 },
+        styles:       { fontSize: 7 },
+        headStyles:   { fillColor: [41, 98, 179], textColor: 255, fontStyle: "bold" },
+        alternateRowStyles: { fillColor: [245, 247, 255] },
       });
     } else {
       const columns = getNonScorecardColumns();
       doc.autoTable({
         startY: 30,
         head: [columns.map((c) => c.label)],
-        body: marksData.map((row) => columns.map((c) => row[c.key] ?? "")),
-        styles: { fontSize: 7 },
+        body: marksData.map((row) =>
+          columns.map((c) =>
+            c.key === "percentage" && row[c.key] != null
+              ? `${parseFloat(row[c.key]).toFixed(2)}%`
+              : (row[c.key] ?? "")
+          )
+        ),
+        styles:       { fontSize: 7 },
+        headStyles:   { fillColor: [41, 98, 179], textColor: 255, fontStyle: "bold" },
+        alternateRowStyles: { fillColor: [245, 247, 255] },
       });
     }
-    doc.save(`marks_${batchNo}_${assessmentType}.pdf`);
+
+    // Footer on every page: page number + timestamp
+    const pageCount = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+      doc.setFontSize(7);
+      doc.setTextColor(150);
+      doc.text(
+        `Page ${i} of ${pageCount}   |   Downloaded: ${tsDisplay}`,
+        doc.internal.pageSize.getWidth() / 2,
+        doc.internal.pageSize.getHeight() - 6,
+        { align: "center" },
+      );
+    }
+
+    doc.save(`marks_${batchNo}_${assessmentType}_${tsFile}.pdf`);
   };
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -260,7 +356,7 @@ export default function MarksDashboard({ user }) {
               <MenuItem value="weekly">Weekly</MenuItem>
               <MenuItem value="intermediate">Intermediate</MenuItem>
               <MenuItem value="module">Module</MenuItem>
-              <MenuItem value="final">Final Assessment</MenuItem>   {/* ← NEW */}
+              <MenuItem value="final">Final Assessment</MenuItem>
               <MenuItem value="scorecard">Scorecard</MenuItem>
             </Select>
           </FormControl>
