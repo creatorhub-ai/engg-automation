@@ -69,7 +69,7 @@ const PDFT_OUT_OF_RULES = [
   { keywords: ["digital design"], outOf: 30 },
   { keywords: ["cmos"], outOf: 20 },
   { keywords: ["tcl"], outOf: 25 },
-  { keywords: ["physical design"], outOf: 100 },
+  { keywords: ["physical design"], outOf: 50 },
   { keywords: ["final project"], outOf: 100 },
   { keywords: ["viva"], outOf: 25 },
 ];
