@@ -35,7 +35,7 @@ import PhoneIcon         from "@mui/icons-material/Phone";
 
 /* ─── Design tokens ──────────────────────────────────────────────────────── */
 const TOKENS = {
-  bg:          "#f0f2f7",
+  bg:          "#d4e0fd",
   surface:     "#ffffff",
   surfaceAlt:  "#f8f9fc",
   border:      "#e4e8f0",
