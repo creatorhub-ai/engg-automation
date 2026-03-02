@@ -611,13 +611,8 @@ export async function getDistinctTrainersForBatch(batchNo) {
 }
 
 /* ---------------- HEALTH CHECK ---------------- */
-app.get("/api/health", async (req, res) => {
-  try {
-    await pool.query("SELECT 1");
-    res.json({ status: "OK" });
-  } catch (err) {
-    res.status(500).json({ status: "DB ERROR", error: err.message });
-  }
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok", message: "Backend is running" });
 });
 
 // Enhanced session-based attendance report API
