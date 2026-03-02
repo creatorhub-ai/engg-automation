@@ -30,6 +30,9 @@ import RestartAltIcon from "@mui/icons-material/RestartAlt";
 import CalendarTodayIcon from "@mui/icons-material/CalendarToday";
 import GroupIcon from "@mui/icons-material/Group";
 import PersonIcon from "@mui/icons-material/Person";
+import EmailIcon from "@mui/icons-material/Email";
+import PhoneIcon from "@mui/icons-material/Phone";
+import { Tooltip as MuiTooltip } from "@mui/material";
 
 /* ─── Design tokens ──────────────────────────────────────────────────────── */
 const TOKENS = {
@@ -528,7 +531,32 @@ function BatchCard({ batch, selectedStatus, currentBatchNo, filteredTopics, onPi
       <Box sx={{ p: 3 }}>
         {/* Stat pills */}
         <Box sx={{ display: "flex", gap: 1.5, flexWrap: "wrap", mb: 2.5 }}>
-          <StatPill icon={<PersonIcon sx={{ fontSize: 16 }} />}   label="Trainer"  value={(batch.trainer_names || []).join(", ") || "—"} />
+          {/* Trainer pill with interactive tooltip */}
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              gap: 1,
+              px: 2,
+              py: 1,
+              borderRadius: "10px",
+              background: TOKENS.surfaceAlt,
+              border: `1px solid ${TOKENS.border}`,
+            }}
+          >
+            <Box sx={{ color: TOKENS.accent, display: "flex", alignItems: "center" }}>
+              <PersonIcon sx={{ fontSize: 16 }} />
+            </Box>
+            <Box>
+              <Typography sx={{ ...labelSx, fontSize: 10 }}>Trainer</Typography>
+              <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 0.3 }}>
+                {batch.trainer_names?.length
+                  ? renderTrainerNames(batch.trainer_names)
+                  : <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: TOKENS.text }}>—</Typography>
+                }
+              </Box>
+            </Box>
+          </Box>
           <StatPill icon={<GroupIcon sx={{ fontSize: 16 }} />}    label="Learners" value={batch.total_learners ?? "—"} />
           <StatPill icon={<CalendarTodayIcon sx={{ fontSize: 16 }} />} label="Start" value={batch.start_date || "—"} />
           <StatPill icon={<CalendarTodayIcon sx={{ fontSize: 16 }} />} label="End"   value={batch.end_date   || "—"} />
@@ -603,19 +631,26 @@ export default function CourseProgress() {
   const [selectedStatus, setSelectedStatus] = useState("");
   const [filteredTopics, setFilteredTopics] = useState([]);
   const [currentBatchNo, setCurrentBatchNo] = useState("");
+  const [trainerDetails, setTrainerDetails] = useState({});
 
   /* ── Initial load ── */
   useEffect(() => {
     async function fetchData() {
       try {
         setLoading(true);
-        const [domainsRes, batchesRes] = await Promise.all([
+        const [domainsRes, batchesRes, trainersRes] = await Promise.all([
           axios.get(`${API_BASE}/api/domains`),
           axios.get(`${API_BASE}/api/batches`),
+          axios.get(`${API_BASE}/api/internal-users`),
         ]);
         setDomains(domainsRes.data);
         setAllBatches(batchesRes.data);
         setBatches(batchesRes.data);
+        const trainerMap = {};
+        (trainersRes.data || []).forEach((t) => {
+          trainerMap[t.name] = { email: t.email, phone: t.phone || "—" };
+        });
+        setTrainerDetails(trainerMap);
       } catch {
         setError("Failed to load domain or batch information.");
       } finally {
@@ -711,6 +746,135 @@ export default function CourseProgress() {
   };
 
   const isMultiBatch = progressData?.batches;
+
+  /* ── Trainer tooltip renderer ── */
+  const renderTrainerNames = (trainerNames) =>
+    (trainerNames || []).map((name, index) => {
+      const details = trainerDetails[name];
+      return (
+        <span key={index}>
+          <MuiTooltip
+            arrow
+            placement="right"
+            componentsProps={{
+              tooltip: {
+                sx: {
+                  background: "linear-gradient(135deg, #1a1f36 0%, #2d3561 100%)",
+                  color: "#fff",
+                  fontSize: "0.8rem",
+                  p: 0,
+                  borderRadius: "12px",
+                  boxShadow: "0 8px 32px rgba(0,0,0,0.3)",
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  minWidth: 220,
+                  overflow: "hidden",
+                },
+              },
+              arrow: { sx: { color: "#1a1f36" } },
+            }}
+            title={
+              details ? (
+                <Box>
+                  {/* Tooltip header */}
+                  <Box
+                    sx={{
+                      px: 2,
+                      py: 1.2,
+                      background: "rgba(61,90,254,0.25)",
+                      borderBottom: "1px solid rgba(255,255,255,0.08)",
+                    }}
+                  >
+                    <Typography
+                      sx={{
+                        fontFamily: "'DM Sans', sans-serif",
+                        fontWeight: 800,
+                        fontSize: 13,
+                        color: "#fff",
+                        letterSpacing: "-0.01em",
+                      }}
+                    >
+                      {name}
+                    </Typography>
+                    <Typography
+                      sx={{
+                        fontFamily: "'DM Sans', sans-serif",
+                        fontSize: 10,
+                        color: "rgba(255,255,255,0.5)",
+                        fontWeight: 600,
+                        letterSpacing: "0.06em",
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      Trainer
+                    </Typography>
+                  </Box>
+                  {/* Tooltip body */}
+                  <Box sx={{ px: 2, py: 1.5, display: "flex", flexDirection: "column", gap: 1 }}>
+                    {/* Email row */}
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                      <EmailIcon sx={{ fontSize: 13, color: "#7c8cff", flexShrink: 0 }} />
+                      <Typography
+                        sx={{
+                          fontFamily: "'DM Sans', sans-serif",
+                          fontSize: 12,
+                          color: "#7c8cff",
+                          cursor: "pointer",
+                          textDecoration: "underline",
+                          wordBreak: "break-all",
+                          "&:hover": { color: "#a5b4ff" },
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          window.location.href = `mailto:${details.email}`;
+                        }}
+                      >
+                        {details.email}
+                      </Typography>
+                    </Box>
+                    {/* Phone row */}
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                      <PhoneIcon sx={{ fontSize: 13, color: "rgba(255,255,255,0.4)", flexShrink: 0 }} />
+                      <Typography
+                        sx={{
+                          fontFamily: "'DM Sans', sans-serif",
+                          fontSize: 12,
+                          color: "rgba(255,255,255,0.65)",
+                        }}
+                      >
+                        {details.phone}
+                      </Typography>
+                    </Box>
+                  </Box>
+                </Box>
+              ) : (
+                <Box sx={{ px: 2, py: 1.5 }}>
+                  <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: "rgba(255,255,255,0.6)" }}>
+                    No details available
+                  </Typography>
+                </Box>
+              )
+            }
+          >
+            <span
+              style={{
+                fontFamily: "'DM Sans', sans-serif",
+                fontWeight: 700,
+                fontSize: 13,
+                color: TOKENS.accent,
+                textDecoration: "underline dotted",
+                textUnderlineOffset: "3px",
+                cursor: "pointer",
+              }}
+            >
+              {name}
+            </span>
+          </MuiTooltip>
+          {index !== (trainerNames || []).length - 1 && (
+            <span style={{ color: TOKENS.textSub, margin: "0 4px" }}>,</span>
+          )}
+        </span>
+      );
+    });
 
   /* ── Render ── */
   return (
