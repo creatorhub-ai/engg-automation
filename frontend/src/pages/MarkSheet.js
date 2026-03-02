@@ -56,6 +56,13 @@ const ASSESSMENT_MAP = {
   },
 };
 
+/*
+ * Assessment types where Out Of should be AUTO-SET and LOCKED (non-editable
+ * for regular users). Weekly and Module are intentionally excluded so trainers
+ * can enter the Out Of value manually.
+ */
+const AUTO_OUT_OF_TYPES = ["intermediate", "final", "final_project", "viva"];
+
 /* ─── PDFT fixed Out Of values by topic keyword ─────────────────────────── */
 const PDFT_OUT_OF_RULES = [
   { keywords: ["intermediate"], outOf: 25 },
@@ -67,8 +74,17 @@ const PDFT_OUT_OF_RULES = [
   { keywords: ["viva"], outOf: 25 },
 ];
 
+/**
+ * Returns the fixed Out Of value for PDFT batches, but ONLY for assessment
+ * types that are supposed to be auto-populated (intermediate, final,
+ * final_project, viva). For weekly and module assessments this always
+ * returns null so the field stays editable.
+ */
 function getPdftOutOf(topicName, assessmentType) {
+  // Only auto-populate for the designated assessment types
+  if (!AUTO_OUT_OF_TYPES.includes(assessmentType)) return null;
   if (!topicName && !assessmentType) return null;
+
   const combined =
     `${topicName || ""} ${ASSESSMENT_MAP[assessmentType]?.label || ""}`.toLowerCase();
   for (const rule of PDFT_OUT_OF_RULES) {
@@ -166,6 +182,26 @@ function MarkSheet() {
   const isAutoDateAssessment =
     assessmentType === "final_project" || assessmentType === "viva";
 
+  /**
+   * Whether the Out Of field should be locked (read-only) for the current
+   * assessment type and batch.
+   *
+   * Rules:
+   *  - Admin / Manager can always edit.
+   *  - For AUTO_OUT_OF_TYPES (intermediate, final, final_project, viva):
+   *      → Locked when the marks-entry window is closed  OR  it's a PDFT batch
+   *        (PDFT has fixed Out Of for these types).
+   *  - For weekly / module assessments:
+   *      → Never locked by batch type; only locked when the window is closed
+   *        (so the trainer can still enter Out Of while the window is open).
+   */
+  const isAutoOutOfType = AUTO_OUT_OF_TYPES.includes(assessmentType);
+  const outOfLocked = canEditOutOf
+    ? false
+    : isAutoOutOfType
+    ? !windowOpen || isPdft
+    : !windowOpen;
+
   /* ── Clock ───────────────────────────────────────── */
   useEffect(() => {
     const i = setInterval(() => setCurrentDate(new Date()), 1000);
@@ -210,6 +246,7 @@ function MarkSheet() {
       setSelectedWeekNo("");
       setTopicName(ASSESSMENT_MAP[assessmentType].label);
       setPeriods([]);
+      // Auto-populate Out Of only for PDFT batches on auto-date types
       if (isPdft) {
         const fixed = getPdftOutOf("", assessmentType);
         if (fixed !== null) setOutOff(String(fixed));
@@ -314,8 +351,8 @@ function MarkSheet() {
     setMarks({});
     setOutOff("");
 
-    // Auto-populate Out Of for PDFT batches based on topic name
-    if (isPdft) {
+    // Auto-populate Out Of for PDFT batches ONLY on designated auto-out-of types
+    if (isPdft && AUTO_OUT_OF_TYPES.includes(assessmentType)) {
       const fixed = getPdftOutOf(topic, assessmentType);
       if (fixed !== null) setOutOff(String(fixed));
     }
@@ -341,7 +378,7 @@ function MarkSheet() {
     }));
   };
 
-  /* ── Out Of change (admin/manager only) ───────────────────────────────── */
+  /* ── Out Of change (admin/manager only, or unlocked types) ───────────── */
   const handleOutOfChange = (v) => {
     const val = v.replace(/\D/g, "");
     setOutOff(val);
@@ -478,9 +515,6 @@ function MarkSheet() {
     }
   };
 
-  /* ── Derived: is Out Of field locked? ────────────────────────────────── */
-  const outOfLocked = canEditOutOf ? false : !windowOpen || isPdft;
-
   /* ── Render ───────────────────────────────────────────────────────────── */
   if (loadingBatches)
     return (
@@ -574,13 +608,6 @@ function MarkSheet() {
                   </MenuItem>
                 ) : (
                   periods.map((p) => {
-                    /*
-                     * Value format: "plannerId::weekNo::date::topicName"
-                     *
-                     * plannerId = course_planner_id from the row (used when saving).
-                     * Two assessments on the same date have different topic_names
-                     * so they produce different values and appear as separate options.
-                     */
                     const plannerId =
                       p.course_planner_id ?? p.id ?? `${p.date}-${p.topic_name}`;
                     const weekNo = p.week_no ?? p.module_no ?? "";
@@ -620,7 +647,7 @@ function MarkSheet() {
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
             <Tooltip
               title={
-                isPdft && !canEditOutOf
+                isPdft && isAutoOutOfType && !canEditOutOf
                   ? "Out Of is fixed for PDFT batches"
                   : ""
               }
@@ -634,7 +661,9 @@ function MarkSheet() {
                   onChange={(e) => handleOutOfChange(e.target.value)}
                   inputProps={{ inputMode: "numeric" }}
                   helperText={
-                    isPdft && outOff && !canEditOutOf ? "Fixed" : ""
+                    isPdft && outOff && isAutoOutOfType && !canEditOutOf
+                      ? "Fixed"
+                      : ""
                   }
                 />
               </span>
@@ -682,7 +711,7 @@ function MarkSheet() {
                   <strong>Planner ID:</strong> {selectedCoursePlannerId}
                 </>
               )}
-              {isPdft && outOff && (
+              {isPdft && outOff && isAutoOutOfType && (
                 <>
                   &nbsp;|&nbsp;
                   <strong style={{ color: "#1976d2" }}>PDFT Fixed</strong>
