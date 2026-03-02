@@ -51,23 +51,24 @@ function fileTimestamp(date) {
 }
 
 // ── Helper: pick best topic name for intermediate rows ──────────────────────
-// The backend joins course_planner_data by course_planner_id. If the resolved
-// topic_name already contains "intermediate" anywhere (e.g. "Intermediate
-// Assessment - II"), keep it as-is. Only if the backend returned a completely
-// unrelated topic (doesn't mention "intermediate" at all) do we fall back to
-// the raw assessment_name, and finally to a generic label.
+// The backend's course_planner_data JOIN can resolve to a wrong topic when
+// multiple topics share the same date (e.g. "Weekly Quiz - 2.30PM" is returned
+// instead of "Intermediate Assessment - II").
+// Priority:
+//   1. assessment_name on the scores row (saved at mark-entry time) — ground truth.
+//   2. topic_name from the planner JOIN if it contains "intermediate".
+//   3. Generic fallback.
 function resolveIntermediateTopic(topicName, assessmentName) {
+  // assessment_name stored directly on the scores row is the ground truth
+  if (assessmentName && assessmentName.trim()) {
+    return assessmentName.trim();
+  }
+  // Planner JOIN resolved to the correct row
   if (topicName && topicName.toLowerCase().includes("intermediate")) {
-    // Backend resolved the correct row — use it verbatim
     return topicName;
   }
-  // Backend linked to a wrong planner row; try the raw assessment_name stored
-  // directly on the scores row before falling back to a generic label
-  if (assessmentName && assessmentName.toLowerCase().includes("intermediate")) {
-    return assessmentName;
-  }
-  // Last resort — at least something meaningful
-  return topicName || assessmentName || "Intermediate Assessment";
+  // Planner JOIN resolved to a wrong row — use generic label
+  return "Intermediate Assessment";
 }
 
 export default function MarksDashboard({ user }) {
