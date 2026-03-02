@@ -2,7 +2,6 @@ import React, { useEffect, useState } from "react";
 import axios from "axios";
 import {
   Box,
-  Paper,
   Typography,
   FormControl,
   InputLabel,
@@ -17,6 +16,7 @@ import {
   TableContainer,
   Button,
   Chip,
+  Tooltip as MuiTooltip,
 } from "@mui/material";
 import {
   PieChart,
@@ -26,13 +26,12 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import RestartAltIcon from "@mui/icons-material/RestartAlt";
+import RestartAltIcon    from "@mui/icons-material/RestartAlt";
 import CalendarTodayIcon from "@mui/icons-material/CalendarToday";
-import GroupIcon from "@mui/icons-material/Group";
-import PersonIcon from "@mui/icons-material/Person";
-import EmailIcon from "@mui/icons-material/Email";
-import PhoneIcon from "@mui/icons-material/Phone";
-import { Tooltip as MuiTooltip } from "@mui/material";
+import GroupIcon         from "@mui/icons-material/Group";
+import PersonIcon        from "@mui/icons-material/Person";
+import EmailIcon         from "@mui/icons-material/Email";
+import PhoneIcon         from "@mui/icons-material/Phone";
 
 /* ─── Design tokens ──────────────────────────────────────────────────────── */
 const TOKENS = {
@@ -50,9 +49,9 @@ const TOKENS = {
 };
 
 const STATUS_MAP = {
-  Planned:     TOKENS.planned,
-  "In Progress": TOKENS.progress,
-  Completed:   TOKENS.completed,
+  Planned:         TOKENS.planned,
+  "In Progress":   TOKENS.progress,
+  Completed:       TOKENS.completed,
 };
 
 const PIE_COLORS = [TOKENS.planned.fill, TOKENS.progress.fill, TOKENS.completed.fill];
@@ -62,35 +61,175 @@ const API_BASE =
 
 /* ─── Shared styles ──────────────────────────────────────────────────────── */
 const cardSx = {
-  background: TOKENS.surface,
-  border: `1px solid ${TOKENS.border}`,
+  background:   TOKENS.surface,
+  border:       `1px solid ${TOKENS.border}`,
   borderRadius: "16px",
-  boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
-  overflow: "hidden",
+  boxShadow:    "0 2px 12px rgba(0,0,0,0.06)",
+  overflow:     "hidden",
 };
 
 const labelSx = {
-  fontFamily: "'DM Sans', sans-serif",
-  fontSize: 11,
-  fontWeight: 700,
+  fontFamily:    "'DM Sans', sans-serif",
+  fontSize:      11,
+  fontWeight:    700,
   letterSpacing: "0.08em",
   textTransform: "uppercase",
-  color: TOKENS.textSub,
+  color:         TOKENS.textSub,
 };
 
-/* ─── Stat pill ──────────────────────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  renderTrainerNames — defined at MODULE level (outside every component)
+ *  so BatchCard, TrainerPill and any other component can call it without
+ *  the "not defined" error that occurs when it lives inside the main component.
+ *
+ *  @param trainerNames   string[]   list of trainer name strings
+ *  @param trainerDetails object     { [name]: { email, phone } }
+ * ═══════════════════════════════════════════════════════════════════════════ */
+function renderTrainerNames(trainerNames, trainerDetails) {
+  return (trainerNames || []).map((name, index) => {
+    const details = trainerDetails?.[name];
+    return (
+      <span key={name + index}>
+        <MuiTooltip
+          arrow
+          placement="right"
+          componentsProps={{
+            tooltip: {
+              sx: {
+                background:   "linear-gradient(135deg, #1a1f36 0%, #2d3561 100%)",
+                color:        "#fff",
+                p:            0,
+                borderRadius: "12px",
+                boxShadow:    "0 8px 32px rgba(0,0,0,0.3)",
+                border:       "1px solid rgba(255,255,255,0.08)",
+                minWidth:     220,
+                overflow:     "hidden",
+              },
+            },
+            arrow: { sx: { color: "#1a1f36" } },
+          }}
+          title={
+            details ? (
+              <Box>
+                {/* Header */}
+                <Box
+                  sx={{
+                    px:           2,
+                    py:           1.2,
+                    background:   "rgba(61,90,254,0.25)",
+                    borderBottom: "1px solid rgba(255,255,255,0.08)",
+                  }}
+                >
+                  <Typography
+                    sx={{
+                      fontFamily:    "'DM Sans', sans-serif",
+                      fontWeight:    800,
+                      fontSize:      13,
+                      color:         "#fff",
+                      letterSpacing: "-0.01em",
+                    }}
+                  >
+                    {name}
+                  </Typography>
+                  <Typography
+                    sx={{
+                      fontFamily:    "'DM Sans', sans-serif",
+                      fontSize:      10,
+                      fontWeight:    600,
+                      letterSpacing: "0.06em",
+                      textTransform: "uppercase",
+                      color:         "rgba(255,255,255,0.5)",
+                    }}
+                  >
+                    Trainer
+                  </Typography>
+                </Box>
+                {/* Body */}
+                <Box sx={{ px: 2, py: 1.5, display: "flex", flexDirection: "column", gap: 1 }}>
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                    <EmailIcon sx={{ fontSize: 13, color: "#7c8cff", flexShrink: 0 }} />
+                    <Typography
+                      sx={{
+                        fontFamily:     "'DM Sans', sans-serif",
+                        fontSize:       12,
+                        color:          "#7c8cff",
+                        cursor:         "pointer",
+                        textDecoration: "underline",
+                        wordBreak:      "break-all",
+                        "&:hover":      { color: "#a5b4ff" },
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        window.location.href = `mailto:${details.email}`;
+                      }}
+                    >
+                      {details.email}
+                    </Typography>
+                  </Box>
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                    <PhoneIcon sx={{ fontSize: 13, color: "rgba(255,255,255,0.4)", flexShrink: 0 }} />
+                    <Typography
+                      sx={{
+                        fontFamily: "'DM Sans', sans-serif",
+                        fontSize:   12,
+                        color:      "rgba(255,255,255,0.65)",
+                      }}
+                    >
+                      {details.phone}
+                    </Typography>
+                  </Box>
+                </Box>
+              </Box>
+            ) : (
+              <Box sx={{ px: 2, py: 1.5 }}>
+                <Typography
+                  sx={{
+                    fontFamily: "'DM Sans', sans-serif",
+                    fontSize:   12,
+                    color:      "rgba(255,255,255,0.6)",
+                  }}
+                >
+                  No details available
+                </Typography>
+              </Box>
+            )
+          }
+        >
+          <span
+            style={{
+              fontFamily:          "'DM Sans', sans-serif",
+              fontWeight:          700,
+              fontSize:            13,
+              color:               TOKENS.accent,
+              textDecoration:      "underline dotted",
+              textUnderlineOffset: "3px",
+              cursor:              "pointer",
+            }}
+          >
+            {name}
+          </span>
+        </MuiTooltip>
+        {index < (trainerNames || []).length - 1 && (
+          <span style={{ color: TOKENS.textSub, margin: "0 4px" }}>,</span>
+        )}
+      </span>
+    );
+  });
+}
+
+/* ─── StatPill ───────────────────────────────────────────────────────────── */
 function StatPill({ icon, label, value }) {
   return (
     <Box
       sx={{
-        display: "flex",
-        alignItems: "center",
-        gap: 1,
-        px: 2,
-        py: 1,
+        display:      "flex",
+        alignItems:   "center",
+        gap:          1,
+        px:           2,
+        py:           1,
         borderRadius: "10px",
-        background: TOKENS.surfaceAlt,
-        border: `1px solid ${TOKENS.border}`,
+        background:   TOKENS.surfaceAlt,
+        border:       `1px solid ${TOKENS.border}`,
       }}
     >
       <Box sx={{ color: TOKENS.accent, display: "flex", alignItems: "center" }}>
@@ -101,9 +240,9 @@ function StatPill({ icon, label, value }) {
         <Typography
           sx={{
             fontFamily: "'DM Sans', sans-serif",
-            fontSize: 13,
+            fontSize:   13,
             fontWeight: 700,
-            color: TOKENS.text,
+            color:      TOKENS.text,
             lineHeight: 1.2,
           }}
         >
@@ -114,7 +253,49 @@ function StatPill({ icon, label, value }) {
   );
 }
 
-/* ─── Custom tooltip ─────────────────────────────────────────────────────── */
+/* ─── TrainerPill — same shape as StatPill but renders interactive names ─── */
+function TrainerPill({ trainerNames, trainerDetails }) {
+  return (
+    <Box
+      sx={{
+        display:      "flex",
+        alignItems:   "flex-start",
+        gap:          1,
+        px:           2,
+        py:           1,
+        borderRadius: "10px",
+        background:   TOKENS.surfaceAlt,
+        border:       `1px solid ${TOKENS.border}`,
+        flexWrap:     "wrap",
+      }}
+    >
+      <Box sx={{ color: TOKENS.accent, display: "flex", alignItems: "center", mt: "2px" }}>
+        <PersonIcon sx={{ fontSize: 16 }} />
+      </Box>
+      <Box>
+        <Typography sx={{ ...labelSx, fontSize: 10 }}>Trainer</Typography>
+        <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 0.3 }}>
+          {trainerNames?.length
+            ? renderTrainerNames(trainerNames, trainerDetails)
+            : (
+              <Typography
+                sx={{
+                  fontFamily: "'DM Sans', sans-serif",
+                  fontSize:   13,
+                  fontWeight: 700,
+                  color:      TOKENS.text,
+                }}
+              >
+                —
+              </Typography>
+            )}
+        </Box>
+      </Box>
+    </Box>
+  );
+}
+
+/* ─── Custom recharts tooltip ────────────────────────────────────────────── */
 function CustomTooltip({ active, payload }) {
   if (!active || !payload?.length) return null;
   const { name, value } = payload[0];
@@ -122,22 +303,22 @@ function CustomTooltip({ active, payload }) {
   return (
     <Box
       sx={{
-        background: TOKENS.surface,
-        border: `1.5px solid ${colors.fill}`,
+        background:   TOKENS.surface,
+        border:       `1.5px solid ${colors.fill}`,
         borderRadius: "10px",
-        px: 2,
-        py: 1.5,
-        boxShadow: "0 4px 20px rgba(0,0,0,0.12)",
-        minWidth: 120,
+        px:           2,
+        py:           1.5,
+        boxShadow:    "0 4px 20px rgba(0,0,0,0.12)",
+        minWidth:     120,
       }}
     >
       <Typography
         sx={{
           fontFamily: "'DM Sans', sans-serif",
-          fontSize: 12,
+          fontSize:   12,
           fontWeight: 700,
-          color: colors.text,
-          mb: 0.3,
+          color:      colors.text,
+          mb:         0.3,
         }}
       >
         {name}
@@ -145,9 +326,9 @@ function CustomTooltip({ active, payload }) {
       <Typography
         sx={{
           fontFamily: "'DM Mono', monospace",
-          fontSize: 20,
+          fontSize:   20,
           fontWeight: 700,
-          color: colors.fill,
+          color:      colors.fill,
           lineHeight: 1,
         }}
       >
@@ -160,7 +341,7 @@ function CustomTooltip({ active, payload }) {
   );
 }
 
-/* ─── Custom legend ──────────────────────────────────────────────────────── */
+/* ─── Custom recharts legend ─────────────────────────────────────────────── */
 function CustomLegend({ payload }) {
   return (
     <Box sx={{ display: "flex", gap: 1.5, justifyContent: "center", flexWrap: "wrap", mt: 1 }}>
@@ -170,31 +351,31 @@ function CustomLegend({ payload }) {
           <Box
             key={entry.value}
             sx={{
-              display: "flex",
-              alignItems: "center",
-              gap: 0.7,
-              px: 1.5,
-              py: 0.5,
+              display:      "flex",
+              alignItems:   "center",
+              gap:          0.7,
+              px:           1.5,
+              py:           0.5,
               borderRadius: "20px",
-              background: colors.light,
-              border: `1px solid ${colors.fill}44`,
+              background:   colors.light,
+              border:       `1px solid ${colors.fill}44`,
             }}
           >
             <Box
               sx={{
-                width: 8,
-                height: 8,
+                width:        8,
+                height:       8,
                 borderRadius: "50%",
-                background: colors.fill,
-                flexShrink: 0,
+                background:   colors.fill,
+                flexShrink:   0,
               }}
             />
             <Typography
               sx={{
                 fontFamily: "'DM Sans', sans-serif",
-                fontSize: 12,
+                fontSize:   12,
                 fontWeight: 600,
-                color: colors.text,
+                color:      colors.text,
               }}
             >
               {entry.value}
@@ -206,8 +387,8 @@ function CustomLegend({ payload }) {
   );
 }
 
-/* ─── Custom pie label ───────────────────────────────────────────────────── */
-function renderCustomLabel({ cx, cy, midAngle, innerRadius, outerRadius, percent, name }) {
+/* ─── Inline % label inside each donut segment ───────────────────────────── */
+function renderCustomLabel({ cx, cy, midAngle, innerRadius, outerRadius, percent }) {
   if (percent < 0.05) return null;
   const RADIAN = Math.PI / 180;
   const radius = innerRadius + (outerRadius - innerRadius) * 0.55;
@@ -229,11 +410,11 @@ function renderCustomLabel({ cx, cy, midAngle, innerRadius, outerRadius, percent
 
 /* ─── Progress summary bar ───────────────────────────────────────────────── */
 function ProgressSummaryBar({ counts }) {
-  const total = Object.values(counts || {}).reduce((a, b) => a + b, 0) || 1;
+  const total    = Object.values(counts || {}).reduce((a, b) => a + b, 0) || 1;
   const segments = [
-    { key: "Completed",    color: TOKENS.completed.fill  },
-    { key: "In Progress",  color: TOKENS.progress.fill   },
-    { key: "Planned",      color: TOKENS.planned.fill    },
+    { key: "Completed",   color: TOKENS.completed.fill },
+    { key: "In Progress", color: TOKENS.progress.fill  },
+    { key: "Planned",     color: TOKENS.planned.fill   },
   ];
   return (
     <Box sx={{ mt: 2 }}>
@@ -251,25 +432,25 @@ function ProgressSummaryBar({ counts }) {
         })}
       </Box>
       <Box sx={{ display: "flex", gap: 2 }}>
-        {segments.map(({ key, color }) => {
-          const val = counts?.[key] || 0;
-          return (
-            <Typography
-              key={key}
-              sx={{
-                fontFamily: "'DM Sans', sans-serif",
-                fontSize: 11,
-                color: TOKENS.textSub,
-                display: "flex",
-                alignItems: "center",
-                gap: 0.5,
-              }}
-            >
-              <Box component="span" sx={{ width: 8, height: 8, borderRadius: "2px", background: color, display: "inline-block" }} />
-              {key}: <strong style={{ color: TOKENS.text }}>{val}</strong>
-            </Typography>
-          );
-        })}
+        {segments.map(({ key, color }) => (
+          <Typography
+            key={key}
+            sx={{
+              fontFamily: "'DM Sans', sans-serif",
+              fontSize:   11,
+              color:      TOKENS.textSub,
+              display:    "flex",
+              alignItems: "center",
+              gap:        0.5,
+            }}
+          >
+            <Box
+              component="span"
+              sx={{ width: 8, height: 8, borderRadius: "2px", background: color, display: "inline-block" }}
+            />
+            {key}: <strong style={{ color: TOKENS.text }}>{counts?.[key] || 0}</strong>
+          </Typography>
+        ))}
       </Box>
     </Box>
   );
@@ -277,7 +458,11 @@ function ProgressSummaryBar({ counts }) {
 
 /* ─── Topic table ────────────────────────────────────────────────────────── */
 function TopicTable({ batchNo, topics, selectedStatus }) {
-  const colors = STATUS_MAP[selectedStatus] || { fill: TOKENS.accent, light: TOKENS.accentLight, text: TOKENS.text };
+  const colors = STATUS_MAP[selectedStatus] || {
+    fill:  TOKENS.accent,
+    light: TOKENS.accentLight,
+    text:  TOKENS.text,
+  };
   return (
     <Box
       sx={{
@@ -286,45 +471,29 @@ function TopicTable({ batchNo, topics, selectedStatus }) {
         animation: "fadeSlideIn 0.3s ease",
         "@keyframes fadeSlideIn": {
           from: { opacity: 0, transform: "translateY(8px)" },
-          to:   { opacity: 1, transform: "translateY(0)" },
+          to:   { opacity: 1, transform: "translateY(0)"   },
         },
       }}
     >
-      {/* Table header */}
       <Box
         sx={{
-          px: 2.5,
-          py: 1.5,
-          background: colors.light,
+          px:           2.5,
+          py:           1.5,
+          background:   colors.light,
           borderBottom: `1px solid ${colors.fill}33`,
-          display: "flex",
-          alignItems: "center",
-          gap: 1.5,
+          display:      "flex",
+          alignItems:   "center",
+          gap:          1.5,
         }}
       >
         <Box sx={{ width: 10, height: 10, borderRadius: "50%", background: colors.fill }} />
-        <Typography
-          sx={{
-            fontFamily: "'DM Sans', sans-serif",
-            fontWeight: 700,
-            fontSize: 13,
-            color: colors.text,
-          }}
-        >
+        <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 13, color: colors.text }}>
           {selectedStatus} Topics — {batchNo}
         </Typography>
         <Chip
           label={topics.length}
           size="small"
-          sx={{
-            ml: "auto",
-            fontFamily: "'DM Sans', sans-serif",
-            fontWeight: 700,
-            fontSize: 11,
-            height: 20,
-            background: colors.fill,
-            color: "#fff",
-          }}
+          sx={{ ml: "auto", fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 11, height: 20, background: colors.fill, color: "#fff" }}
         />
       </Box>
 
@@ -335,13 +504,7 @@ function TopicTable({ batchNo, topics, selectedStatus }) {
               {["#", "Topic Name", "Date", "Status", "Remarks"].map((h) => (
                 <TableCell
                   key={h}
-                  sx={{
-                    ...labelSx,
-                    background: TOKENS.surfaceAlt,
-                    borderBottom: `2px solid ${TOKENS.border}`,
-                    py: 1.2,
-                    whiteSpace: "nowrap",
-                  }}
+                  sx={{ ...labelSx, background: TOKENS.surfaceAlt, borderBottom: `2px solid ${TOKENS.border}`, py: 1.2, whiteSpace: "nowrap" }}
                 >
                   {h}
                 </TableCell>
@@ -351,16 +514,7 @@ function TopicTable({ batchNo, topics, selectedStatus }) {
           <TableBody>
             {topics.length === 0 ? (
               <TableRow>
-                <TableCell
-                  colSpan={5}
-                  align="center"
-                  sx={{
-                    py: 4,
-                    fontFamily: "'DM Sans', sans-serif",
-                    color: TOKENS.textSub,
-                    fontSize: 13,
-                  }}
-                >
+                <TableCell colSpan={5} align="center" sx={{ py: 4, fontFamily: "'DM Sans', sans-serif", color: TOKENS.textSub, fontSize: 13 }}>
                   No topics found for "{selectedStatus}".
                 </TableCell>
               </TableRow>
@@ -373,77 +527,24 @@ function TopicTable({ batchNo, topics, selectedStatus }) {
                     "&:hover": { background: colors.light, transition: "background 0.15s" },
                   }}
                 >
-                  <TableCell
-                    sx={{
-                      fontFamily: "'DM Mono', monospace",
-                      fontSize: 11,
-                      color: TOKENS.textSub,
-                      width: 36,
-                    }}
-                  >
+                  <TableCell sx={{ fontFamily: "'DM Mono', monospace", fontSize: 11, color: TOKENS.textSub, width: 36 }}>
                     {idx + 1}
                   </TableCell>
-                  <TableCell
-                    sx={{
-                      fontFamily: "'DM Sans', sans-serif",
-                      fontSize: 13,
-                      fontWeight: 500,
-                      color: TOKENS.text,
-                    }}
-                  >
+                  <TableCell sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 500, color: TOKENS.text }}>
                     {topic.topic_name}
                   </TableCell>
-                  <TableCell
-                    sx={{
-                      fontFamily: "'DM Mono', monospace",
-                      fontSize: 12,
-                      color: TOKENS.textSub,
-                      whiteSpace: "nowrap",
-                    }}
-                  >
+                  <TableCell sx={{ fontFamily: "'DM Mono', monospace", fontSize: 12, color: TOKENS.textSub, whiteSpace: "nowrap" }}>
                     {topic.date}
                   </TableCell>
                   <TableCell>
-                    <Box
-                      sx={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 0.5,
-                        px: 1.2,
-                        py: 0.3,
-                        borderRadius: "20px",
-                        background: colors.light,
-                        border: `1px solid ${colors.fill}44`,
-                      }}
-                    >
-                      <Box
-                        sx={{
-                          width: 6,
-                          height: 6,
-                          borderRadius: "50%",
-                          background: colors.fill,
-                        }}
-                      />
-                      <Typography
-                        sx={{
-                          fontFamily: "'DM Sans', sans-serif",
-                          fontSize: 11,
-                          fontWeight: 700,
-                          color: colors.text,
-                        }}
-                      >
+                    <Box sx={{ display: "inline-flex", alignItems: "center", gap: 0.5, px: 1.2, py: 0.3, borderRadius: "20px", background: colors.light, border: `1px solid ${colors.fill}44` }}>
+                      <Box sx={{ width: 6, height: 6, borderRadius: "50%", background: colors.fill }} />
+                      <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 700, color: colors.text }}>
                         {topic.topic_status}
                       </Typography>
                     </Box>
                   </TableCell>
-                  <TableCell
-                    sx={{
-                      fontFamily: "'DM Sans', sans-serif",
-                      fontSize: 12,
-                      color: topic.remarks ? TOKENS.text : TOKENS.textSub,
-                      fontStyle: topic.remarks ? "normal" : "italic",
-                    }}
-                  >
+                  <TableCell sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: topic.remarks ? TOKENS.text : TOKENS.textSub, fontStyle: topic.remarks ? "normal" : "italic" }}>
                     {topic.remarks || "—"}
                   </TableCell>
                 </TableRow>
@@ -456,14 +557,18 @@ function TopicTable({ batchNo, topics, selectedStatus }) {
   );
 }
 
-/* ─── Batch progress card ────────────────────────────────────────────────── */
-function BatchCard({ batch, selectedStatus, currentBatchNo, filteredTopics, onPieClick }) {
+/* ─── BatchCard ──────────────────────────────────────────────────────────── */
+/*
+ * Receives trainerDetails as a prop and passes it into TrainerPill /
+ * renderTrainerNames. No closures over the main component's state.
+ */
+function BatchCard({ batch, selectedStatus, currentBatchNo, filteredTopics, onPieClick, trainerDetails }) {
   const pieData = [
     { name: "Planned",     value: batch.topic_status_counts?.Planned        || 0 },
     { name: "In Progress", value: batch.topic_status_counts?.["In Progress"] || 0 },
     { name: "Completed",   value: batch.topic_status_counts?.Completed       || 0 },
   ];
-  const totalCount = pieData.reduce((a, b) => a + b.value, 0);
+  const totalCount   = pieData.reduce((s, d) => s + d.value, 0);
   const completedPct = totalCount > 0
     ? Math.round(((batch.topic_status_counts?.Completed || 0) / totalCount) * 100)
     : 0;
@@ -473,52 +578,25 @@ function BatchCard({ batch, selectedStatus, currentBatchNo, filteredTopics, onPi
       {/* Card header */}
       <Box
         sx={{
-          px: 3,
-          py: 2,
-          background: `linear-gradient(135deg, ${TOKENS.accent}0d 0%, ${TOKENS.accentLight} 100%)`,
-          borderBottom: `1px solid ${TOKENS.border}`,
-          display: "flex",
-          alignItems: "center",
+          px:             3,
+          py:             2,
+          background:     `linear-gradient(135deg, ${TOKENS.accent}0d 0%, ${TOKENS.accentLight} 100%)`,
+          borderBottom:   `1px solid ${TOKENS.border}`,
+          display:        "flex",
+          alignItems:     "center",
           justifyContent: "space-between",
-          flexWrap: "wrap",
-          gap: 1,
+          flexWrap:       "wrap",
+          gap:            1,
         }}
       >
         <Box>
           <Typography sx={{ ...labelSx, mb: 0.2 }}>Batch</Typography>
-          <Typography
-            sx={{
-              fontFamily: "'DM Sans', sans-serif",
-              fontSize: 18,
-              fontWeight: 800,
-              color: TOKENS.text,
-              letterSpacing: "-0.02em",
-            }}
-          >
+          <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 18, fontWeight: 800, color: TOKENS.text, letterSpacing: "-0.02em" }}>
             {batch.batch_no}
           </Typography>
         </Box>
-        <Box
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            gap: 1,
-            px: 2,
-            py: 1,
-            borderRadius: "10px",
-            background: TOKENS.completed.light,
-            border: `1px solid ${TOKENS.completed.fill}44`,
-          }}
-        >
-          <Typography
-            sx={{
-              fontFamily: "'DM Mono', monospace",
-              fontSize: 22,
-              fontWeight: 800,
-              color: TOKENS.completed.fill,
-              lineHeight: 1,
-            }}
-          >
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2, py: 1, borderRadius: "10px", background: TOKENS.completed.light, border: `1px solid ${TOKENS.completed.fill}44` }}>
+          <Typography sx={{ fontFamily: "'DM Mono', monospace", fontSize: 22, fontWeight: 800, color: TOKENS.completed.fill, lineHeight: 1 }}>
             {completedPct}%
           </Typography>
           <Typography sx={{ ...labelSx, fontSize: 10, color: TOKENS.completed.text }}>
@@ -531,41 +609,15 @@ function BatchCard({ batch, selectedStatus, currentBatchNo, filteredTopics, onPi
       <Box sx={{ p: 3 }}>
         {/* Stat pills */}
         <Box sx={{ display: "flex", gap: 1.5, flexWrap: "wrap", mb: 2.5 }}>
-          {/* Trainer pill with interactive tooltip */}
-          <Box
-            sx={{
-              display: "flex",
-              alignItems: "center",
-              gap: 1,
-              px: 2,
-              py: 1,
-              borderRadius: "10px",
-              background: TOKENS.surfaceAlt,
-              border: `1px solid ${TOKENS.border}`,
-            }}
-          >
-            <Box sx={{ color: TOKENS.accent, display: "flex", alignItems: "center" }}>
-              <PersonIcon sx={{ fontSize: 16 }} />
-            </Box>
-            <Box>
-              <Typography sx={{ ...labelSx, fontSize: 10 }}>Trainer</Typography>
-              <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 0.3 }}>
-                {batch.trainer_names?.length
-                  ? renderTrainerNames(batch.trainer_names)
-                  : <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: TOKENS.text }}>—</Typography>
-                }
-              </Box>
-            </Box>
-          </Box>
-          <StatPill icon={<GroupIcon sx={{ fontSize: 16 }} />}    label="Learners" value={batch.total_learners ?? "—"} />
-          <StatPill icon={<CalendarTodayIcon sx={{ fontSize: 16 }} />} label="Start" value={batch.start_date || "—"} />
-          <StatPill icon={<CalendarTodayIcon sx={{ fontSize: 16 }} />} label="End"   value={batch.end_date   || "—"} />
+          <TrainerPill trainerNames={batch.trainer_names} trainerDetails={trainerDetails} />
+          <StatPill icon={<GroupIcon sx={{ fontSize: 16 }} />}         label="Learners" value={batch.total_learners ?? "—"} />
+          <StatPill icon={<CalendarTodayIcon sx={{ fontSize: 16 }} />} label="Start"    value={batch.start_date || "—"} />
+          <StatPill icon={<CalendarTodayIcon sx={{ fontSize: 16 }} />} label="End"      value={batch.end_date   || "—"} />
         </Box>
 
-        {/* Progress bar */}
         <ProgressSummaryBar counts={batch.topic_status_counts} />
 
-        {/* Pie chart */}
+        {/* Donut chart */}
         <Box sx={{ mt: 3, display: "flex", justifyContent: "center" }}>
           <Box sx={{ width: "100%", maxWidth: 380 }}>
             <Typography sx={{ ...labelSx, textAlign: "center", mb: 1 }}>
@@ -584,18 +636,11 @@ function BatchCard({ batch, selectedStatus, currentBatchNo, filteredTopics, onPi
                   paddingAngle={3}
                   labelLine={false}
                   label={renderCustomLabel}
-                  onClick={(data, index) =>
-                    onPieClick(data, index, batch.batch_no, batch.topics)
-                  }
+                  onClick={(data, index) => onPieClick(data, index, batch.batch_no, batch.topics)}
                   style={{ cursor: "pointer" }}
                 >
                   {pieData.map((_, index) => (
-                    <Cell
-                      key={`cell-${index}`}
-                      fill={PIE_COLORS[index % PIE_COLORS.length]}
-                      stroke="white"
-                      strokeWidth={2}
-                    />
+                    <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} stroke="white" strokeWidth={2} />
                   ))}
                 </Pie>
                 <Tooltip content={<CustomTooltip />} />
@@ -605,13 +650,8 @@ function BatchCard({ batch, selectedStatus, currentBatchNo, filteredTopics, onPi
           </Box>
         </Box>
 
-        {/* Topic table below pie */}
         {selectedStatus && currentBatchNo === batch.batch_no && (
-          <TopicTable
-            batchNo={batch.batch_no}
-            topics={filteredTopics}
-            selectedStatus={selectedStatus}
-          />
+          <TopicTable batchNo={batch.batch_no} topics={filteredTopics} selectedStatus={selectedStatus} />
         )}
       </Box>
     </Box>
@@ -620,14 +660,14 @@ function BatchCard({ batch, selectedStatus, currentBatchNo, filteredTopics, onPi
 
 /* ─── Main component ─────────────────────────────────────────────────────── */
 export default function CourseProgress() {
-  const [domains, setDomains]               = useState([]);
-  const [allBatches, setAllBatches]         = useState([]);
-  const [batches, setBatches]               = useState([]);
+  const [domains,        setDomains]        = useState([]);
+  const [allBatches,     setAllBatches]     = useState([]);
+  const [batches,        setBatches]        = useState([]);
   const [selectedDomain, setSelectedDomain] = useState("");
-  const [selectedBatch, setSelectedBatch]   = useState("");
-  const [loading, setLoading]               = useState(false);
-  const [progressData, setProgressData]     = useState(null);
-  const [error, setError]                   = useState("");
+  const [selectedBatch,  setSelectedBatch]  = useState("");
+  const [loading,        setLoading]        = useState(false);
+  const [progressData,   setProgressData]   = useState(null);
+  const [error,          setError]          = useState("");
   const [selectedStatus, setSelectedStatus] = useState("");
   const [filteredTopics, setFilteredTopics] = useState([]);
   const [currentBatchNo, setCurrentBatchNo] = useState("");
@@ -667,7 +707,7 @@ export default function CourseProgress() {
       setLoading(true);
       try {
         const [batchRes, progressRes] = await Promise.all([
-          axios.get(`${API_BASE}/api/batches`, { params: { domain: selectedDomain } }),
+          axios.get(`${API_BASE}/api/batches`,         { params: { domain: selectedDomain } }),
           axios.get(`${API_BASE}/api/course-progress`, { params: { domain: selectedDomain } }),
         ]);
         setBatches(batchRes.data);
@@ -704,7 +744,7 @@ export default function CourseProgress() {
     fetchBatchProgress();
   }, [selectedBatch]);
 
-  const handlePieClick = (data, index, batchNo, topicsArr) => {
+  const handlePieClick = (data, _index, batchNo, topicsArr) => {
     setSelectedStatus(data.name);
     setCurrentBatchNo(batchNo);
     setFilteredTopics((topicsArr || []).filter((t) => t.topic_status === data.name));
@@ -745,172 +785,19 @@ export default function CourseProgress() {
     setBatches(allBatches);
   };
 
-  const isMultiBatch = progressData?.batches;
+  const isMultiBatch = Boolean(progressData?.batches);
 
-  /* ── Trainer tooltip renderer ── */
-  const renderTrainerNames = (trainerNames) =>
-    (trainerNames || []).map((name, index) => {
-      const details = trainerDetails[name];
-      return (
-        <span key={index}>
-          <MuiTooltip
-            arrow
-            placement="right"
-            componentsProps={{
-              tooltip: {
-                sx: {
-                  background: "linear-gradient(135deg, #1a1f36 0%, #2d3561 100%)",
-                  color: "#fff",
-                  fontSize: "0.8rem",
-                  p: 0,
-                  borderRadius: "12px",
-                  boxShadow: "0 8px 32px rgba(0,0,0,0.3)",
-                  border: "1px solid rgba(255,255,255,0.08)",
-                  minWidth: 220,
-                  overflow: "hidden",
-                },
-              },
-              arrow: { sx: { color: "#1a1f36" } },
-            }}
-            title={
-              details ? (
-                <Box>
-                  {/* Tooltip header */}
-                  <Box
-                    sx={{
-                      px: 2,
-                      py: 1.2,
-                      background: "rgba(61,90,254,0.25)",
-                      borderBottom: "1px solid rgba(255,255,255,0.08)",
-                    }}
-                  >
-                    <Typography
-                      sx={{
-                        fontFamily: "'DM Sans', sans-serif",
-                        fontWeight: 800,
-                        fontSize: 13,
-                        color: "#fff",
-                        letterSpacing: "-0.01em",
-                      }}
-                    >
-                      {name}
-                    </Typography>
-                    <Typography
-                      sx={{
-                        fontFamily: "'DM Sans', sans-serif",
-                        fontSize: 10,
-                        color: "rgba(255,255,255,0.5)",
-                        fontWeight: 600,
-                        letterSpacing: "0.06em",
-                        textTransform: "uppercase",
-                      }}
-                    >
-                      Trainer
-                    </Typography>
-                  </Box>
-                  {/* Tooltip body */}
-                  <Box sx={{ px: 2, py: 1.5, display: "flex", flexDirection: "column", gap: 1 }}>
-                    {/* Email row */}
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                      <EmailIcon sx={{ fontSize: 13, color: "#7c8cff", flexShrink: 0 }} />
-                      <Typography
-                        sx={{
-                          fontFamily: "'DM Sans', sans-serif",
-                          fontSize: 12,
-                          color: "#7c8cff",
-                          cursor: "pointer",
-                          textDecoration: "underline",
-                          wordBreak: "break-all",
-                          "&:hover": { color: "#a5b4ff" },
-                        }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          window.location.href = `mailto:${details.email}`;
-                        }}
-                      >
-                        {details.email}
-                      </Typography>
-                    </Box>
-                    {/* Phone row */}
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                      <PhoneIcon sx={{ fontSize: 13, color: "rgba(255,255,255,0.4)", flexShrink: 0 }} />
-                      <Typography
-                        sx={{
-                          fontFamily: "'DM Sans', sans-serif",
-                          fontSize: 12,
-                          color: "rgba(255,255,255,0.65)",
-                        }}
-                      >
-                        {details.phone}
-                      </Typography>
-                    </Box>
-                  </Box>
-                </Box>
-              ) : (
-                <Box sx={{ px: 2, py: 1.5 }}>
-                  <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: "rgba(255,255,255,0.6)" }}>
-                    No details available
-                  </Typography>
-                </Box>
-              )
-            }
-          >
-            <span
-              style={{
-                fontFamily: "'DM Sans', sans-serif",
-                fontWeight: 700,
-                fontSize: 13,
-                color: TOKENS.accent,
-                textDecoration: "underline dotted",
-                textUnderlineOffset: "3px",
-                cursor: "pointer",
-              }}
-            >
-              {name}
-            </span>
-          </MuiTooltip>
-          {index !== (trainerNames || []).length - 1 && (
-            <span style={{ color: TOKENS.textSub, margin: "0 4px" }}>,</span>
-          )}
-        </span>
-      );
-    });
-
-  /* ── Render ── */
   return (
-    <Box
-      sx={{
-        minHeight: "100vh",
-        background: TOKENS.bg,
-        p: { xs: 2, md: 4 },
-        fontFamily: "'DM Sans', sans-serif",
-      }}
-    >
-      {/* Google Fonts */}
+    <Box sx={{ minHeight: "100vh", background: TOKENS.bg, p: { xs: 2, md: 4 }, fontFamily: "'DM Sans', sans-serif" }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');`}</style>
 
       <Box sx={{ maxWidth: 960, mx: "auto" }}>
-        {/* Page header */}
+        {/* Header */}
         <Box sx={{ mb: 4 }}>
-          <Typography
-            sx={{
-              fontFamily: "'DM Sans', sans-serif",
-              fontSize: { xs: 24, md: 30 },
-              fontWeight: 800,
-              color: TOKENS.text,
-              letterSpacing: "-0.03em",
-              mb: 0.5,
-            }}
-          >
+          <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: { xs: 24, md: 30 }, fontWeight: 800, color: TOKENS.text, letterSpacing: "-0.03em", mb: 0.5 }}>
             Course Progress
           </Typography>
-          <Typography
-            sx={{
-              fontFamily: "'DM Sans', sans-serif",
-              fontSize: 14,
-              color: TOKENS.textSub,
-            }}
-          >
+          <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, color: TOKENS.textSub }}>
             Monitor training progress by domain or individual batch
           </Typography>
         </Box>
@@ -919,55 +806,30 @@ export default function CourseProgress() {
         <Box sx={{ ...cardSx, p: 3, mb: 3 }}>
           <Typography sx={{ ...labelSx, mb: 2 }}>Filter</Typography>
           <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap", alignItems: "flex-end" }}>
-            {/* Domain */}
             <FormControl sx={{ minWidth: 220 }} size="small">
-              <InputLabel
-                sx={{
-                  fontFamily: "'DM Sans', sans-serif",
-                  fontSize: 13,
-                }}
-              >
-                Domain
-              </InputLabel>
+              <InputLabel sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Domain</InputLabel>
               <Select
                 value={selectedDomain}
                 label="Domain"
                 onChange={handleDomainChange}
                 disabled={Boolean(selectedBatch) || loading}
-                sx={{
-                  fontFamily: "'DM Sans', sans-serif",
-                  fontSize: 13,
-                  borderRadius: "10px",
-                  "& .MuiOutlinedInput-notchedOutline": { borderColor: TOKENS.border },
-                  "&:hover .MuiOutlinedInput-notchedOutline": { borderColor: TOKENS.accent },
-                }}
+                sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, borderRadius: "10px", "& .MuiOutlinedInput-notchedOutline": { borderColor: TOKENS.border }, "&:hover .MuiOutlinedInput-notchedOutline": { borderColor: TOKENS.accent } }}
               >
                 <MenuItem value=""><em>Select Domain</em></MenuItem>
                 {domains.map((d) => (
-                  <MenuItem key={d} value={d} sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>
-                    {d}
-                  </MenuItem>
+                  <MenuItem key={d} value={d} sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>{d}</MenuItem>
                 ))}
               </Select>
             </FormControl>
 
-            {/* Batch */}
             <FormControl sx={{ minWidth: 220 }} size="small">
-              <InputLabel sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>
-                Batch No
-              </InputLabel>
+              <InputLabel sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Batch No</InputLabel>
               <Select
                 value={selectedBatch}
                 label="Batch No"
                 onChange={handleBatchChange}
                 disabled={Boolean(selectedDomain) || loading}
-                sx={{
-                  fontFamily: "'DM Sans', sans-serif",
-                  fontSize: 13,
-                  borderRadius: "10px",
-                  "& .MuiOutlinedInput-notchedOutline": { borderColor: TOKENS.border },
-                  "&:hover .MuiOutlinedInput-notchedOutline": { borderColor: TOKENS.accent },
-                }}
+                sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, borderRadius: "10px", "& .MuiOutlinedInput-notchedOutline": { borderColor: TOKENS.border }, "&:hover .MuiOutlinedInput-notchedOutline": { borderColor: TOKENS.accent } }}
               >
                 <MenuItem value=""><em>Select Batch</em></MenuItem>
                 {batches.map((b) => (
@@ -978,29 +840,13 @@ export default function CourseProgress() {
               </Select>
             </FormControl>
 
-            {/* Reset */}
             <Button
               variant="outlined"
               startIcon={<RestartAltIcon sx={{ fontSize: 16 }} />}
               onClick={handleReset}
               disabled={!selectedDomain && !selectedBatch}
               size="small"
-              sx={{
-                fontFamily: "'DM Sans', sans-serif",
-                fontWeight: 700,
-                fontSize: 12,
-                borderRadius: "10px",
-                borderColor: TOKENS.border,
-                color: TOKENS.textSub,
-                textTransform: "none",
-                px: 2,
-                height: 40,
-                "&:hover": {
-                  borderColor: TOKENS.accent,
-                  color: TOKENS.accent,
-                  background: TOKENS.accentLight,
-                },
-              }}
+              sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 12, borderRadius: "10px", borderColor: TOKENS.border, color: TOKENS.textSub, textTransform: "none", px: 2, height: 40, "&:hover": { borderColor: TOKENS.accent, color: TOKENS.accent, background: TOKENS.accentLight } }}
             >
               Reset
             </Button>
@@ -1009,25 +855,9 @@ export default function CourseProgress() {
 
         {/* Loading */}
         {loading && (
-          <Box
-            sx={{
-              ...cardSx,
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              py: 8,
-              gap: 2,
-            }}
-          >
+          <Box sx={{ ...cardSx, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", py: 8, gap: 2 }}>
             <CircularProgress size={36} sx={{ color: TOKENS.accent }} />
-            <Typography
-              sx={{
-                fontFamily: "'DM Sans', sans-serif",
-                fontSize: 13,
-                color: TOKENS.textSub,
-              }}
-            >
+            <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TOKENS.textSub }}>
               Loading progress data…
             </Typography>
           </Box>
@@ -1035,23 +865,8 @@ export default function CourseProgress() {
 
         {/* Error */}
         {error && !loading && (
-          <Box
-            sx={{
-              ...cardSx,
-              px: 3,
-              py: 2,
-              background: "#fff5f5",
-              border: `1px solid #fca5a5`,
-            }}
-          >
-            <Typography
-              sx={{
-                fontFamily: "'DM Sans', sans-serif",
-                fontSize: 13,
-                color: "#b91c1c",
-                fontWeight: 500,
-              }}
-            >
+          <Box sx={{ ...cardSx, px: 3, py: 2, background: "#fff5f5", border: "1px solid #fca5a5" }}>
+            <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: "#b91c1c", fontWeight: 500 }}>
               {error}
             </Typography>
           </Box>
@@ -1061,50 +876,16 @@ export default function CourseProgress() {
         {isMultiBatch && !loading && (
           <Box>
             <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, mb: 3 }}>
-              <Typography
-                sx={{
-                  fontFamily: "'DM Sans', sans-serif",
-                  fontSize: 16,
-                  fontWeight: 700,
-                  color: TOKENS.text,
-                }}
-              >
+              <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 16, fontWeight: 700, color: TOKENS.text }}>
                 Domain:
               </Typography>
-              <Chip
-                label={progressData.domain}
-                sx={{
-                  fontFamily: "'DM Sans', sans-serif",
-                  fontWeight: 700,
-                  fontSize: 13,
-                  background: TOKENS.accentLight,
-                  color: TOKENS.accent,
-                  border: `1px solid ${TOKENS.accent}33`,
-                }}
-              />
-              <Chip
-                label={`${progressData.batches.length} batches`}
-                size="small"
-                sx={{
-                  fontFamily: "'DM Sans', sans-serif",
-                  fontWeight: 600,
-                  fontSize: 11,
-                  background: TOKENS.surfaceAlt,
-                  color: TOKENS.textSub,
-                  border: `1px solid ${TOKENS.border}`,
-                }}
-              />
+              <Chip label={progressData.domain} sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 13, background: TOKENS.accentLight, color: TOKENS.accent, border: `1px solid ${TOKENS.accent}33` }} />
+              <Chip label={`${progressData.batches.length} batches`} size="small" sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 600, fontSize: 11, background: TOKENS.surfaceAlt, color: TOKENS.textSub, border: `1px solid ${TOKENS.border}` }} />
             </Box>
 
             {progressData.batches.length === 0 ? (
               <Box sx={{ ...cardSx, p: 4, textAlign: "center" }}>
-                <Typography
-                  sx={{
-                    fontFamily: "'DM Sans', sans-serif",
-                    fontSize: 14,
-                    color: TOKENS.textSub,
-                  }}
-                >
+                <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, color: TOKENS.textSub }}>
                   No batches found for this domain.
                 </Typography>
               </Box>
@@ -1117,6 +898,7 @@ export default function CourseProgress() {
                   currentBatchNo={currentBatchNo}
                   filteredTopics={filteredTopics}
                   onPieClick={handlePieClick}
+                  trainerDetails={trainerDetails}
                 />
               ))
             )}
@@ -1131,6 +913,7 @@ export default function CourseProgress() {
             currentBatchNo={currentBatchNo}
             filteredTopics={filteredTopics}
             onPieClick={handlePieClick}
+            trainerDetails={trainerDetails}
           />
         )}
       </Box>
