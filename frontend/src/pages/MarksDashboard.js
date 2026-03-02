@@ -468,8 +468,10 @@ export default function MarksDashboard({ user }) {
               <Typography variant="caption" color="text.secondary">
                 <strong>Weightage:</strong>&nbsp;
                 Intermediate 10% + Theory (Digital+CMOS+TCL) 20% + Physical Design 30% + Final Project 30% + Viva 10% = 100%
-                &nbsp;|&nbsp;<strong>Certification:</strong> Overall ≥ 70%
-                &nbsp;|&nbsp;<strong>Placement:</strong> Overall ≥ 80%
+                &nbsp;|&nbsp;
+                <strong>Certification:</strong> Project ≥ 70% AND Overall ≥ 70%
+                &nbsp;|&nbsp;
+                <strong>Placement:</strong> Project ≥ 70% AND Viva ≥ 70% AND Overall ≥ 80%
               </Typography>
             </Box>
           </>

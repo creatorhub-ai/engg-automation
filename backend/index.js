@@ -3980,8 +3980,26 @@ app.get("/api/scorecard/:batchNo", async (req, res) => {
       else if (overall >= 70) grade = "C";
       else if (overall >= 60) grade = "D";
 
-      const certification = overall >= 70 ? "YES" : "NO";
-      const placement     = overall >= 80 ? "YES" : "NO";
+      // ── Certification Eligibility ─────────────────────────────
+      // Condition:
+      //   Project >= 70%  AND  Overall >= 70%
+      const certification =
+        projectOutOf100 >= 70 &&
+        overall >= 70
+          ? "YES"
+          : "NO";
+
+      // ── Placement Eligibility ─────────────────────────────────
+      // Condition:
+      //   Project >= 70%  AND
+      //   Viva >= 70%     AND
+      //   Overall >= 80%
+      const placement =
+        projectOutOf100 >= 70 &&
+        vivaOutOf100 >= 70 &&
+        overall >= 80
+          ? "YES"
+          : "NO";
 
       // Debug log (remove or reduce in production)
       console.log(
