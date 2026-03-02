@@ -1,58 +1,123 @@
 import React, { useState } from "react";
-import {
-  Box,
-  Paper,
-  Typography,
-  Tabs,
-  Tab,
-} from "@mui/material";
+import { Box, Typography, Tabs, Tab } from "@mui/material";
 import MarkSheet from "./MarkSheet";
 import MarksDashboard from "./MarksDashboard";
+
+/* ─── Design tokens ──────────────────────────────────────────────────────── */
+const T = {
+  surface:     "#ffffff",
+  surfaceAlt:  "#eef3ff",
+  border:      "#c3d3f8",
+  accent:      "#2563eb",
+  accentDark:  "#1d4ed8",
+  accentLight: "#dbeafe",
+  text:        "#1e2d5a",
+  textSub:     "#5b6f9c",
+};
+
+const TAB_ITEMS = [
+  { value: "mark-entry",       emoji: "📝", label: "Mark Entry"       },
+  { value: "marks-dashboard",  emoji: "📊", label: "Marks Dashboard"  },
+];
 
 export default function MarkEntryDashboard({ user, token }) {
   const [activeTab, setActiveTab] = useState("mark-entry");
 
-  const handleTabChange = (event, newValue) => {
-    setActiveTab(newValue);
-  };
-
   return (
-    <Box sx={{ maxWidth: 1700, mx: "auto", my: 3, px: 2 }}>
-      <Paper elevation={4} sx={{ p: 2, borderRadius: 3 }}>
-        <Typography variant="h4" color="primary" gutterBottom>
-          Mark Entry Dashboard
-        </Typography>
+    <Box sx={{ fontFamily: "'DM Sans', sans-serif" }}>
 
-        {/* Top horizontal sub‑dashboards */}
+      {/* ── Sub-header + tab bar ── */}
+      <Box
+        sx={{
+          background:   T.surface,
+          borderRadius: "16px",
+          border:       `1px solid ${T.border}`,
+          boxShadow:    "0 2px 14px rgba(37,99,235,0.07)",
+          px:           { xs: 2, md: 3 },
+          pt:           2.5,
+          pb:           0,
+          mb:           2,
+        }}
+      >
+        {/* Section title */}
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, mb: 1.5 }}>
+          <Box
+            sx={{
+              width:          38,
+              height:         38,
+              borderRadius:   "11px",
+              background:     `linear-gradient(135deg, ${T.accent} 0%, ${T.accentDark} 100%)`,
+              display:        "flex",
+              alignItems:     "center",
+              justifyContent: "center",
+              fontSize:       17,
+              flexShrink:     0,
+              boxShadow:      `0 3px 10px ${T.accent}33`,
+            }}
+          >
+            📝
+          </Box>
+          <Typography
+            sx={{
+              fontFamily:    "'DM Sans', sans-serif",
+              fontWeight:    800,
+              fontSize:      18,
+              color:         T.text,
+              letterSpacing: "-0.02em",
+            }}
+          >
+            Mark Entry Dashboard
+          </Typography>
+        </Box>
+
+        {/* Tabs */}
         <Tabs
           value={activeTab}
-          onChange={handleTabChange}
-          indicatorColor="primary"
-          textColor="primary"
+          onChange={(_, v) => setActiveTab(v)}
           variant="scrollable"
           scrollButtons="auto"
-          sx={{ borderBottom: 1, borderColor: "divider", mb: 2 }}
+          sx={{
+            "& .MuiTabs-indicator": {
+              height:       3,
+              borderRadius: "3px 3px 0 0",
+              background:   `linear-gradient(90deg, ${T.accent}, ${T.accentDark})`,
+            },
+            "& .MuiTab-root": {
+              fontFamily:    "'DM Sans', sans-serif",
+              fontWeight:    600,
+              fontSize:      13,
+              color:         T.textSub,
+              textTransform: "none",
+              minHeight:     46,
+              px:            2,
+              transition:    "color 0.2s",
+            },
+            "& .Mui-selected": {
+              color:      `${T.accent} !important`,
+              fontWeight: "800 !important",
+            },
+          }}
         >
-          <Tab
-            label="📝 Mark Entry"
-            value="mark-entry"
-          />
-          <Tab
-            label="📊 Marks Dashboard"
-            value="marks-dashboard"
-          />
+          {TAB_ITEMS.map((tab) => (
+            <Tab
+              key={tab.value}
+              value={tab.value}
+              label={
+                <Box sx={{ display: "flex", alignItems: "center", gap: 0.7 }}>
+                  <span style={{ fontSize: 14 }}>{tab.emoji}</span>
+                  <span>{tab.label}</span>
+                </Box>
+              }
+            />
+          ))}
         </Tabs>
+      </Box>
 
-        {/* Content area */}
-        <Box sx={{ mt: 1 }}>
-          {activeTab === "mark-entry" && (
-            <MarkSheet />
-          )}
-          {activeTab === "marks-dashboard" && (
-            <MarksDashboard user={user} token={token} />
-          )}
-        </Box>
-      </Paper>
+      {/* ── Content ── */}
+      <Box>
+        {activeTab === "mark-entry"      && <MarkSheet />}
+        {activeTab === "marks-dashboard" && <MarksDashboard user={user} token={token} />}
+      </Box>
     </Box>
   );
 }

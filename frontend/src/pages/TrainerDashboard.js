@@ -2,7 +2,6 @@ import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import {
   Box,
-  Paper,
   Typography,
   MenuItem,
   FormControl,
@@ -39,29 +38,90 @@ import TrainerAssignmentDashboard from "./TrainerAssignmentDashboard";
 
 const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 
-const statusChipColor = {
-  Completed: green[600],
-  "In Progress": orange[600],
-  Planned: red[600],
+/* ─── Design tokens ──────────────────────────────────────────────────────── */
+const T = {
+  surface:     "#ffffff",
+  surfaceAlt:  "#eef3ff",
+  border:      "#c3d3f8",
+  accent:      "#2563eb",
+  accentDark:  "#1d4ed8",
+  accentLight: "#dbeafe",
+  text:        "#1e2d5a",
+  textSub:     "#5b6f9c",
+  success:     "#16a34a",
+  warning:     "#d97706",
+  danger:      "#dc2626",
 };
 
+/* Shared card style */
+const cardSx = {
+  background:   T.surface,
+  borderRadius: "16px",
+  border:       `1px solid ${T.border}`,
+  boxShadow:    "0 2px 16px rgba(37,99,235,0.08)",
+  overflow:     "hidden",
+};
+
+/* Uppercase section label */
+const labelSx = {
+  fontFamily:    "'DM Sans', sans-serif",
+  fontSize:      10,
+  fontWeight:    700,
+  letterSpacing: "0.08em",
+  textTransform: "uppercase",
+  color:         T.textSub,
+};
+
+/* Status badge colours */
+const STATUS_COLORS = {
+  Completed:     { bg: "#dcfce7", text: "#15803d", border: "#86efac" },
+  "In Progress": { bg: "#fef3c7", text: "#b45309", border: "#fcd34d" },
+  Planned:       { bg: "#fee2e2", text: "#b91c1c", border: "#fca5a5" },
+};
+
+/* Reusable MUI Select + TextField style */
+const fieldSx = {
+  "& .MuiOutlinedInput-root": {
+    borderRadius: "10px",
+    fontFamily:   "'DM Sans', sans-serif",
+    fontSize:     13,
+    background:   T.surfaceAlt,
+    "& fieldset":               { borderColor: T.border },
+    "&:hover fieldset":          { borderColor: T.accent },
+    "&.Mui-focused fieldset":    { borderColor: T.accent },
+  },
+  "& .MuiInputLabel-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 13 },
+};
+
+/* Dialog paper style */
+const dialogSx = {
+  "& .MuiDialog-paper": {
+    borderRadius: "18px",
+    fontFamily:   "'DM Sans', sans-serif",
+    boxShadow:    "0 12px 48px rgba(37,99,235,0.18)",
+    border:       `1px solid ${T.border}`,
+  },
+};
+
+/* ══════════════════════════════════════════════════════════════════════════
+   TrainerUnavailabilityForm
+══════════════════════════════════════════════════════════════════════════ */
 function TrainerUnavailabilityForm({ user, token }) {
-  const [domain, setDomain] = useState("");
-  const [start, setStart] = useState("");
-  const [end, setEnd] = useState("");
-  const [reason, setReason] = useState("");
-  const [trainerBatches, setTrainerBatches] = useState([]);
+  const [domain,          setDomain]          = useState("");
+  const [start,           setStart]           = useState("");
+  const [end,             setEnd]             = useState("");
+  const [reason,          setReason]          = useState("");
+  const [trainerBatches,  setTrainerBatches]  = useState([]);
   const [selectedBatchNos, setSelectedBatchNos] = useState([]);
-  const [msg, setMsg] = useState("");
-  const [err, setErr] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const [msg,             setMsg]             = useState("");
+  const [err,             setErr]             = useState("");
+  const [loading,         setLoading]         = useState(false);
+  const [submitting,      setSubmitting]       = useState(false);
 
   const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
 
   const fetchBatches = useCallback(async () => {
     if (!user?.email) return;
-    
     try {
       setLoading(true);
       const res = await axios.get(`${API_BASE}/api/trainer-batches`, {
@@ -69,10 +129,8 @@ function TrainerUnavailabilityForm({ user, token }) {
         headers: authHeaders,
         timeout: 10000,
       });
-      
       const list = Array.isArray(res.data) ? res.data : [];
       setTrainerBatches(list);
-
       if (list.length === 1) {
         setSelectedBatchNos([list[0].batch_no || list[0].batchno]);
         setDomain(list[0].domain || "");
@@ -83,24 +141,16 @@ function TrainerUnavailabilityForm({ user, token }) {
     } finally {
       setLoading(false);
     }
-  }, [user?.email, token]);
+  }, [user?.email, token]); // eslint-disable-line
 
-  useEffect(() => {
-    fetchBatches();
-  }, [fetchBatches]);
+  useEffect(() => { fetchBatches(); }, [fetchBatches]);
 
   useEffect(() => {
     if (selectedBatchNos.length === 0) return;
-
-    const selectedDetails = trainerBatches.filter((b) => {
-      const bn = b.batch_no || b.batchno;
-      return selectedBatchNos.includes(bn);
-    });
-
-    const uniqueDomains = Array.from(
-      new Set(selectedDetails.map((b) => b.domain || ""))
+    const selectedDetails = trainerBatches.filter((b) =>
+      selectedBatchNos.includes(b.batch_no || b.batchno)
     );
-
+    const uniqueDomains = Array.from(new Set(selectedDetails.map((b) => b.domain || "")));
     if (uniqueDomains.length === 1) setDomain(uniqueDomains[0]);
   }, [selectedBatchNos, trainerBatches]);
 
@@ -109,112 +159,67 @@ function TrainerUnavailabilityForm({ user, token }) {
     setSelectedBatchNos(typeof value === "string" ? value.split(",") : value);
   };
 
-  // 🔥 FIXED: Complete submitUnavailability function
   const submitUnavailability = async () => {
-    setMsg("");
-    setErr("");
-    setSubmitting(true);
-
-    // Validation
-    if (!start || !end) {
-      setErr("Please select From and To dates");
-      setSubmitting(false);
-      return;
-    }
-
-    if (new Date(start) > new Date(end)) {
-      setErr("End date must be after start date");
-      setSubmitting(false);
-      return;
-    }
-
-    if (selectedBatchNos.length === 0) {
-      setErr("Please select at least one batch");
-      setSubmitting(false);
-      return;
-    }
-
-    if (!domain) {
-      setErr("Domain is required");
-      setSubmitting(false);
-      return;
-    }
+    setMsg(""); setErr(""); setSubmitting(true);
+    if (!start || !end) { setErr("Please select From and To dates"); setSubmitting(false); return; }
+    if (new Date(start) > new Date(end)) { setErr("End date must be after start date"); setSubmitting(false); return; }
+    if (selectedBatchNos.length === 0) { setErr("Please select at least one batch"); setSubmitting(false); return; }
+    if (!domain) { setErr("Domain is required"); setSubmitting(false); return; }
 
     try {
-      console.log("📤 Submitting leave:", {
-        trainer_email: user.email,
-        trainer_name: user.name,
-        domain,
-        start_date: start,
-        end_date: end,
-        batch_nos: selectedBatchNos.join(","),
-        reason
-      });
-
-      // 🔥 FIXED: Correct axios.post + response handling
+      console.log("📤 Submitting leave:", { trainer_email: user.email, trainer_name: user.name, domain, start_date: start, end_date: end, batch_nos: selectedBatchNos.join(","), reason });
       const response = await axios.post(
-        `${API_BASE}/api/trainer-leaves`, // ✅ Correct endpoint
-        {
-          trainer_email: user.email,
-          trainer_name: user.name,
-          domain,
-          start_date: start,
-          end_date: end,
-          reason,
-          batch_nos: selectedBatchNos.join(","),
-        },
-        { 
-          headers: authHeaders,
-          timeout: 15000,
-        }
+        `${API_BASE}/api/trainer-leaves`,
+        { trainer_email: user.email, trainer_name: user.name, domain, start_date: start, end_date: end, reason, batch_nos: selectedBatchNos.join(",") },
+        { headers: authHeaders, timeout: 15000 }
       );
-
       console.log("✅ Response:", response.data);
-
       if (response.data?.success) {
         setMsg("✅ Leave request submitted successfully!");
-        // Reset form
-        setStart("");
-        setEnd("");
-        setReason("");
-        setSelectedBatchNos([]);
-        setDomain("");
-        fetchBatches(); // Refresh batches
+        setStart(""); setEnd(""); setReason(""); setSelectedBatchNos([]); setDomain("");
+        fetchBatches();
       } else {
-        setErr(`Server response: ${response.data?.message || 'Unknown error'}`);
+        setErr(`Server response: ${response.data?.message || "Unknown error"}`);
       }
     } catch (e) {
       console.error("🚨 Submit failed:", e.response?.data || e);
-      
-      if (e.response?.status === 404) {
-        setErr("🚫 API endpoint not found. Backend needs /api/trainer-leaves");
-      } else if (e.response?.status === 400) {
-        setErr(`Validation error: ${e.response.data?.error || 'Check your input'}`);
-      } else if (e.code === 'ECONNABORTED') {
-        setErr("⏰ Request timeout. Please try again.");
-      } else if (e.response?.status === 500) {
-        setErr("🚨 Server error (500). Check RLS policies on trainer_unavailability table");
-      } else {
-        setErr(`Failed: ${e.response?.data?.error || e.message}`);
-      }
+      if (e.response?.status === 404)         setErr("🚫 API endpoint not found. Backend needs /api/trainer-leaves");
+      else if (e.response?.status === 400)    setErr(`Validation error: ${e.response.data?.error || "Check your input"}`);
+      else if (e.code === "ECONNABORTED")     setErr("⏰ Request timeout. Please try again.");
+      else if (e.response?.status === 500)    setErr("🚨 Server error (500). Check RLS policies on trainer_unavailability table");
+      else                                    setErr(`Failed: ${e.response?.data?.error || e.message}`);
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <Paper sx={{ p: 3, mb: 3 }}>
-      <Typography variant="h6" fontWeight="bold" mb={2}>
-        📅 Apply Leave
-      </Typography>
+    <Box sx={{ ...cardSx, p: 3, mb: 3 }}>
+      {/* Section heading */}
+      <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, mb: 3 }}>
+        <Box
+          sx={{
+            width: 38, height: 38, borderRadius: "11px",
+            background: `linear-gradient(135deg, ${T.accent}, ${T.accentDark})`,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 17, boxShadow: `0 3px 10px ${T.accent}33`,
+          }}
+        >
+          📅
+        </Box>
+        <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 800, fontSize: 17, color: T.text, letterSpacing: "-0.02em" }}>
+          Apply Leave
+        </Typography>
+      </Box>
 
       {loading && (
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, py: 2 }}>
-          <CircularProgress size={20} />
-          <Typography variant="body2">Loading your batches...</Typography>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, py: 1.5, px: 2, borderRadius: "10px", background: T.accentLight, border: `1px solid ${T.accent}44`, mb: 2 }}>
+          <CircularProgress size={18} sx={{ color: T.accent }} />
+          <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: T.accent, fontWeight: 600 }}>Loading your batches…</Typography>
         </Box>
       )}
 
+      {/* Batch selector */}
       <TextField
         select
         label="Select Batch(es)"
@@ -224,25 +229,21 @@ function TrainerUnavailabilityForm({ user, token }) {
         disabled={loading || submitting}
         SelectProps={{
           multiple: true,
-          renderValue: (selected) => 
-            selected.length > 0 ? selected.join(", ") : "No batch selected",
+          renderValue: (selected) => selected.length > 0 ? selected.join(", ") : "No batch selected",
         }}
-        sx={{ mb: 2 }}
+        sx={{ mb: 2, ...fieldSx }}
         helperText={selectedBatchNos.length === 0 ? "Select batches you want to apply leave for" : ""}
       >
         {trainerBatches.map((b) => {
           const bn = b.batch_no || b.batchno;
-          return (
-            <MenuItem key={bn} value={bn}>
-              {bn} {b.domain ? `(${b.domain})` : ""}
-            </MenuItem>
-          );
+          return <MenuItem key={bn} value={bn} sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>{bn}{b.domain ? ` (${b.domain})` : ""}</MenuItem>;
         })}
         {trainerBatches.length === 0 && !loading && (
-          <MenuItem disabled>No batches found</MenuItem>
+          <MenuItem disabled sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>No batches found</MenuItem>
         )}
       </TextField>
 
+      {/* Domain */}
       <TextField
         label="Domain *"
         value={domain}
@@ -252,9 +253,10 @@ function TrainerUnavailabilityForm({ user, token }) {
         required
         error={!domain && selectedBatchNos.length > 0}
         helperText={!domain && selectedBatchNos.length > 0 ? "Domain is required" : ""}
-        sx={{ mb: 2 }}
+        sx={{ mb: 2, ...fieldSx }}
       />
 
+      {/* Date range */}
       <Grid container spacing={2} sx={{ mb: 2 }}>
         <Grid item xs={12} sm={6}>
           <TextField
@@ -268,6 +270,7 @@ function TrainerUnavailabilityForm({ user, token }) {
             required
             error={!start}
             helperText={!start ? "Required" : ""}
+            sx={fieldSx}
           />
         </Grid>
         <Grid item xs={12} sm={6}>
@@ -282,10 +285,12 @@ function TrainerUnavailabilityForm({ user, token }) {
             required
             error={!end || (start && new Date(start) > new Date(end))}
             helperText={!end ? "Required" : (start && new Date(start) > new Date(end)) ? "End date must be after start date" : ""}
+            sx={fieldSx}
           />
         </Grid>
       </Grid>
 
+      {/* Reason */}
       <TextField
         label="Reason (Optional)"
         value={reason}
@@ -294,380 +299,221 @@ function TrainerUnavailabilityForm({ user, token }) {
         multiline
         rows={2}
         disabled={loading || submitting}
-        sx={{ mb: 2 }}
+        sx={{ mb: 2.5, ...fieldSx }}
       />
 
-      <Button 
-        onClick={submitUnavailability} 
-        variant="contained" 
-        color="primary"
+      {/* Submit */}
+      <Button
+        onClick={submitUnavailability}
+        variant="contained"
         disabled={loading || submitting || selectedBatchNos.length === 0}
-        startIcon={submitting ? <CircularProgress size={20} /> : null}
+        startIcon={submitting ? <CircularProgress size={18} color="inherit" /> : null}
         fullWidth
-        sx={{ py: 1.5, fontWeight: 600 }}
+        sx={{
+          fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 14,
+          borderRadius: "10px", py: 1.4, textTransform: "none",
+          background: `linear-gradient(135deg, ${T.accent} 0%, ${T.accentDark} 100%)`,
+          boxShadow: `0 4px 14px ${T.accent}44`,
+          "&:hover": { background: `linear-gradient(135deg, ${T.accentDark} 0%, ${T.accent} 100%)` },
+          "&.Mui-disabled": { background: T.border, color: T.textSub, boxShadow: "none" },
+        }}
       >
-        {submitting ? "Submitting..." : "Submit Leave Request"}
+        {submitting ? "Submitting…" : "Submit Leave Request"}
       </Button>
 
-      {msg && (
-        <Alert severity="success" sx={{ mt: 2 }} onClose={() => setMsg("")}>
-          {msg}
-        </Alert>
-      )}
-      {err && (
-        <Alert severity="error" sx={{ mt: 2 }} onClose={() => setErr("")}>
-          {err}
-        </Alert>
-      )}
-    </Paper>
+      {msg && <Alert severity="success" sx={{ mt: 2, borderRadius: "10px", fontFamily: "'DM Sans', sans-serif" }} onClose={() => setMsg("")}>{msg}</Alert>}
+      {err && <Alert severity="error"   sx={{ mt: 2, borderRadius: "10px", fontFamily: "'DM Sans', sans-serif" }} onClose={() => setErr("")}>{err}</Alert>}
+    </Box>
   );
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   TrainerDashboard  (main export)
+══════════════════════════════════════════════════════════════════════════ */
 function TrainerDashboard({ user, token }) {
-  const [batches, setBatches] = useState([]);
-  const [selectedBatch, setSelectedBatch] = useState("");
-  const [weeks, setWeeks] = useState([]);
-  const [selectedWeek, setSelectedWeek] = useState("");
-  const [topics, setTopics] = useState([]);
-  const [remarksMap, setRemarksMap] = useState({});
-  const [actualDatesMap, setActualDatesMap] = useState({});
-  const [message, setMessage] = useState("");
-  const [snackbarOpen, setSnackbarOpen] = useState(false);
-  const [snackbarMessage, setSnackbarMessage] = useState("");
-  const [snackbarSeverity, setSnackbarSeverity] = useState("info");
-  const [remarksSnackbarOpen, setRemarksSnackbarOpen] = useState(false);
-  const [remarksSnackbarMessage, setRemarksSnackbarMessage] = useState("");
-  const [remarksSnackbarSeverity, setRemarksSnackbarSeverity] = useState("warning");
-  const [pendingStatusChanges, setPendingStatusChanges] = useState({});
-  const [tab, setTab] = useState(0);
-  const [allBatchTopics, setAllBatchTopics] = useState([]);
-  const [firstIncompleteWeek, setFirstIncompleteWeek] = useState(null);
-  const [blockedTopics, setBlockedTopics] = useState({});
-  const [isBatchOwner, setIsBatchOwner] = useState(false);
+  const [batches,         setBatches]         = useState([]);
+  const [selectedBatch,   setSelectedBatch]   = useState("");
+  const [weeks,           setWeeks]           = useState([]);
+  const [selectedWeek,    setSelectedWeek]    = useState("");
+  const [topics,          setTopics]          = useState([]);
+  const [remarksMap,      setRemarksMap]      = useState({});
+  const [actualDatesMap,  setActualDatesMap]  = useState({});
+  const [message,         setMessage]         = useState("");
 
-  // NEW: Popup state management
+  const [snackbarOpen,     setSnackbarOpen]     = useState(false);
+  const [snackbarMessage,  setSnackbarMessage]  = useState("");
+  const [snackbarSeverity, setSnackbarSeverity] = useState("info");
+
+  const [remarksSnackbarOpen,     setRemarksSnackbarOpen]     = useState(false);
+  const [remarksSnackbarMessage,  setRemarksSnackbarMessage]  = useState("");
+  const [remarksSnackbarSeverity, setRemarksSnackbarSeverity] = useState("warning");
+
+  const [pendingStatusChanges, setPendingStatusChanges] = useState({});
+  const [tab,                  setTab]                  = useState(0);
+  const [allBatchTopics,       setAllBatchTopics]       = useState([]);
+  const [firstIncompleteWeek,  setFirstIncompleteWeek]  = useState(null);
+  const [blockedTopics,        setBlockedTopics]        = useState({});
+  const [isBatchOwner,         setIsBatchOwner]         = useState(false);
+
   const [dateChangeDialog, setDateChangeDialog] = useState({ open: false, topicId: null, newDate: null, plannedDate: null });
   const [saveChangesDialog, setSaveChangesDialog] = useState({ open: false, topicId: null, newDate: null, remarks: null });
   const [savingTopicId, setSavingTopicId] = useState(null);
 
-  const lowerRole = (user?.role || "").toLowerCase();
-  const isTrainer = lowerRole === "trainer";
+  const lowerRole        = (user?.role || "").toLowerCase();
+  const isTrainer        = lowerRole === "trainer";
   const isManagerOrAdmin = lowerRole === "manager" || lowerRole === "admin";
-  const trainerTabLabel = isTrainer ? "Apply Leave" : "Trainer Management";
+  const trainerTabLabel  = isTrainer ? "Apply Leave" : "Trainer Management";
+  const roleTitle        = user?.role ? user.role.charAt(0).toUpperCase() + user.role.slice(1) : "Trainer";
+  const welcomeName      = user?.name || "Trainer";
 
-  const roleTitle = user?.role
-    ? user.role.charAt(0).toUpperCase() + user.role.slice(1)
-    : "Trainer";
-  const welcomeName = user?.name || "Trainer";
+  const showSnackbar = (msg, severity = "info") => { setSnackbarMessage(msg || ""); setSnackbarSeverity(severity); setSnackbarOpen(true); };
+  const showRemarksSnackbar = (msg, severity = "warning") => { setRemarksSnackbarMessage(msg || ""); setRemarksSnackbarSeverity(severity); setRemarksSnackbarOpen(true); };
 
-  const showSnackbar = (msg, severity = "info") => {
-    setSnackbarMessage(msg || "");
-    setSnackbarSeverity(severity);
-    setSnackbarOpen(true);
-  };
-
-  const showRemarksSnackbar = (msg, severity = "warning") => {
-    setRemarksSnackbarMessage(msg || "");
-    setRemarksSnackbarSeverity(severity);
-    setRemarksSnackbarOpen(true);
-  };
-
+  /* ── Load batches ── */
   useEffect(() => {
     (async () => {
       try {
         const headers = token ? { Authorization: `Bearer ${token}` } : {};
         const res = await axios.get(`${API_BASE}/api/batches`, { headers });
         if (Array.isArray(res.data)) setBatches(res.data);
-        else {
-          setBatches([]);
-          setMessage("No batches found");
-        }
-      } catch {
-        setMessage("Error loading batches");
-      }
+        else { setBatches([]); setMessage("No batches found"); }
+      } catch { setMessage("Error loading batches"); }
     })();
   }, [token]);
 
+  /* ── Load weeks + all topics when batch changes ── */
   useEffect(() => {
     if (!selectedBatch) {
-      setWeeks([]);
-      setSelectedWeek("");
-      setTopics([]);
-      setAllBatchTopics([]);
-      setFirstIncompleteWeek(null);
-      setBlockedTopics({});
+      setWeeks([]); setSelectedWeek(""); setTopics([]); setAllBatchTopics([]); setFirstIncompleteWeek(null); setBlockedTopics({});
       return;
     }
-
     (async () => {
       try {
         const headers = token ? { Authorization: `Bearer ${token}` } : {};
-
-        const resWeeks = await axios.get(
-          `${API_BASE}/api/weeks/${selectedBatch}`,
-          { headers }
-        );
-
+        const resWeeks = await axios.get(`${API_BASE}/api/weeks/${selectedBatch}`, { headers });
         if (Array.isArray(resWeeks.data) && resWeeks.data.length > 0) {
-          const sortedWeeks = [...resWeeks.data].sort(
-            (a, b) => Number(a) - Number(b)
-          );
-          setWeeks(sortedWeeks);
-          setSelectedWeek(sortedWeeks[0]);
+          const sorted = [...resWeeks.data].sort((a, b) => Number(a) - Number(b));
+          setWeeks(sorted); setSelectedWeek(sorted[0]);
         } else {
-          setWeeks([]);
-          setSelectedWeek("");
-          setTopics([]);
-          setMessage("No weeks found for selected batch");
+          setWeeks([]); setSelectedWeek(""); setTopics([]); setMessage("No weeks found for selected batch");
         }
-
-        const resAllTopics = await axios.get(
-          `${API_BASE}/api/topics/${selectedBatch}`,
-          { headers }
-        );
-
-        const all = Array.isArray(resAllTopics.data) ? resAllTopics.data : [];
+        const resAll = await axios.get(`${API_BASE}/api/topics/${selectedBatch}`, { headers });
+        const all = Array.isArray(resAll.data) ? resAll.data : [];
         setAllBatchTopics(all);
-
         if (all.length > 0) {
-          const weekStatus = {};
+          const ws = {};
           all.forEach((t) => {
             const w = Number(t.week_no ?? t.weekno);
-            if (!weekStatus[w]) weekStatus[w] = { hasNotCompleted: false };
-            if ((t.topic_status ?? t.topicstatus) !== "Completed") {
-              weekStatus[w].hasNotCompleted = true;
-            }
+            if (!ws[w]) ws[w] = { hasNotCompleted: false };
+            if ((t.topic_status ?? t.topicstatus) !== "Completed") ws[w].hasNotCompleted = true;
           });
-
-          const candidateWeeks = Object.keys(weekStatus)
-            .map((w) => Number(w))
-            .filter((w) => weekStatus[w].hasNotCompleted);
-
-          setFirstIncompleteWeek(
-            candidateWeeks.length > 0 ? Math.min(...candidateWeeks) : null
-          );
-        } else {
-          setFirstIncompleteWeek(null);
-        }
+          const cands = Object.keys(ws).map(Number).filter((w) => ws[w].hasNotCompleted);
+          setFirstIncompleteWeek(cands.length > 0 ? Math.min(...cands) : null);
+        } else { setFirstIncompleteWeek(null); }
       } catch {
-        setWeeks([]);
-        setSelectedWeek("");
-        setTopics([]);
-        setAllBatchTopics([]);
-        setMessage("Error loading weeks/topics");
-        setFirstIncompleteWeek(null);
+        setWeeks([]); setSelectedWeek(""); setTopics([]); setAllBatchTopics([]); setMessage("Error loading weeks/topics"); setFirstIncompleteWeek(null);
       }
     })();
   }, [selectedBatch, token]);
 
+  /* ── Batch owner check ── */
   useEffect(() => {
-    const checkBatchOwner = async () => {
-      if (!selectedBatch || !token || (lowerRole !== "manager" && lowerRole !== "admin")) {
-        setIsBatchOwner(false);
-        return;
-      }
-
+    const check = async () => {
+      if (!selectedBatch || !token || (lowerRole !== "manager" && lowerRole !== "admin")) { setIsBatchOwner(false); return; }
       try {
         const headers = { Authorization: `Bearer ${token}` };
-        const res = await axios.get(
-          `${API_BASE}/api/course_planner_data?batch_no=${selectedBatch}`,
-          { headers }
-        );
-
+        const res = await axios.get(`${API_BASE}/api/course_planner_data?batch_no=${selectedBatch}`, { headers });
         const first = Array.isArray(res.data) ? res.data[0] : null;
         setIsBatchOwner(!!first && first.batch_owner === user?.email);
-      } catch {
-        setIsBatchOwner(false);
-      }
+      } catch { setIsBatchOwner(false); }
     };
-
-    checkBatchOwner();
+    check();
   }, [selectedBatch, token, user?.email, lowerRole]);
 
+  /* ── Load topics for selected week ── */
   useEffect(() => {
-    if (!selectedBatch || !selectedWeek) {
-      setTopics([]);
-      return;
-    }
-
+    if (!selectedBatch || !selectedWeek) { setTopics([]); return; }
     (async () => {
       try {
         const headers = token ? { Authorization: `Bearer ${token}` } : {};
         const res = await axios.get(`${API_BASE}/api/topics/${selectedBatch}`, {
-          headers,
-          params: { week_no: selectedWeek },
+          headers, params: { week_no: selectedWeek },
         });
-
         if (Array.isArray(res.data)) {
-          const sortedTopics = [...res.data].sort((a, b) => {
-            const dA = new Date(a.date);
-            const dB = new Date(b.date);
-            const cmp = dA - dB;
-            if (cmp !== 0) return cmp;
-
-            const aMod = a.module_name || "";
-            const bMod = b.module_name || "";
-            return aMod.localeCompare(bMod);
+          const sorted = [...res.data].sort((a, b) => {
+            const diff = new Date(a.date) - new Date(b.date);
+            return diff !== 0 ? diff : (a.module_name || "").localeCompare(b.module_name || "");
           });
-
-          setTopics(sortedTopics);
-
-          const newRemarks = {};
-          const newActualDates = {};
-          sortedTopics.forEach((t) => {
-            newRemarks[t.id] = t.remarks || "";
-            newActualDates[t.id] = t.actual_date || t.actualdate || t.date || "";
+          setTopics(sorted);
+          const newR = {}, newD = {};
+          sorted.forEach((t) => {
+            newR[t.id] = t.remarks || "";
+            newD[t.id] = t.actual_date || t.actualdate || t.date || "";
           });
-
-          setRemarksMap(newRemarks);
-          setActualDatesMap(newActualDates);
-          setPendingStatusChanges({});
-          setBlockedTopics({});
-          setMessage("");
-        } else {
-          setTopics([]);
-          setMessage("No topics");
-        }
-      } catch {
-        setTopics([]);
-        setMessage("Error loading topics");
-      }
+          setRemarksMap(newR); setActualDatesMap(newD);
+          setPendingStatusChanges({}); setBlockedTopics({}); setMessage("");
+        } else { setTopics([]); setMessage("No topics"); }
+      } catch { setTopics([]); setMessage("Error loading topics"); }
     })();
   }, [selectedBatch, selectedWeek, token]);
 
-  const getStatusForTopic = (topicId, confirmedStatus) =>
-    pendingStatusChanges[topicId] ?? confirmedStatus;
+  /* ── Helpers ── */
+  const getStatusForTopic = (id, confirmed) => pendingStatusChanges[id] ?? confirmed;
+  const isActionFrozen    = (t) => (t.topic_status ?? t.topicstatus) === "Completed";
+  const canEditWeek       = (wNo) => { const w = Number(wNo); if (!w) return false; if (firstIncompleteWeek == null) return true; return w === firstIncompleteWeek; };
+  const isBlocked         = (id) => !!blockedTopics[id];
 
-  const isActionFrozen = (topic) => (topic.topic_status ?? topic.topicstatus) === "Completed";
+  const topicsByDate  = topics.reduce((acc, t) => { const k = t.date || "No Date"; if (!acc[k]) acc[k] = []; acc[k].push(t); return acc; }, {});
+  const sortedDates   = Object.keys(topicsByDate).sort((a, b) => new Date(a) - new Date(b));
 
-  const canEditWeek = (weekNo) => {
-    const w = Number(weekNo);
-    if (!w) return false;
-    if (firstIncompleteWeek == null) return true;
-    return w === firstIncompleteWeek;
-  };
-
-  const isBlocked = (topicId) => !!blockedTopics[topicId];
-
-  const topicsByDate = topics.reduce((acc, t) => {
-    const key = t.date || "No Date";
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(t);
-    return acc;
-  }, {});
-
-  const sortedDates = Object.keys(topicsByDate).sort(
-    (a, b) => new Date(a) - new Date(b)
-  );
-
-  // NEW: Handle date change - show confirmation dialog
+  /* ── Date change (confirmation popup) ── */
   const handleActualDateChange = (topicId, newDate, plannedDate) => {
-    setDateChangeDialog({
-      open: true,
-      topicId,
-      newDate,
-      plannedDate
-    });
+    setDateChangeDialog({ open: true, topicId, newDate, plannedDate });
   };
 
-  // NEW: Confirm date change from dialog
   const confirmDateChange = () => {
-    const { topicId, newDate } = dateChangeDialog;
-    setActualDatesMap((prev) => ({
-      ...prev,
-      [topicId]: newDate,
-    }));
-
-    // Check if new date crosses planned date
-    const planned = new Date(dateChangeDialog.plannedDate);
-    const actual = new Date(newDate);
-    const crossesPlanned = actual > planned;
-    
+    const { topicId, newDate, plannedDate } = dateChangeDialog;
+    setActualDatesMap((prev) => ({ ...prev, [topicId]: newDate }));
+    const crossesPlanned = new Date(newDate) > new Date(plannedDate);
     setDateChangeDialog({ open: false, topicId: null, newDate: null, plannedDate: null });
-
     if (crossesPlanned) {
-      // Show remarks mandatory warning and save dialog
-      setSaveChangesDialog({
-        open: true,
-        topicId,
-        newDate,
-        remarks: remarksMap[topicId] || ""
-      });
+      setSaveChangesDialog({ open: true, topicId, newDate, remarks: remarksMap[topicId] || "" });
     } else {
-      // For non-crossing dates, save immediately
       saveActualDate(topicId, newDate);
     }
   };
 
-  // NEW: Save both date and remarks via popup
   const confirmSaveChanges = async () => {
     const { topicId, newDate, remarks } = saveChangesDialog;
     setSavingTopicId(topicId);
-    
     await saveActualDate(topicId, newDate);
-    
-    // Save remarks if provided
-    if (remarks?.trim()) {
-      await handleRemarksSave(topicId, remarks);
-    }
-    
+    if (remarks?.trim()) await handleRemarksSave(topicId, remarks);
     setSaveChangesDialog({ open: false, topicId: null, newDate: null, remarks: null });
     setSavingTopicId(null);
   };
 
-  // UPDATED: Save actual date function
   const saveActualDate = async (topicId, actualDate) => {
     try {
-      const topic = topics.find(t => t.id === topicId);
+      const topic = topics.find((t) => t.id === topicId);
       if (!topic?.date || !actualDate) return;
-
-      const planned = new Date(topic.date);
-      const actual = new Date(actualDate);
-      const daysDiff = Math.round((actual - planned) / (1000 * 60 * 60 * 24));
-
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const res = await axios.post(
-        `${API_BASE}/api/update-actual-date`,
-        {
-          topic_id: topicId,
-          actual_date: actualDate,
-          changed_by: user?.email || user?.name || "Trainer",
-        },
+      const daysDiff = Math.round((new Date(actualDate) - new Date(topic.date)) / (1000 * 60 * 60 * 24));
+      const headers  = token ? { Authorization: `Bearer ${token}` } : {};
+      const res      = await axios.post(`${API_BASE}/api/update-actual-date`,
+        { topic_id: topicId, actual_date: actualDate, changed_by: user?.email || user?.name || "Trainer" },
         { headers }
       );
-
-      if (res.data && res.data.success) {
-        // Update topics state to persist across refresh
-        setTopics((prev) =>
-          prev.map((t) =>
-            t.id === topicId 
-              ? { ...t, actual_date: actualDate, date_difference: daysDiff } 
-              : t
-          )
-        );
-
-        // Show success feedback
-        if (daysDiff > 2) {
-          showSnackbar(`✅ Date saved! Exceeding by ${daysDiff} days`, "warning");
-        } else if (daysDiff > 0) {
-          showSnackbar(`✅ Date saved! ${daysDiff} day(s) late`, "warning");
-        } else if (daysDiff < 0) {
-          showSnackbar(`✅ Date saved! ${Math.abs(daysDiff)} day(s) early`, "success");
-        } else {
-          showSnackbar("✅ Date saved! On time", "success");
-        }
-      } else {
-        throw new Error("Save failed");
-      }
+      if (res.data?.success) {
+        setTopics((prev) => prev.map((t) => t.id === topicId ? { ...t, actual_date: actualDate, date_difference: daysDiff } : t));
+        if (daysDiff > 2)      showSnackbar(`✅ Date saved! Exceeding by ${daysDiff} days`, "warning");
+        else if (daysDiff > 0) showSnackbar(`✅ Date saved! ${daysDiff} day(s) late`, "warning");
+        else if (daysDiff < 0) showSnackbar(`✅ Date saved! ${Math.abs(daysDiff)} day(s) early`, "success");
+        else                   showSnackbar("✅ Date saved! On time", "success");
+      } else throw new Error("Save failed");
     } catch (error) {
       console.error("Error saving date:", error);
       showSnackbar("❌ Failed to save date", "error");
-      // Revert on error
-      const topic = topics.find(t => t.id === topicId);
-      setActualDatesMap((prev) => ({
-        ...prev,
-        [topicId]: topic?.actual_date || topic?.actualdate || topic?.date || "",
-      }));
+      const topic = topics.find((t) => t.id === topicId);
+      setActualDatesMap((prev) => ({ ...prev, [topicId]: topic?.actual_date || topic?.actualdate || topic?.date || "" }));
     }
   };
 
@@ -677,92 +523,40 @@ function TrainerDashboard({ user, token }) {
 
   async function handleStatusConfirm(topicId) {
     const newStatus = pendingStatusChanges[topicId];
-    if (!newStatus) {
-      setMessage("No status change to confirm.");
-      return;
-    }
-
-    const topic = topics.find((t) => t.id === topicId);
+    if (!newStatus) { setMessage("No status change to confirm."); return; }
+    const topic       = topics.find((t) => t.id === topicId);
     const plannedDate = topic?.date;
-    const actualDate =
-      actualDatesMap[topicId] || topic?.actual_date || topic?.actualdate || plannedDate;
-
-    const planned = plannedDate ? new Date(plannedDate) : null;
-    const actual = actualDate ? new Date(actualDate) : null;
-    
+    const actualDate  = actualDatesMap[topicId] || topic?.actual_date || topic?.actualdate || plannedDate;
     let daysDiff = 0;
-    if (planned && actual) {
-      daysDiff = Math.round((actual - planned) / (1000 * 60 * 60 * 24));
-    }
-
+    if (plannedDate && actualDate) daysDiff = Math.round((new Date(actualDate) - new Date(plannedDate)) / (1000 * 60 * 60 * 24));
     const remarks = (remarksMap[topicId] || "").trim();
-
     if (daysDiff !== 0 && !remarks) {
       setBlockedTopics((prev) => ({ ...prev, [topicId]: true }));
-      showRemarksSnackbar(
-        "Without entering remarks, status changes are locked. Please add remarks first.",
-        "warning"
-      );
+      showRemarksSnackbar("Without entering remarks, status changes are locked. Please add remarks first.", "warning");
       return;
     }
-
     await performStatusUpdate(topicId, newStatus);
   }
 
   async function performStatusUpdate(topicId, newStatus) {
-    setTopics((prev) =>
-      prev.map((t) => (t.id === topicId ? { ...t, _pending: true } : t))
-    );
-
+    setTopics((prev) => prev.map((t) => (t.id === topicId ? { ...t, _pending: true } : t)));
     try {
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const res = await axios.post(
-        `${API_BASE}/api/update-topic-status`,
-        { topic_id: topicId, status: newStatus },
-        { headers }
-      );
-
+      const res = await axios.post(`${API_BASE}/api/update-topic-status`, { topic_id: topicId, status: newStatus }, { headers });
       if (res.data && (res.data.success || res.status === 200)) {
-        setTopics((prev) =>
-          prev.map((t) =>
-            t.id === topicId ? { ...t, topic_status: newStatus, _pending: false } : t
-          )
-        );
-
-        setPendingStatusChanges((prev) => {
-          const copy = { ...prev };
-          delete copy[topicId];
-          return copy;
-        });
-
+        setTopics((prev) => prev.map((t) => t.id === topicId ? { ...t, topic_status: newStatus, _pending: false } : t));
+        setPendingStatusChanges((prev) => { const c = { ...prev }; delete c[topicId]; return c; });
         setMessage("✅ Status updated");
-
-        const nextAll = allBatchTopics.map((t) =>
-          t.id === topicId ? { ...t, topic_status: newStatus } : t
-        );
+        const nextAll = allBatchTopics.map((t) => t.id === topicId ? { ...t, topic_status: newStatus } : t);
         setAllBatchTopics(nextAll);
-
-        const weekStatus = {};
-        nextAll.forEach((t) => {
-          const w = Number(t.week_no ?? t.weekno);
-          if (!weekStatus[w]) weekStatus[w] = { hasNotCompleted: false };
-          if ((t.topic_status ?? t.topicstatus) !== "Completed") {
-            weekStatus[w].hasNotCompleted = true;
-          }
-        });
-        const candidateWeeks = Object.keys(weekStatus)
-          .map((w) => Number(w))
-          .filter((w) => weekStatus[w].hasNotCompleted);
-
-        setFirstIncompleteWeek(candidateWeeks.length > 0 ? Math.min(...candidateWeeks) : null);
-      } else {
-        throw new Error(res.data?.error || "Update failed");
-      }
+        const ws = {};
+        nextAll.forEach((t) => { const w = Number(t.week_no ?? t.weekno); if (!ws[w]) ws[w] = { hasNotCompleted: false }; if ((t.topic_status ?? t.topicstatus) !== "Completed") ws[w].hasNotCompleted = true; });
+        const cands = Object.keys(ws).map(Number).filter((w) => ws[w].hasNotCompleted);
+        setFirstIncompleteWeek(cands.length > 0 ? Math.min(...cands) : null);
+      } else throw new Error(res.data?.error || "Update failed");
     } catch {
       setMessage("❌ Error updating status");
-      setTopics((prev) =>
-        prev.map((t) => (t.id === topicId ? { ...t, _pending: false } : t))
-      );
+      setTopics((prev) => prev.map((t) => (t.id === topicId ? { ...t, _pending: false } : t)));
     }
   }
 
@@ -770,90 +564,81 @@ function TrainerDashboard({ user, token }) {
     const trimmed = (value || "").trim();
     try {
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const res = await axios.post(
-        `${API_BASE}/api/update-remarks`,
-        { topic_id: topicId, remarks: trimmed },
-        { headers }
-      );
-
-      if (res.data && res.data.success) {
-        setBlockedTopics((prev) => {
-          const copy = { ...prev };
-          delete copy[topicId];
-          return copy;
-        });
+      const res = await axios.post(`${API_BASE}/api/update-remarks`, { topic_id: topicId, remarks: trimmed }, { headers });
+      if (res.data?.success) {
+        setBlockedTopics((prev) => { const c = { ...prev }; delete c[topicId]; return c; });
         showSnackbar("✅ Remarks saved", "success");
       }
-    } catch {
-      // Silent fail for remarks
-    }
+    } catch { /* silent */ }
   }
 
   function getDateCellStyle(daysDiff) {
     if (daysDiff == null || daysDiff === 0) return { color: grey[700] };
-    if (daysDiff > 2) return { color: red[700], fontWeight: "bold" };
-    if (daysDiff > 0) return { color: orange[700], fontWeight: "bold" };
-    if (daysDiff < 0) return { color: green[700], fontWeight: "bold" };
+    if (daysDiff > 2)  return { color: red[700],    fontWeight: "bold" };
+    if (daysDiff > 0)  return { color: orange[700], fontWeight: "bold" };
+    if (daysDiff < 0)  return { color: green[700],  fontWeight: "bold" };
     return { color: grey[700] };
   }
 
+  /* ══ RENDER ══════════════════════════════════════════════════════════════ */
   return (
-    <Box
-      sx={{
-        maxWidth: 1200,
-        mx: "auto",
-        my: 3,
-        fontFamily: "Segoe UI, Tahoma, Geneva, Verdana, sans-serif",
-      }}
-    >
-      <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 2 }}>
-        <Tab label="Progress" />
-        <Tab label={trainerTabLabel} />
-      </Tabs>
+    <Box sx={{ fontFamily: "'DM Sans', sans-serif" }}>
 
-      {/* NEW: Date Change Confirmation Dialog */}
-      <Dialog open={dateChangeDialog.open} onClose={() => setDateChangeDialog({ ...dateChangeDialog, open: false })}>
-        <DialogTitle>Confirm Date Change</DialogTitle>
+      {/* ── Tabs bar ── */}
+      <Box sx={{ ...cardSx, px: { xs: 2, md: 3 }, pt: 2, pb: 0, mb: 2.5 }}>
+        <Tabs
+          value={tab}
+          onChange={(_, v) => setTab(v)}
+          sx={{
+            "& .MuiTabs-indicator": { height: 3, borderRadius: "3px 3px 0 0", background: `linear-gradient(90deg, ${T.accent}, ${T.accentDark})` },
+            "& .MuiTab-root": { fontFamily: "'DM Sans', sans-serif", fontWeight: 600, fontSize: 13, color: T.textSub, textTransform: "none", minHeight: 46, px: 2.5 },
+            "& .Mui-selected": { color: `${T.accent} !important`, fontWeight: "800 !important" },
+          }}
+        >
+          <Tab label={<Box sx={{ display: "flex", alignItems: "center", gap: 0.7 }}><span>📊</span><span>Progress</span></Box>} />
+          <Tab label={<Box sx={{ display: "flex", alignItems: "center", gap: 0.7 }}><span>{isTrainer ? "📅" : "👥"}</span><span>{trainerTabLabel}</span></Box>} />
+        </Tabs>
+      </Box>
+
+      {/* ── Date change confirmation dialog ── */}
+      <Dialog open={dateChangeDialog.open} onClose={() => setDateChangeDialog({ ...dateChangeDialog, open: false })} sx={dialogSx}>
+        <DialogTitle sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 800, color: T.text, fontSize: 17, pb: 1 }}>Confirm Date Change</DialogTitle>
         <DialogContent>
-          <DialogContentText>
-            Change actual date from <strong>{topics.find(t => t.id === dateChangeDialog.topicId)?.actual_date || "N/A"}</strong> 
-            to <strong>{dateChangeDialog.newDate}</strong>?
+          <DialogContentText sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: T.textSub }}>
+            Change actual date from{" "}
+            <Box component="strong" sx={{ color: T.text }}>{topics.find((t) => t.id === dateChangeDialog.topicId)?.actual_date || "N/A"}</Box>{" "}
+            to{" "}
+            <Box component="strong" sx={{ color: T.text }}>{dateChangeDialog.newDate}</Box>?
           </DialogContentText>
           {(() => {
-            const planned = new Date(dateChangeDialog.plannedDate);
-            const actual = new Date(dateChangeDialog.newDate);
-            const daysDiff = Math.round((actual - planned) / (1000 * 60 * 60 * 24));
-            if (daysDiff > 0) {
-              return (
-                <DialogContentText sx={{ color: orange[700], mt: 1 }}>
-                  ⚠️ This date is <strong>{daysDiff} day(s)</strong> after planned date. 
-                  Remarks will be required.
-                </DialogContentText>
-              );
-            }
-            return null;
+            const diff = Math.round((new Date(dateChangeDialog.newDate) - new Date(dateChangeDialog.plannedDate)) / (1000 * 60 * 60 * 24));
+            return diff > 0 ? (
+              <Box sx={{ mt: 1.5, p: 1.5, borderRadius: "10px", background: "#fef3c7", border: "1px solid #fcd34d" }}>
+                <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: "#b45309", fontWeight: 600 }}>
+                  ⚠️ This date is <strong>{diff} day(s)</strong> after the planned date. Remarks will be required.
+                </Typography>
+              </Box>
+            ) : null;
           })()}
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDateChangeDialog({ ...dateChangeDialog, open: false })}>
-            Cancel
-          </Button>
-          <Button onClick={confirmDateChange} variant="contained">
-            Confirm
-          </Button>
+        <DialogActions sx={{ px: 3, pb: 2.5, gap: 1 }}>
+          <Button onClick={() => setDateChangeDialog({ ...dateChangeDialog, open: false })} sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 600, textTransform: "none", borderRadius: "8px", color: T.textSub, border: `1px solid ${T.border}` }}>Cancel</Button>
+          <Button onClick={confirmDateChange} variant="contained" sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, textTransform: "none", borderRadius: "8px", background: `linear-gradient(135deg, ${T.accent}, ${T.accentDark})`, boxShadow: `0 3px 10px ${T.accent}44` }}>Confirm</Button>
         </DialogActions>
       </Dialog>
 
-      {/* NEW: Save Changes Dialog (Date + Remarks) */}
-      <Dialog open={saveChangesDialog.open} onClose={() => setSaveChangesDialog({ ...saveChangesDialog, open: false })}>
-        <DialogTitle>Save Changes</DialogTitle>
+      {/* ── Save changes dialog (date crossed + remarks mandatory) ── */}
+      <Dialog open={saveChangesDialog.open} onClose={() => setSaveChangesDialog({ ...saveChangesDialog, open: false })} sx={dialogSx}>
+        <DialogTitle sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 800, color: T.text, fontSize: 17, pb: 1 }}>Save Changes</DialogTitle>
         <DialogContent>
-          <DialogContentText>
-            Date changed to <strong>{saveChangesDialog.newDate}</strong> (after planned date).
+          <DialogContentText sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: T.textSub }}>
+            Date changed to <Box component="strong" sx={{ color: T.text }}>{saveChangesDialog.newDate}</Box> (after planned date).
           </DialogContentText>
-          <DialogContentText sx={{ color: orange[700], fontWeight: 500, mt: 1 }}>
-            📝 Remarks are <strong>MANDATORY</strong> when actual date is after planned date:
-          </DialogContentText>
+          <Box sx={{ mt: 1.5, mb: 2, p: 1.5, borderRadius: "10px", background: "#fef3c7", border: "1px solid #fcd34d" }}>
+            <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: "#b45309", fontWeight: 600 }}>
+              📝 Remarks are <strong>MANDATORY</strong> when actual date is after planned date.
+            </Typography>
+          </Box>
           <TextField
             autoFocus
             margin="dense"
@@ -862,343 +647,244 @@ function TrainerDashboard({ user, token }) {
             fullWidth
             variant="outlined"
             value={saveChangesDialog.remarks || ""}
-            onChange={(e) => setSaveChangesDialog({
-              ...saveChangesDialog,
-              remarks: e.target.value
-            })}
-            sx={{ mt: 2 }}
+            onChange={(e) => setSaveChangesDialog({ ...saveChangesDialog, remarks: e.target.value })}
+            sx={{ mt: 1, ...fieldSx }}
           />
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setSaveChangesDialog({ ...saveChangesDialog, open: false })}>
-            Cancel
-          </Button>
-          <Button 
-            onClick={confirmSaveChanges} 
-            variant="contained" 
+        <DialogActions sx={{ px: 3, pb: 2.5, gap: 1 }}>
+          <Button onClick={() => setSaveChangesDialog({ ...saveChangesDialog, open: false })} sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 600, textTransform: "none", borderRadius: "8px", color: T.textSub, border: `1px solid ${T.border}` }}>Cancel</Button>
+          <Button
+            onClick={confirmSaveChanges}
+            variant="contained"
             disabled={!saveChangesDialog.remarks?.trim() || savingTopicId === saveChangesDialog.topicId}
+            sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, textTransform: "none", borderRadius: "8px", background: `linear-gradient(135deg, ${T.accent}, ${T.accentDark})`, boxShadow: `0 3px 10px ${T.accent}44`, "&.Mui-disabled": { background: T.border, color: T.textSub, boxShadow: "none" } }}
           >
-            {savingTopicId === saveChangesDialog.topicId ? <CircularProgress size={20} /> : "Save Both"}
+            {savingTopicId === saveChangesDialog.topicId ? <CircularProgress size={18} color="inherit" /> : "Save Both"}
           </Button>
         </DialogActions>
       </Dialog>
 
+      {/* ════════════════════ PROGRESS TAB ════════════════════ */}
       {tab === 0 && (
-        <Paper
-          elevation={6}
-          sx={{
-            p: 4,
-            borderRadius: 3,
-            mb: 4,
-            backgroundColor: "#ffffffcc",
-          }}
-        >
-          <Typography
-            variant="h4"
-            color="primary"
-            gutterBottom
-            fontWeight="bold"
-            letterSpacing={1}
+        <Box sx={{ ...cardSx, p: { xs: 2, md: 3 } }}>
+
+          {/* Welcome strip */}
+          <Box
+            sx={{
+              mb: 3, p: 2.5, borderRadius: "12px",
+              background: `linear-gradient(135deg, ${T.accent}14 0%, ${T.accentLight} 100%)`,
+              border: `1px solid ${T.accent}33`,
+              display: "flex", alignItems: "center", gap: 2,
+            }}
           >
-            {roleTitle} Dashboard
-          </Typography>
-
-          <Typography variant="subtitle1" color="text.secondary" mb={3}>
-            Welcome{" "}
-            <Box component="span" sx={{ fontWeight: "medium", color: "primary.main" }}>
-              {welcomeName}
+            <Box>
+              <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 800, fontSize: 17, color: T.text, letterSpacing: "-0.02em", lineHeight: 1.1 }}>
+                {roleTitle} Dashboard
+              </Typography>
+              <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: T.textSub, mt: 0.3 }}>
+                Welcome,{" "}
+                <Box component="span" sx={{ color: T.accent, fontWeight: 700 }}>{welcomeName}</Box>
+              </Typography>
             </Box>
-          </Typography>
+          </Box>
 
-          <Grid container spacing={3} alignItems="center" mb={4}>
+          {/* Batch + Week selectors */}
+          <Grid container spacing={2} sx={{ mb: 3 }}>
             <Grid item xs={12} sm={6} md={5}>
-              <FormControl
-                fullWidth
-                size="medium"
-                sx={{ backgroundColor: "#f9f9f9", borderRadius: 1 }}
-              >
-                <InputLabel>Batch</InputLabel>
+              <Typography sx={{ ...labelSx, mb: 0.8 }}>Batch</Typography>
+              <FormControl fullWidth size="small">
                 <Select
                   value={selectedBatch}
-                  label="Batch"
                   onChange={(e) => setSelectedBatch(e.target.value)}
-                  MenuProps={{ PaperProps: { sx: { maxHeight: 300 } } }}
-                  sx={{
-                    "& .MuiSelect-outlined": { paddingLeft: 1.5, paddingRight: 0.5 },
-                    fontWeight: 600,
-                  }}
+                  displayEmpty
+                  sx={{ borderRadius: "10px", fontFamily: "'DM Sans', sans-serif", fontSize: 13, background: T.surfaceAlt, "& fieldset": { borderColor: T.border }, "&:hover fieldset": { borderColor: T.accent }, "&.Mui-focused fieldset": { borderColor: T.accent } }}
+                  MenuProps={{ PaperProps: { sx: { maxHeight: 300, borderRadius: "12px" } } }}
                 >
-                  <MenuItem value="">
-                    <em>Select a batch...</em>
-                  </MenuItem>
+                  <MenuItem value="" sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: T.textSub }}><em>Select a batch…</em></MenuItem>
                   {batches.map((b) => {
                     const bn = b.batch_no || b.batchno;
                     const sd = b.start_date || b.startdate;
-                    return (
-                      <MenuItem key={bn} value={bn}>
-                        {bn} {sd ? `(${sd})` : ""}
-                      </MenuItem>
-                    );
+                    return <MenuItem key={bn} value={bn} sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>{bn}{sd ? ` (${sd})` : ""}</MenuItem>;
                   })}
                 </Select>
               </FormControl>
             </Grid>
 
-            <Grid item xs={12} sm={6} md={3}>
-              {weeks.length > 0 && (
-                <FormControl
-                  fullWidth
-                  size="medium"
-                  sx={{ backgroundColor: "#f9f9f9", borderRadius: 1 }}
-                >
-                  <InputLabel>Week No</InputLabel>
+            {weeks.length > 0 && (
+              <Grid item xs={12} sm={6} md={3}>
+                <Typography sx={{ ...labelSx, mb: 0.8 }}>Week</Typography>
+                <FormControl fullWidth size="small">
                   <Select
                     value={selectedWeek}
-                    label="Week No"
                     onChange={(e) => setSelectedWeek(e.target.value)}
-                    MenuProps={{ PaperProps: { sx: { maxHeight: 250 } } }}
+                    sx={{ borderRadius: "10px", fontFamily: "'DM Sans', sans-serif", fontSize: 13, background: T.surfaceAlt, "& fieldset": { borderColor: T.border }, "&:hover fieldset": { borderColor: T.accent }, "&.Mui-focused fieldset": { borderColor: T.accent } }}
+                    MenuProps={{ PaperProps: { sx: { maxHeight: 250, borderRadius: "12px" } } }}
                   >
-                    {weeks.map((week) => (
-                      <MenuItem key={week} value={week}>
-                        Week {week}
-                      </MenuItem>
-                    ))}
+                    {weeks.map((w) => <MenuItem key={w} value={w} sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Week {w}</MenuItem>)}
                   </Select>
                 </FormControl>
-              )}
-            </Grid>
+              </Grid>
+            )}
           </Grid>
 
+          {/* Empty state */}
           {Object.keys(topicsByDate).length === 0 && (
-            <Typography variant="body2" color="text.secondary">
-              No topics to display.
-            </Typography>
+            <Box sx={{ py: 6, textAlign: "center" }}>
+              <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, color: T.textSub }}>
+                {selectedBatch ? "No topics to display." : "Select a batch to view topics."}
+              </Typography>
+            </Box>
           )}
 
+          {/* Topics grouped by date */}
           {sortedDates.map((dateKey) => {
-            const dateTopics = topicsByDate[dateKey] || [];
-            const weekNoForBlock = dateTopics[0]?.week_no ?? dateTopics[0]?.weekno ?? selectedWeek;
-            const weekEditable = canEditWeek(weekNoForBlock);
+            const dateTopics   = topicsByDate[dateKey] || [];
+            const weekForBlock = dateTopics[0]?.week_no ?? dateTopics[0]?.weekno ?? selectedWeek;
+            const weekEditable = canEditWeek(weekForBlock);
 
             return (
-              <Box
-                key={dateKey}
-                sx={{
-                  mb: 5,
-                  boxShadow: 3,
-                  borderRadius: 3,
-                  backgroundColor: "#fefefe",
-                  p: 2,
-                }}
-              >
-                <Typography
-                  variant="h6"
-                  sx={{
-                    mb: 2,
-                    px: 1,
-                    fontWeight: "bold",
-                    letterSpacing: 0.5,
-                    borderLeft: 6,
-                    borderColor: "primary.main",
-                    bgcolor: "#e3f2fd",
-                    borderRadius: "4px",
-                  }}
-                >
-                  {dateKey}
-                </Typography>
+              <Box key={dateKey} sx={{ mb: 3, border: `1px solid ${T.border}`, borderRadius: "14px", overflow: "hidden" }}>
+
+                {/* Date group header */}
+                <Box sx={{ px: 2.5, py: 1.5, background: `linear-gradient(135deg, ${T.accent}14, ${T.accentLight})`, borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: 1.5 }}>
+                  <Box sx={{ width: 4, height: 20, borderRadius: "2px", background: T.accent, flexShrink: 0 }} />
+                  <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 800, fontSize: 14, color: T.text, letterSpacing: "-0.01em" }}>{dateKey}</Typography>
+                  <Chip label={`${dateTopics.length} topic${dateTopics.length !== 1 ? "s" : ""}`} size="small" sx={{ ml: "auto", fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 10, height: 20, background: T.accent, color: "#fff" }} />
+                </Box>
 
                 <TableContainer>
-                  <Table size="small" sx={{ borderRadius: 2 }}>
+                  <Table size="small">
                     <TableHead>
-                      <TableRow
-                        sx={{
-                          bgcolor: "#1976d2",
-                          "& th": { color: "white", fontWeight: "bold" },
-                        }}
-                      >
-                        <TableCell>Topic</TableCell>
-                        <TableCell align="center">Planned Date</TableCell>
-                        <TableCell align="center">Actual Date</TableCell>
-                        <TableCell align="center">Difference</TableCell>
-                        <TableCell align="center">Status</TableCell>
-                        <TableCell align="center">Action</TableCell>
-                        <TableCell align="center">Remarks</TableCell>
+                      <TableRow>
+                        {["Topic", "Planned Date", "Actual Date", "Difference", "Status", "Action", "Remarks"].map((h) => (
+                          <TableCell key={h} align={h === "Topic" ? "left" : "center"}
+                            sx={{ ...labelSx, background: T.surfaceAlt, borderBottom: `2px solid ${T.border}`, py: 1.2, whiteSpace: "nowrap" }}>
+                            {h}
+                          </TableCell>
+                        ))}
                       </TableRow>
                     </TableHead>
-
                     <TableBody>
                       {dateTopics.map((t) => {
-                        const daysDiff = t.date_difference ?? t.datedifference ?? 0;
+                        const daysDiff       = t.date_difference ?? t.datedifference ?? 0;
                         const confirmedStatus = t.topic_status ?? t.topicstatus;
-                        const currentStatus = getStatusForTopic(t.id, confirmedStatus);
-                        const frozen = isActionFrozen(t);
-                        const blocked = isBlocked(t.id);
-                        const editable = weekEditable && !frozen && !blocked;
+                        const currentStatus  = getStatusForTopic(t.id, confirmedStatus);
+                        const frozen         = isActionFrozen(t);
+                        const blocked        = isBlocked(t.id);
+                        const editable       = weekEditable && !frozen && !blocked;
+                        const sc             = STATUS_COLORS[confirmedStatus] || { bg: grey[100], text: grey[700], border: grey[300] };
 
                         return (
                           <TableRow
                             key={t.id}
                             sx={{
-                              backgroundColor: grey[50],
-                              transition: "background-color 0.3s",
-                              "&:hover": {
-                                backgroundColor: "#bbdefb",
-                                boxShadow: "0 4px 8px rgba(25, 118, 210, 0.3)",
-                              },
+                              "&:nth-of-type(even)": { background: T.surfaceAlt },
+                              "&:hover": { background: T.accentLight, transition: "background 0.15s" },
                             }}
                           >
-                            <TableCell
-                              sx={{
-                                fontWeight: 600,
-                                color: "#1976d2",
-                                letterSpacing: 0.4,
-                              }}
-                            >
+                            {/* Topic name */}
+                            <TableCell sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 600, fontSize: 13, color: T.accent, minWidth: 160 }}>
                               {t.topic_name || t.topicname || `Topic ${t.id}`}
                             </TableCell>
 
-                            <TableCell align="center" sx={{ fontWeight: "medium" }}>
+                            {/* Planned date */}
+                            <TableCell align="center" sx={{ fontFamily: "'DM Mono', monospace", fontSize: 12, color: T.textSub, whiteSpace: "nowrap" }}>
                               {t.date}
                             </TableCell>
 
-                            {/* UPDATED: Date field with popup confirmation */}
+                            {/* Actual date (with popup confirmation) */}
                             <TableCell align="center">
                               <TextField
                                 type="date"
                                 size="small"
                                 value={actualDatesMap[t.id] || ""}
                                 onChange={(e) => handleActualDateChange(t.id, e.target.value, t.date)}
-                                InputProps={{ style: getDateCellStyle(daysDiff) }}
-                                sx={{ maxWidth: 140 }}
-                                helperText={
-                                  daysDiff !== 0
-                                    ? daysDiff > 0
-                                      ? `Delayed by ${daysDiff} day(s)`
-                                      : `Early by ${Math.abs(daysDiff)} day(s)`
-                                    : "On time"
-                                }
-                                FormHelperTextProps={{
-                                  sx: { fontStyle: "italic", fontSize: 10, color: grey[600] },
-                                }}
+                                InputProps={{ style: { ...getDateCellStyle(daysDiff), fontFamily: "'DM Mono', monospace", fontSize: 12 } }}
+                                sx={{ maxWidth: 148, "& .MuiOutlinedInput-root": { borderRadius: "8px", background: T.surfaceAlt, "& fieldset": { borderColor: T.border }, "&:hover fieldset": { borderColor: T.accent }, "&.Mui-focused fieldset": { borderColor: T.accent } } }}
+                                helperText={daysDiff !== 0 ? (daysDiff > 0 ? `Delayed ${daysDiff}d` : `Early ${Math.abs(daysDiff)}d`) : "On time"}
+                                FormHelperTextProps={{ sx: { fontFamily: "'DM Sans', sans-serif", fontStyle: "italic", fontSize: 10, color: grey[500], mt: 0.3 } }}
                                 disabled={!editable}
                               />
                             </TableCell>
 
+                            {/* Date difference chip */}
                             <TableCell align="center">
                               {daysDiff !== 0 ? (
                                 <Chip
-                                  label={daysDiff > 0 ? `+${daysDiff} days` : `${daysDiff} days`}
+                                  label={daysDiff > 0 ? `+${daysDiff}d` : `${daysDiff}d`}
                                   size="small"
                                   sx={{
-                                    fontWeight: "600",
-                                    bgcolor:
-                                      daysDiff > 2
-                                        ? red[100]
-                                        : daysDiff > 0
-                                        ? orange[100]
-                                        : green[100],
-                                    color:
-                                      daysDiff > 2
-                                        ? red[700]
-                                        : daysDiff > 0
-                                        ? orange[700]
-                                        : green[700],
+                                    fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 11,
+                                    bgcolor: daysDiff > 2 ? "#fee2e2" : daysDiff > 0 ? "#fef3c7" : "#dcfce7",
+                                    color:   daysDiff > 2 ? "#b91c1c" : daysDiff > 0 ? "#b45309" : "#15803d",
+                                    border:  `1px solid ${daysDiff > 2 ? "#fca5a5" : daysDiff > 0 ? "#fcd34d" : "#86efac"}`,
                                   }}
                                 />
                               ) : (
-                                <Typography variant="caption" color="success.main" fontWeight="bold">
-                                  On time
-                                </Typography>
+                                <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 700, color: "#15803d" }}>On time</Typography>
                               )}
                             </TableCell>
 
+                            {/* Status badge */}
                             <TableCell align="center">
-                              <Chip
-                                label={confirmedStatus}
-                                size="small"
-                                sx={{
-                                  fontWeight: "bold",
-                                  bgcolor: statusChipColor[confirmedStatus] || grey[300],
-                                  color: confirmedStatus === "Planned" ? grey[900] : "white",
-                                  letterSpacing: 0.5,
-                                  px: 1.5,
-                                }}
-                              />
+                              <Box sx={{ display: "inline-flex", alignItems: "center", gap: 0.5, px: 1.2, py: 0.3, borderRadius: "20px", background: sc.bg, border: `1px solid ${sc.border}` }}>
+                                <Box sx={{ width: 6, height: 6, borderRadius: "50%", background: sc.text }} />
+                                <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 700, color: sc.text }}>{confirmedStatus}</Typography>
+                              </Box>
                             </TableCell>
 
-                            <TableCell
-                              align="center"
-                              sx={{
-                                display: "flex",
-                                justifyContent: "center",
-                                alignItems: "center",
-                                gap: 1,
-                                opacity: editable ? 1 : 0.6,
-                                pointerEvents: editable ? "auto" : "none",
-                              }}
-                            >
-                              <Tooltip
-                                title={
-                                  !weekEditable
-                                    ? "Complete current week before editing"
-                                    : frozen
-                                    ? "Completed topics cannot be changed"
-                                    : blocked
-                                    ? "Add remarks to unlock actions"
-                                    : "Change Status"
-                                }
-                              >
-                                <span>
-                                  <FormControl size="small" sx={{ minWidth: 140 }}>
-                                    <Select
-                                      value={currentStatus}
-                                      disabled={!editable || !!t._pending}
-                                      onChange={(e) =>
-                                        handlePendingStatusChange(t.id, e.target.value)
-                                      }
-                                      sx={{
-                                        backgroundColor: editable ? "#e3f2fd" : "#f5f5f5",
-                                        color: editable ? "#0d47a1" : grey[600],
-                                        fontWeight: "600",
-                                      }}
-                                    >
-                                      <MenuItem value="Planned">Planned</MenuItem>
-                                      <MenuItem value="In Progress">In Progress</MenuItem>
-                                      <MenuItem value="Completed">Completed</MenuItem>
-                                    </Select>
-                                  </FormControl>
-                                </span>
-                              </Tooltip>
+                            {/* Action (status change select + confirm button) */}
+                            <TableCell align="center" sx={{ opacity: editable ? 1 : 0.5, pointerEvents: editable ? "auto" : "none" }}>
+                              <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 0.5 }}>
+                                <Tooltip title={!weekEditable ? "Complete current week before editing" : frozen ? "Completed topics cannot be changed" : blocked ? "Add remarks to unlock actions" : "Change Status"}>
+                                  <span>
+                                    <FormControl size="small">
+                                      <Select
+                                        value={currentStatus}
+                                        disabled={!editable || !!t._pending}
+                                        onChange={(e) => handlePendingStatusChange(t.id, e.target.value)}
+                                        sx={{
+                                          borderRadius: "8px", fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, minWidth: 132,
+                                          background:   editable ? T.accentLight : T.surfaceAlt,
+                                          color:        editable ? T.accent      : T.textSub,
+                                          "& fieldset": { borderColor: T.border }, "&:hover fieldset": { borderColor: T.accent },
+                                        }}
+                                        MenuProps={{ PaperProps: { sx: { borderRadius: "12px" } } }}
+                                      >
+                                        <MenuItem value="Planned"     sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12 }}>Planned</MenuItem>
+                                        <MenuItem value="In Progress" sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12 }}>In Progress</MenuItem>
+                                        <MenuItem value="Completed"   sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12 }}>Completed</MenuItem>
+                                      </Select>
+                                    </FormControl>
+                                  </span>
+                                </Tooltip>
 
-                              {pendingStatusChanges[t.id] &&
-                                pendingStatusChanges[t.id] !== confirmedStatus &&
-                                !t._pending && (
+                                {pendingStatusChanges[t.id] && pendingStatusChanges[t.id] !== confirmedStatus && !t._pending && (
                                   <Tooltip title="Confirm Status Change">
                                     <IconButton
                                       size="small"
-                                      color="primary"
                                       onClick={() => handleStatusConfirm(t.id)}
                                       disabled={t._pending}
-                                      aria-label="Confirm status change"
+                                      sx={{ color: T.accent, background: T.accentLight, borderRadius: "8px", "&:hover": { background: T.accent, color: "#fff" }, transition: "all 0.2s" }}
                                     >
-                                      <CheckIcon />
+                                      <CheckIcon sx={{ fontSize: 16 }} />
                                     </IconButton>
                                   </Tooltip>
                                 )}
+                              </Box>
                             </TableCell>
 
+                            {/* Remarks */}
                             <TableCell align="center">
                               <TextField
                                 size="small"
                                 value={remarksMap[t.id] || ""}
-                                onChange={(e) =>
-                                  setRemarksMap((prev) => ({ ...prev, [t.id]: e.target.value }))
-                                }
+                                onChange={(e) => setRemarksMap((prev) => ({ ...prev, [t.id]: e.target.value }))}
                                 onBlur={() => handleRemarksSave(t.id, remarksMap[t.id])}
-                                placeholder="Add remarks"
+                                placeholder="Add remarks…"
                                 variant="outlined"
-                                sx={{ bgcolor: "#fafafa", borderRadius: 1 }}
-                                inputProps={{ style: { fontSize: 13 } }}
+                                sx={{ "& .MuiOutlinedInput-root": { borderRadius: "8px", fontFamily: "'DM Sans', sans-serif", fontSize: 12, background: T.surfaceAlt, "& fieldset": { borderColor: T.border }, "&:hover fieldset": { borderColor: T.accent }, "&.Mui-focused fieldset": { borderColor: T.accent } } }}
+                                inputProps={{ style: { fontSize: 12, fontFamily: "'DM Sans', sans-serif" } }}
                                 disabled={!weekEditable || frozen}
                               />
                             </TableCell>
@@ -1212,70 +898,43 @@ function TrainerDashboard({ user, token }) {
             );
           })}
 
+          {/* Inline message */}
           {message && (
             <Fade in={!!message}>
               <Box mt={1}>
-                <Alert
-                  severity={
-                    message.startsWith("✅")
-                      ? "success"
-                      : message.startsWith("❌")
-                      ? "error"
-                      : "warning"
-                  }
-                  sx={{ fontWeight: "medium" }}
-                >
+                <Alert severity={message.startsWith("✅") ? "success" : message.startsWith("❌") ? "error" : "warning"} sx={{ borderRadius: "10px", fontFamily: "'DM Sans', sans-serif" }}>
                   {message}
                 </Alert>
               </Box>
             </Fade>
           )}
-        </Paper>
+        </Box>
       )}
 
+      {/* ════════════════════ LEAVE / MANAGEMENT TAB ════════════════════ */}
       {tab === 1 && (
         <Box>
-          {isTrainer && <TrainerUnavailabilityForm user={user} token={token} />}
-          {isManagerOrAdmin && isBatchOwner && (
-            <TrainerAssignmentDashboard user={user} token={token} batchNo={selectedBatch} />
-          )}
-          {isManagerOrAdmin && !isBatchOwner && (
-            <ManagerLeaveDashboard user={user} token={token} />
-          )}
+          {isTrainer        && <TrainerUnavailabilityForm user={user} token={token} />}
+          {isManagerOrAdmin && isBatchOwner  && <TrainerAssignmentDashboard user={user} token={token} batchNo={selectedBatch} />}
+          {isManagerOrAdmin && !isBatchOwner && <ManagerLeaveDashboard user={user} token={token} />}
           {!isTrainer && !isManagerOrAdmin && (
-            <Alert severity="warning" sx={{ mt: 3 }}>
+            <Alert severity="warning" sx={{ borderRadius: "10px", fontFamily: "'DM Sans', sans-serif" }}>
               Trainer Management is only available to trainers, managers, or admins.
             </Alert>
           )}
         </Box>
       )}
 
-      <Snackbar
-        open={remarksSnackbarOpen}
-        autoHideDuration={6000}
-        onClose={() => setRemarksSnackbarOpen(false)}
-        anchorOrigin={{ vertical: "top", horizontal: "center" }}
-      >
-        <Alert
-          onClose={() => setRemarksSnackbarOpen(false)}
-          severity={remarksSnackbarSeverity}
-          sx={{ width: "100%", fontSize: "1rem", fontWeight: "medium" }}
-        >
+      {/* ── Remarks warning snackbar ── */}
+      <Snackbar open={remarksSnackbarOpen} autoHideDuration={6000} onClose={() => setRemarksSnackbarOpen(false)} anchorOrigin={{ vertical: "top", horizontal: "center" }}>
+        <Alert onClose={() => setRemarksSnackbarOpen(false)} severity={remarksSnackbarSeverity} sx={{ width: "100%", fontFamily: "'DM Sans', sans-serif", borderRadius: "10px", fontWeight: 600 }}>
           {remarksSnackbarMessage}
         </Alert>
       </Snackbar>
 
-      <Snackbar
-        open={snackbarOpen}
-        autoHideDuration={6000}
-        onClose={() => setSnackbarOpen(false)}
-        anchorOrigin={{ vertical: "top", horizontal: "center" }}
-      >
-        <Alert
-          onClose={() => setSnackbarOpen(false)}
-          severity={snackbarSeverity}
-          sx={{ width: "100%", fontSize: "1.1rem", fontWeight: "medium" }}
-        >
+      {/* ── General snackbar ── */}
+      <Snackbar open={snackbarOpen} autoHideDuration={6000} onClose={() => setSnackbarOpen(false)} anchorOrigin={{ vertical: "top", horizontal: "center" }}>
+        <Alert onClose={() => setSnackbarOpen(false)} severity={snackbarSeverity} sx={{ width: "100%", fontFamily: "'DM Sans', sans-serif", borderRadius: "10px", fontWeight: 600 }}>
           {snackbarMessage}
         </Alert>
       </Snackbar>
