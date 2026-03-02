@@ -16,40 +16,606 @@ import {
   TableRow,
   TableContainer,
   Button,
+  Chip,
 } from "@mui/material";
-import { PieChart, Pie, Cell, Legend, Tooltip } from "recharts";
+import {
+  PieChart,
+  Pie,
+  Cell,
+  Legend,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
 import RestartAltIcon from "@mui/icons-material/RestartAlt";
+import CalendarTodayIcon from "@mui/icons-material/CalendarToday";
+import GroupIcon from "@mui/icons-material/Group";
+import PersonIcon from "@mui/icons-material/Person";
 
-const COLORS = ["#ffbb28", "#0088fe", "#00c49f"];
-const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
+/* ─── Design tokens ──────────────────────────────────────────────────────── */
+const TOKENS = {
+  bg:          "#f0f2f7",
+  surface:     "#ffffff",
+  surfaceAlt:  "#f8f9fc",
+  border:      "#e4e8f0",
+  accent:      "#3d5afe",
+  accentLight: "#e8ecff",
+  text:        "#1a1f36",
+  textSub:     "#6b7280",
+  planned:     { fill: "#f59e0b", light: "#fef3c7", text: "#92400e" },
+  progress:    { fill: "#3d5afe", light: "#e8ecff", text: "#1e3a8a" },
+  completed:   { fill: "#10b981", light: "#d1fae5", text: "#065f46" },
+};
 
+const STATUS_MAP = {
+  Planned:     TOKENS.planned,
+  "In Progress": TOKENS.progress,
+  Completed:   TOKENS.completed,
+};
+
+const PIE_COLORS = [TOKENS.planned.fill, TOKENS.progress.fill, TOKENS.completed.fill];
+
+const API_BASE =
+  process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
+
+/* ─── Shared styles ──────────────────────────────────────────────────────── */
+const cardSx = {
+  background: TOKENS.surface,
+  border: `1px solid ${TOKENS.border}`,
+  borderRadius: "16px",
+  boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
+  overflow: "hidden",
+};
+
+const labelSx = {
+  fontFamily: "'DM Sans', sans-serif",
+  fontSize: 11,
+  fontWeight: 700,
+  letterSpacing: "0.08em",
+  textTransform: "uppercase",
+  color: TOKENS.textSub,
+};
+
+/* ─── Stat pill ──────────────────────────────────────────────────────────── */
+function StatPill({ icon, label, value }) {
+  return (
+    <Box
+      sx={{
+        display: "flex",
+        alignItems: "center",
+        gap: 1,
+        px: 2,
+        py: 1,
+        borderRadius: "10px",
+        background: TOKENS.surfaceAlt,
+        border: `1px solid ${TOKENS.border}`,
+      }}
+    >
+      <Box sx={{ color: TOKENS.accent, display: "flex", alignItems: "center" }}>
+        {icon}
+      </Box>
+      <Box>
+        <Typography sx={{ ...labelSx, fontSize: 10 }}>{label}</Typography>
+        <Typography
+          sx={{
+            fontFamily: "'DM Sans', sans-serif",
+            fontSize: 13,
+            fontWeight: 700,
+            color: TOKENS.text,
+            lineHeight: 1.2,
+          }}
+        >
+          {value}
+        </Typography>
+      </Box>
+    </Box>
+  );
+}
+
+/* ─── Custom tooltip ─────────────────────────────────────────────────────── */
+function CustomTooltip({ active, payload }) {
+  if (!active || !payload?.length) return null;
+  const { name, value } = payload[0];
+  const colors = STATUS_MAP[name] || { fill: "#888", light: "#eee", text: "#333" };
+  return (
+    <Box
+      sx={{
+        background: TOKENS.surface,
+        border: `1.5px solid ${colors.fill}`,
+        borderRadius: "10px",
+        px: 2,
+        py: 1.5,
+        boxShadow: "0 4px 20px rgba(0,0,0,0.12)",
+        minWidth: 120,
+      }}
+    >
+      <Typography
+        sx={{
+          fontFamily: "'DM Sans', sans-serif",
+          fontSize: 12,
+          fontWeight: 700,
+          color: colors.text,
+          mb: 0.3,
+        }}
+      >
+        {name}
+      </Typography>
+      <Typography
+        sx={{
+          fontFamily: "'DM Mono', monospace",
+          fontSize: 20,
+          fontWeight: 700,
+          color: colors.fill,
+          lineHeight: 1,
+        }}
+      >
+        {value}
+        <Typography component="span" sx={{ fontSize: 11, color: TOKENS.textSub, ml: 0.5 }}>
+          topics
+        </Typography>
+      </Typography>
+    </Box>
+  );
+}
+
+/* ─── Custom legend ──────────────────────────────────────────────────────── */
+function CustomLegend({ payload }) {
+  return (
+    <Box sx={{ display: "flex", gap: 1.5, justifyContent: "center", flexWrap: "wrap", mt: 1 }}>
+      {(payload || []).map((entry) => {
+        const colors = STATUS_MAP[entry.value] || { fill: entry.color, light: "#eee", text: "#333" };
+        return (
+          <Box
+            key={entry.value}
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              gap: 0.7,
+              px: 1.5,
+              py: 0.5,
+              borderRadius: "20px",
+              background: colors.light,
+              border: `1px solid ${colors.fill}44`,
+            }}
+          >
+            <Box
+              sx={{
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                background: colors.fill,
+                flexShrink: 0,
+              }}
+            />
+            <Typography
+              sx={{
+                fontFamily: "'DM Sans', sans-serif",
+                fontSize: 12,
+                fontWeight: 600,
+                color: colors.text,
+              }}
+            >
+              {entry.value}
+            </Typography>
+          </Box>
+        );
+      })}
+    </Box>
+  );
+}
+
+/* ─── Custom pie label ───────────────────────────────────────────────────── */
+function renderCustomLabel({ cx, cy, midAngle, innerRadius, outerRadius, percent, name }) {
+  if (percent < 0.05) return null;
+  const RADIAN = Math.PI / 180;
+  const radius = innerRadius + (outerRadius - innerRadius) * 0.55;
+  const x = cx + radius * Math.cos(-midAngle * RADIAN);
+  const y = cy + radius * Math.sin(-midAngle * RADIAN);
+  return (
+    <text
+      x={x}
+      y={y}
+      fill="white"
+      textAnchor="middle"
+      dominantBaseline="central"
+      style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700 }}
+    >
+      {`${Math.round(percent * 100)}%`}
+    </text>
+  );
+}
+
+/* ─── Progress summary bar ───────────────────────────────────────────────── */
+function ProgressSummaryBar({ counts }) {
+  const total = Object.values(counts || {}).reduce((a, b) => a + b, 0) || 1;
+  const segments = [
+    { key: "Completed",    color: TOKENS.completed.fill  },
+    { key: "In Progress",  color: TOKENS.progress.fill   },
+    { key: "Planned",      color: TOKENS.planned.fill    },
+  ];
+  return (
+    <Box sx={{ mt: 2 }}>
+      <Box sx={{ display: "flex", borderRadius: "6px", overflow: "hidden", height: 8, mb: 1 }}>
+        {segments.map(({ key, color }) => {
+          const val = counts?.[key] || 0;
+          const pct = (val / total) * 100;
+          if (pct === 0) return null;
+          return (
+            <Box
+              key={key}
+              sx={{ width: `${pct}%`, background: color, transition: "width 0.6s ease" }}
+            />
+          );
+        })}
+      </Box>
+      <Box sx={{ display: "flex", gap: 2 }}>
+        {segments.map(({ key, color }) => {
+          const val = counts?.[key] || 0;
+          return (
+            <Typography
+              key={key}
+              sx={{
+                fontFamily: "'DM Sans', sans-serif",
+                fontSize: 11,
+                color: TOKENS.textSub,
+                display: "flex",
+                alignItems: "center",
+                gap: 0.5,
+              }}
+            >
+              <Box component="span" sx={{ width: 8, height: 8, borderRadius: "2px", background: color, display: "inline-block" }} />
+              {key}: <strong style={{ color: TOKENS.text }}>{val}</strong>
+            </Typography>
+          );
+        })}
+      </Box>
+    </Box>
+  );
+}
+
+/* ─── Topic table ────────────────────────────────────────────────────────── */
+function TopicTable({ batchNo, topics, selectedStatus }) {
+  const colors = STATUS_MAP[selectedStatus] || { fill: TOKENS.accent, light: TOKENS.accentLight, text: TOKENS.text };
+  return (
+    <Box
+      sx={{
+        ...cardSx,
+        mt: 2,
+        animation: "fadeSlideIn 0.3s ease",
+        "@keyframes fadeSlideIn": {
+          from: { opacity: 0, transform: "translateY(8px)" },
+          to:   { opacity: 1, transform: "translateY(0)" },
+        },
+      }}
+    >
+      {/* Table header */}
+      <Box
+        sx={{
+          px: 2.5,
+          py: 1.5,
+          background: colors.light,
+          borderBottom: `1px solid ${colors.fill}33`,
+          display: "flex",
+          alignItems: "center",
+          gap: 1.5,
+        }}
+      >
+        <Box sx={{ width: 10, height: 10, borderRadius: "50%", background: colors.fill }} />
+        <Typography
+          sx={{
+            fontFamily: "'DM Sans', sans-serif",
+            fontWeight: 700,
+            fontSize: 13,
+            color: colors.text,
+          }}
+        >
+          {selectedStatus} Topics — {batchNo}
+        </Typography>
+        <Chip
+          label={topics.length}
+          size="small"
+          sx={{
+            ml: "auto",
+            fontFamily: "'DM Sans', sans-serif",
+            fontWeight: 700,
+            fontSize: 11,
+            height: 20,
+            background: colors.fill,
+            color: "#fff",
+          }}
+        />
+      </Box>
+
+      <TableContainer sx={{ maxHeight: 320 }}>
+        <Table size="small" stickyHeader>
+          <TableHead>
+            <TableRow>
+              {["#", "Topic Name", "Date", "Status", "Remarks"].map((h) => (
+                <TableCell
+                  key={h}
+                  sx={{
+                    ...labelSx,
+                    background: TOKENS.surfaceAlt,
+                    borderBottom: `2px solid ${TOKENS.border}`,
+                    py: 1.2,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {h}
+                </TableCell>
+              ))}
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {topics.length === 0 ? (
+              <TableRow>
+                <TableCell
+                  colSpan={5}
+                  align="center"
+                  sx={{
+                    py: 4,
+                    fontFamily: "'DM Sans', sans-serif",
+                    color: TOKENS.textSub,
+                    fontSize: 13,
+                  }}
+                >
+                  No topics found for "{selectedStatus}".
+                </TableCell>
+              </TableRow>
+            ) : (
+              topics.map((topic, idx) => (
+                <TableRow
+                  key={idx}
+                  sx={{
+                    "&:nth-of-type(even)": { background: TOKENS.surfaceAlt },
+                    "&:hover": { background: colors.light, transition: "background 0.15s" },
+                  }}
+                >
+                  <TableCell
+                    sx={{
+                      fontFamily: "'DM Mono', monospace",
+                      fontSize: 11,
+                      color: TOKENS.textSub,
+                      width: 36,
+                    }}
+                  >
+                    {idx + 1}
+                  </TableCell>
+                  <TableCell
+                    sx={{
+                      fontFamily: "'DM Sans', sans-serif",
+                      fontSize: 13,
+                      fontWeight: 500,
+                      color: TOKENS.text,
+                    }}
+                  >
+                    {topic.topic_name}
+                  </TableCell>
+                  <TableCell
+                    sx={{
+                      fontFamily: "'DM Mono', monospace",
+                      fontSize: 12,
+                      color: TOKENS.textSub,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {topic.date}
+                  </TableCell>
+                  <TableCell>
+                    <Box
+                      sx={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 0.5,
+                        px: 1.2,
+                        py: 0.3,
+                        borderRadius: "20px",
+                        background: colors.light,
+                        border: `1px solid ${colors.fill}44`,
+                      }}
+                    >
+                      <Box
+                        sx={{
+                          width: 6,
+                          height: 6,
+                          borderRadius: "50%",
+                          background: colors.fill,
+                        }}
+                      />
+                      <Typography
+                        sx={{
+                          fontFamily: "'DM Sans', sans-serif",
+                          fontSize: 11,
+                          fontWeight: 700,
+                          color: colors.text,
+                        }}
+                      >
+                        {topic.topic_status}
+                      </Typography>
+                    </Box>
+                  </TableCell>
+                  <TableCell
+                    sx={{
+                      fontFamily: "'DM Sans', sans-serif",
+                      fontSize: 12,
+                      color: topic.remarks ? TOKENS.text : TOKENS.textSub,
+                      fontStyle: topic.remarks ? "normal" : "italic",
+                    }}
+                  >
+                    {topic.remarks || "—"}
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </TableContainer>
+    </Box>
+  );
+}
+
+/* ─── Batch progress card ────────────────────────────────────────────────── */
+function BatchCard({ batch, selectedStatus, currentBatchNo, filteredTopics, onPieClick }) {
+  const pieData = [
+    { name: "Planned",     value: batch.topic_status_counts?.Planned        || 0 },
+    { name: "In Progress", value: batch.topic_status_counts?.["In Progress"] || 0 },
+    { name: "Completed",   value: batch.topic_status_counts?.Completed       || 0 },
+  ];
+  const totalCount = pieData.reduce((a, b) => a + b.value, 0);
+  const completedPct = totalCount > 0
+    ? Math.round(((batch.topic_status_counts?.Completed || 0) / totalCount) * 100)
+    : 0;
+
+  return (
+    <Box sx={{ ...cardSx, mb: 3 }}>
+      {/* Card header */}
+      <Box
+        sx={{
+          px: 3,
+          py: 2,
+          background: `linear-gradient(135deg, ${TOKENS.accent}0d 0%, ${TOKENS.accentLight} 100%)`,
+          borderBottom: `1px solid ${TOKENS.border}`,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          flexWrap: "wrap",
+          gap: 1,
+        }}
+      >
+        <Box>
+          <Typography sx={{ ...labelSx, mb: 0.2 }}>Batch</Typography>
+          <Typography
+            sx={{
+              fontFamily: "'DM Sans', sans-serif",
+              fontSize: 18,
+              fontWeight: 800,
+              color: TOKENS.text,
+              letterSpacing: "-0.02em",
+            }}
+          >
+            {batch.batch_no}
+          </Typography>
+        </Box>
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: 1,
+            px: 2,
+            py: 1,
+            borderRadius: "10px",
+            background: TOKENS.completed.light,
+            border: `1px solid ${TOKENS.completed.fill}44`,
+          }}
+        >
+          <Typography
+            sx={{
+              fontFamily: "'DM Mono', monospace",
+              fontSize: 22,
+              fontWeight: 800,
+              color: TOKENS.completed.fill,
+              lineHeight: 1,
+            }}
+          >
+            {completedPct}%
+          </Typography>
+          <Typography sx={{ ...labelSx, fontSize: 10, color: TOKENS.completed.text }}>
+            complete
+          </Typography>
+        </Box>
+      </Box>
+
+      {/* Card body */}
+      <Box sx={{ p: 3 }}>
+        {/* Stat pills */}
+        <Box sx={{ display: "flex", gap: 1.5, flexWrap: "wrap", mb: 2.5 }}>
+          <StatPill icon={<PersonIcon sx={{ fontSize: 16 }} />}   label="Trainer"  value={(batch.trainer_names || []).join(", ") || "—"} />
+          <StatPill icon={<GroupIcon sx={{ fontSize: 16 }} />}    label="Learners" value={batch.total_learners ?? "—"} />
+          <StatPill icon={<CalendarTodayIcon sx={{ fontSize: 16 }} />} label="Start" value={batch.start_date || "—"} />
+          <StatPill icon={<CalendarTodayIcon sx={{ fontSize: 16 }} />} label="End"   value={batch.end_date   || "—"} />
+        </Box>
+
+        {/* Progress bar */}
+        <ProgressSummaryBar counts={batch.topic_status_counts} />
+
+        {/* Pie chart */}
+        <Box sx={{ mt: 3, display: "flex", justifyContent: "center" }}>
+          <Box sx={{ width: "100%", maxWidth: 380 }}>
+            <Typography sx={{ ...labelSx, textAlign: "center", mb: 1 }}>
+              Click a segment to explore topics
+            </Typography>
+            <ResponsiveContainer width="100%" height={260}>
+              <PieChart>
+                <Pie
+                  data={pieData}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="45%"
+                  outerRadius={95}
+                  innerRadius={42}
+                  paddingAngle={3}
+                  labelLine={false}
+                  label={renderCustomLabel}
+                  onClick={(data, index) =>
+                    onPieClick(data, index, batch.batch_no, batch.topics)
+                  }
+                  style={{ cursor: "pointer" }}
+                >
+                  {pieData.map((_, index) => (
+                    <Cell
+                      key={`cell-${index}`}
+                      fill={PIE_COLORS[index % PIE_COLORS.length]}
+                      stroke="white"
+                      strokeWidth={2}
+                    />
+                  ))}
+                </Pie>
+                <Tooltip content={<CustomTooltip />} />
+                <Legend content={<CustomLegend />} />
+              </PieChart>
+            </ResponsiveContainer>
+          </Box>
+        </Box>
+
+        {/* Topic table below pie */}
+        {selectedStatus && currentBatchNo === batch.batch_no && (
+          <TopicTable
+            batchNo={batch.batch_no}
+            topics={filteredTopics}
+            selectedStatus={selectedStatus}
+          />
+        )}
+      </Box>
+    </Box>
+  );
+}
+
+/* ─── Main component ─────────────────────────────────────────────────────── */
 export default function CourseProgress() {
-  const [domains, setDomains] = useState([]);
-  const [allBatches, setAllBatches] = useState([]); // Store all batches
-  const [batches, setBatches] = useState([]);
+  const [domains, setDomains]               = useState([]);
+  const [allBatches, setAllBatches]         = useState([]);
+  const [batches, setBatches]               = useState([]);
   const [selectedDomain, setSelectedDomain] = useState("");
-  const [selectedBatch, setSelectedBatch] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [progressData, setProgressData] = useState(null);
-  const [error, setError] = useState("");
+  const [selectedBatch, setSelectedBatch]   = useState("");
+  const [loading, setLoading]               = useState(false);
+  const [progressData, setProgressData]     = useState(null);
+  const [error, setError]                   = useState("");
   const [selectedStatus, setSelectedStatus] = useState("");
   const [filteredTopics, setFilteredTopics] = useState([]);
   const [currentBatchNo, setCurrentBatchNo] = useState("");
 
-  // Initial load: fetch domains and all batches
+  /* ── Initial load ── */
   useEffect(() => {
     async function fetchData() {
       try {
         setLoading(true);
-        const domainsPromise = axios.get(`${API_BASE}/api/domains`);
-        const batchesPromise = axios.get(`${API_BASE}/api/batches`);
         const [domainsRes, batchesRes] = await Promise.all([
-          domainsPromise,
-          batchesPromise,
+          axios.get(`${API_BASE}/api/domains`),
+          axios.get(`${API_BASE}/api/batches`),
         ]);
         setDomains(domainsRes.data);
-        setAllBatches(batchesRes.data); // Store all batches
-        setBatches(batchesRes.data); // Initialize batches dropdown
+        setAllBatches(batchesRes.data);
+        setBatches(batchesRes.data);
       } catch {
         setError("Failed to load domain or batch information.");
       } finally {
@@ -59,19 +625,17 @@ export default function CourseProgress() {
     fetchData();
   }, []);
 
-  // When domain is selected
+  /* ── Domain selected ── */
   useEffect(() => {
     if (!selectedDomain) return;
-    async function fetchDomainBatchesAndProgress() {
+    async function fetchDomainData() {
       setLoading(true);
       try {
-        const batchRes = await axios.get(`${API_BASE}/api/batches`, {
-          params: { domain: selectedDomain },
-        });
+        const [batchRes, progressRes] = await Promise.all([
+          axios.get(`${API_BASE}/api/batches`, { params: { domain: selectedDomain } }),
+          axios.get(`${API_BASE}/api/course-progress`, { params: { domain: selectedDomain } }),
+        ]);
         setBatches(batchRes.data);
-        const progressRes = await axios.get(`${API_BASE}/api/course-progress`, {
-          params: { domain: selectedDomain },
-        });
         setProgressData(progressRes.data);
         setSelectedBatch("");
       } catch {
@@ -82,14 +646,12 @@ export default function CourseProgress() {
         setLoading(false);
       }
     }
-    fetchDomainBatchesAndProgress();
+    fetchDomainData();
   }, [selectedDomain]);
 
-  // When batch is selected
+  /* ── Batch selected ── */
   useEffect(() => {
-    if (!selectedBatch) {
-      return;
-    }
+    if (!selectedBatch) return;
     async function fetchBatchProgress() {
       setLoading(true);
       try {
@@ -107,15 +669,10 @@ export default function CourseProgress() {
     fetchBatchProgress();
   }, [selectedBatch]);
 
-  // Pie click event: filter topics and set state for which batch/pie was clicked
   const handlePieClick = (data, index, batchNo, topicsArr) => {
-    const status = data.name;
-    setSelectedStatus(status);
+    setSelectedStatus(data.name);
     setCurrentBatchNo(batchNo);
-    const topicsArray = (topicsArr || []).filter(
-      (t) => t.topic_status === status
-    );
-    setFilteredTopics(topicsArray);
+    setFilteredTopics((topicsArr || []).filter((t) => t.topic_status === data.name));
   };
 
   const handleDomainChange = (e) => {
@@ -127,11 +684,7 @@ export default function CourseProgress() {
     setSelectedStatus("");
     setFilteredTopics([]);
     setCurrentBatchNo("");
-
-    // If domain is cleared, restore all batches
-    if (!domain) {
-      setBatches(allBatches);
-    }
+    if (!domain) setBatches(allBatches);
   };
 
   const handleBatchChange = (e) => {
@@ -143,12 +696,9 @@ export default function CourseProgress() {
     setSelectedStatus("");
     setFilteredTopics([]);
     setCurrentBatchNo("");
-
-    // When batch is selected, keep all batches in dropdown
     setBatches(allBatches);
   };
 
-  // Reset function
   const handleReset = () => {
     setSelectedDomain("");
     setSelectedBatch("");
@@ -157,324 +707,269 @@ export default function CourseProgress() {
     setSelectedStatus("");
     setFilteredTopics([]);
     setCurrentBatchNo("");
-    setBatches(allBatches); // Restore all batches
+    setBatches(allBatches);
   };
 
-  const isMultiBatchProgress = progressData && progressData.batches;
+  const isMultiBatch = progressData?.batches;
 
-  // Table rendering component
-  function TopicTable({ batchNo, topics, selectedStatus }) {
-    return (
-      <TableContainer component={Paper} sx={{ minWidth: 300, mx: 2 }}>
-        <Table>
-          <TableHead>
-            <TableRow>
-              <TableCell>
-                <strong>Batch No</strong>
-              </TableCell>
-              <TableCell>
-                <strong>Topic Name</strong>
-              </TableCell>
-              <TableCell>
-                <strong>Date</strong>
-              </TableCell>
-              <TableCell>
-                <strong>Status</strong>
-              </TableCell>
-              <TableCell>
-                <strong>Remarks</strong>
-              </TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {topics.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={5} align="center">
-                  No topics found for {selectedStatus}.
-                </TableCell>
-              </TableRow>
-            )}
-            {topics.map((topic, idx) => (
-              <TableRow key={idx}>
-                <TableCell>{batchNo}</TableCell>
-                <TableCell>{topic.topic_name}</TableCell>
-                <TableCell>{topic.date}</TableCell>
-                <TableCell>{topic.topic_status}</TableCell>
-                <TableCell>{topic.remarks || "-"}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </TableContainer>
-    );
-  }
-
-  // Render
+  /* ── Render ── */
   return (
-    <Box p={3}>
-      <Paper elevation={3} sx={{ p: 3, maxWidth: 900, mx: "auto" }}>
-        <Typography variant="h5" gutterBottom>
-          Course Progress Dashboard
-        </Typography>
+    <Box
+      sx={{
+        minHeight: "100vh",
+        background: TOKENS.bg,
+        p: { xs: 2, md: 4 },
+        fontFamily: "'DM Sans', sans-serif",
+      }}
+    >
+      {/* Google Fonts */}
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');`}</style>
 
-        {/* Domain selector */}
-        <FormControl fullWidth sx={{ mb: 2 }}>
-          <InputLabel>Domain</InputLabel>
-          <Select
-            value={selectedDomain}
-            label="Domain"
-            onChange={handleDomainChange}
-            disabled={Boolean(selectedBatch) || loading}
+      <Box sx={{ maxWidth: 960, mx: "auto" }}>
+        {/* Page header */}
+        <Box sx={{ mb: 4 }}>
+          <Typography
+            sx={{
+              fontFamily: "'DM Sans', sans-serif",
+              fontSize: { xs: 24, md: 30 },
+              fontWeight: 800,
+              color: TOKENS.text,
+              letterSpacing: "-0.03em",
+              mb: 0.5,
+            }}
           >
-            <MenuItem value="">
-              <em>Select Domain</em>
-            </MenuItem>
-            {domains.map((d) => (
-              <MenuItem key={d} value={d}>
-                {d}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-
-        {/* Batch selector */}
-        <FormControl fullWidth sx={{ mb: 2 }}>
-          <InputLabel>Batch No</InputLabel>
-          <Select
-            value={selectedBatch}
-            label="Batch No"
-            onChange={handleBatchChange}
-            disabled={Boolean(selectedDomain) || loading}
-          >
-            <MenuItem value="">
-              <em>Select Batch</em>
-            </MenuItem>
-            {batches.map((b) => (
-              <MenuItem key={b.batch_no} value={b.batch_no}>
-                {b.batch_no} {b.start_date ? `(${b.start_date})` : ""}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-
-        {/* Reset Button */}
-        <Button
-          variant="outlined"
-          startIcon={<RestartAltIcon />}
-          onClick={handleReset}
-          sx={{ mb: 3 }}
-          disabled={!selectedDomain && !selectedBatch}
-        >
-          Reset
-        </Button>
-
-        {loading && (
-          <Box display="flex" justifyContent="center" mt={2}>
-            <CircularProgress />
-          </Box>
-        )}
-
-        {/* Multiple batches (domain) progress */}
-        {isMultiBatchProgress && !loading && (
-          <Box>
-            <Typography variant="h6" gutterBottom>
-              Progress for Domain: <strong>{progressData.domain}</strong>
-            </Typography>
-            {progressData.batches.length === 0 ? (
-              <Typography>No batches found for this domain.</Typography>
-            ) : (
-              progressData.batches.map((batch) => {
-                const pieData = [
-                  {
-                    name: "Planned",
-                    value: batch.topic_status_counts?.Planned || 0,
-                  },
-                  {
-                    name: "In Progress",
-                    value: batch.topic_status_counts?.["In Progress"] || 0,
-                  },
-                  {
-                    name: "Completed",
-                    value: batch.topic_status_counts?.Completed || 0,
-                  },
-                ];
-                const totalCount = pieData.reduce((a, b) => a + b.value, 0);
-                return (
-                  <Box
-                    key={batch.batch_no}
-                    mb={4}
-                    p={2}
-                    sx={{
-                      border: "1px solid #ccc",
-                      borderRadius: 1,
-                      display: "flex",
-                      alignItems: "flex-start",
-                    }}
-                  >
-                    {/* Pie Chart on left */}
-                    <Box>
-                      <Typography>
-                        <strong>Batch No:</strong> {batch.batch_no}
-                      </Typography>
-                      <Typography>
-                        <strong>Trainer(s):</strong>{" "}
-                        {batch.trainer_names.join(", ")}
-                      </Typography>
-                      <Typography>
-                        <strong>Total Learners:</strong> {batch.total_learners}
-                      </Typography>
-                      <Typography>
-                        <strong>Start Date:</strong> {batch.start_date}
-                      </Typography>
-                      <Typography>
-                        <strong>End Date:</strong> {batch.end_date}
-                      </Typography>
-                      <Box mt={2}>
-                        <PieChart width={400} height={220}>
-                          <Pie
-                            data={pieData}
-                            dataKey="value"
-                            nameKey="name"
-                            cx={150}
-                            cy={110}
-                            outerRadius={80}
-                            label={(entry) =>
-                              `${entry.name}: ${
-                                totalCount > 0
-                                  ? Math.round((entry.value / totalCount) * 100)
-                                  : 0
-                              }%`
-                            }
-                            onClick={(data, index) =>
-                              handlePieClick(
-                                data,
-                                index,
-                                batch.batch_no,
-                                batch.topics
-                              )
-                            }
-                          >
-                            {pieData.map((entry, index) => (
-                              <Cell
-                                key={`cell-${index}`}
-                                fill={COLORS[index % COLORS.length]}
-                              />
-                            ))}
-                          </Pie>
-                          <Tooltip />
-                          <Legend />
-                        </PieChart>
-                      </Box>
-                    </Box>
-                    {/* Table on right, per batch and clicked status */}
-                    {selectedStatus && currentBatchNo === batch.batch_no && (
-                      <TopicTable
-                        batchNo={batch.batch_no}
-                        topics={filteredTopics}
-                        selectedStatus={selectedStatus}
-                      />
-                    )}
-                  </Box>
-                );
-              })
-            )}
-          </Box>
-        )}
-
-        {/* Single batch progress */}
-        {progressData && !isMultiBatchProgress && !loading && (
-          <Box display="flex" alignItems="flex-start">
-            {/* Pie Chart */}
-            <Box>
-              <Typography>
-                <strong>Batch No:</strong> {progressData.batch_no}
-              </Typography>
-              <Typography>
-                <strong>Trainer(s):</strong>{" "}
-                {progressData.trainer_names.join(", ")}
-              </Typography>
-              <Typography>
-                <strong>Total Learners:</strong> {progressData.total_learners}
-              </Typography>
-              <Typography>
-                <strong>Start Date:</strong> {progressData.start_date}
-              </Typography>
-              <Typography>
-                <strong>End Date:</strong> {progressData.end_date}
-              </Typography>
-              <Box mt={3}>
-                <PieChart width={400} height={220}>
-                  <Pie
-                    data={[
-                      {
-                        name: "Planned",
-                        value:
-                          progressData.topic_status_counts?.Planned || 0,
-                      },
-                      {
-                        name: "In Progress",
-                        value:
-                          progressData.topic_status_counts?.["In Progress"] ||
-                          0,
-                      },
-                      {
-                        name: "Completed",
-                        value:
-                          progressData.topic_status_counts?.Completed || 0,
-                      },
-                    ]}
-                    dataKey="value"
-                    nameKey="name"
-                    cx={170}
-                    cy={110}
-                    outerRadius={80}
-                    label={(entry) =>
-                      `${entry.name}: ${Math.round(
-                        (entry.value /
-                          (Object.values(
-                            progressData.topic_status_counts || {}
-                          ).reduce((a, b) => a + b, 0) || 1)) *
-                          100
-                      )}%`
-                    }
-                    onClick={(data, index) =>
-                      handlePieClick(
-                        data,
-                        index,
-                        progressData.batch_no,
-                        progressData.topics
-                      )
-                    }
-                  >
-                    {[0, 1, 2].map((_, index) => (
-                      <Cell
-                        key={`cell-${index}`}
-                        fill={COLORS[index % COLORS.length]}
-                      />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                  <Legend />
-                </PieChart>
-              </Box>
-            </Box>
-            {/* Table right of pie for single batch */}
-            {selectedStatus && currentBatchNo === progressData.batch_no && (
-              <TopicTable
-                batchNo={progressData.batch_no}
-                topics={filteredTopics}
-                selectedStatus={selectedStatus}
-              />
-            )}
-          </Box>
-        )}
-
-        {error && (
-          <Typography mt={2} color="error">
-            {error}
+            Course Progress
           </Typography>
+          <Typography
+            sx={{
+              fontFamily: "'DM Sans', sans-serif",
+              fontSize: 14,
+              color: TOKENS.textSub,
+            }}
+          >
+            Monitor training progress by domain or individual batch
+          </Typography>
+        </Box>
+
+        {/* Filter card */}
+        <Box sx={{ ...cardSx, p: 3, mb: 3 }}>
+          <Typography sx={{ ...labelSx, mb: 2 }}>Filter</Typography>
+          <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap", alignItems: "flex-end" }}>
+            {/* Domain */}
+            <FormControl sx={{ minWidth: 220 }} size="small">
+              <InputLabel
+                sx={{
+                  fontFamily: "'DM Sans', sans-serif",
+                  fontSize: 13,
+                }}
+              >
+                Domain
+              </InputLabel>
+              <Select
+                value={selectedDomain}
+                label="Domain"
+                onChange={handleDomainChange}
+                disabled={Boolean(selectedBatch) || loading}
+                sx={{
+                  fontFamily: "'DM Sans', sans-serif",
+                  fontSize: 13,
+                  borderRadius: "10px",
+                  "& .MuiOutlinedInput-notchedOutline": { borderColor: TOKENS.border },
+                  "&:hover .MuiOutlinedInput-notchedOutline": { borderColor: TOKENS.accent },
+                }}
+              >
+                <MenuItem value=""><em>Select Domain</em></MenuItem>
+                {domains.map((d) => (
+                  <MenuItem key={d} value={d} sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>
+                    {d}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+
+            {/* Batch */}
+            <FormControl sx={{ minWidth: 220 }} size="small">
+              <InputLabel sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>
+                Batch No
+              </InputLabel>
+              <Select
+                value={selectedBatch}
+                label="Batch No"
+                onChange={handleBatchChange}
+                disabled={Boolean(selectedDomain) || loading}
+                sx={{
+                  fontFamily: "'DM Sans', sans-serif",
+                  fontSize: 13,
+                  borderRadius: "10px",
+                  "& .MuiOutlinedInput-notchedOutline": { borderColor: TOKENS.border },
+                  "&:hover .MuiOutlinedInput-notchedOutline": { borderColor: TOKENS.accent },
+                }}
+              >
+                <MenuItem value=""><em>Select Batch</em></MenuItem>
+                {batches.map((b) => (
+                  <MenuItem key={b.batch_no} value={b.batch_no} sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>
+                    {b.batch_no}{b.start_date ? ` (${b.start_date})` : ""}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+
+            {/* Reset */}
+            <Button
+              variant="outlined"
+              startIcon={<RestartAltIcon sx={{ fontSize: 16 }} />}
+              onClick={handleReset}
+              disabled={!selectedDomain && !selectedBatch}
+              size="small"
+              sx={{
+                fontFamily: "'DM Sans', sans-serif",
+                fontWeight: 700,
+                fontSize: 12,
+                borderRadius: "10px",
+                borderColor: TOKENS.border,
+                color: TOKENS.textSub,
+                textTransform: "none",
+                px: 2,
+                height: 40,
+                "&:hover": {
+                  borderColor: TOKENS.accent,
+                  color: TOKENS.accent,
+                  background: TOKENS.accentLight,
+                },
+              }}
+            >
+              Reset
+            </Button>
+          </Box>
+        </Box>
+
+        {/* Loading */}
+        {loading && (
+          <Box
+            sx={{
+              ...cardSx,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              py: 8,
+              gap: 2,
+            }}
+          >
+            <CircularProgress size={36} sx={{ color: TOKENS.accent }} />
+            <Typography
+              sx={{
+                fontFamily: "'DM Sans', sans-serif",
+                fontSize: 13,
+                color: TOKENS.textSub,
+              }}
+            >
+              Loading progress data…
+            </Typography>
+          </Box>
         )}
-      </Paper>
+
+        {/* Error */}
+        {error && !loading && (
+          <Box
+            sx={{
+              ...cardSx,
+              px: 3,
+              py: 2,
+              background: "#fff5f5",
+              border: `1px solid #fca5a5`,
+            }}
+          >
+            <Typography
+              sx={{
+                fontFamily: "'DM Sans', sans-serif",
+                fontSize: 13,
+                color: "#b91c1c",
+                fontWeight: 500,
+              }}
+            >
+              {error}
+            </Typography>
+          </Box>
+        )}
+
+        {/* Multi-batch (domain) view */}
+        {isMultiBatch && !loading && (
+          <Box>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, mb: 3 }}>
+              <Typography
+                sx={{
+                  fontFamily: "'DM Sans', sans-serif",
+                  fontSize: 16,
+                  fontWeight: 700,
+                  color: TOKENS.text,
+                }}
+              >
+                Domain:
+              </Typography>
+              <Chip
+                label={progressData.domain}
+                sx={{
+                  fontFamily: "'DM Sans', sans-serif",
+                  fontWeight: 700,
+                  fontSize: 13,
+                  background: TOKENS.accentLight,
+                  color: TOKENS.accent,
+                  border: `1px solid ${TOKENS.accent}33`,
+                }}
+              />
+              <Chip
+                label={`${progressData.batches.length} batches`}
+                size="small"
+                sx={{
+                  fontFamily: "'DM Sans', sans-serif",
+                  fontWeight: 600,
+                  fontSize: 11,
+                  background: TOKENS.surfaceAlt,
+                  color: TOKENS.textSub,
+                  border: `1px solid ${TOKENS.border}`,
+                }}
+              />
+            </Box>
+
+            {progressData.batches.length === 0 ? (
+              <Box sx={{ ...cardSx, p: 4, textAlign: "center" }}>
+                <Typography
+                  sx={{
+                    fontFamily: "'DM Sans', sans-serif",
+                    fontSize: 14,
+                    color: TOKENS.textSub,
+                  }}
+                >
+                  No batches found for this domain.
+                </Typography>
+              </Box>
+            ) : (
+              progressData.batches.map((batch) => (
+                <BatchCard
+                  key={batch.batch_no}
+                  batch={batch}
+                  selectedStatus={selectedStatus}
+                  currentBatchNo={currentBatchNo}
+                  filteredTopics={filteredTopics}
+                  onPieClick={handlePieClick}
+                />
+              ))
+            )}
+          </Box>
+        )}
+
+        {/* Single batch view */}
+        {progressData && !isMultiBatch && !loading && (
+          <BatchCard
+            batch={progressData}
+            selectedStatus={selectedStatus}
+            currentBatchNo={currentBatchNo}
+            filteredTopics={filteredTopics}
+            onPieClick={handlePieClick}
+          />
+        )}
+      </Box>
     </Box>
   );
 }
