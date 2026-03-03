@@ -452,6 +452,19 @@ function isDateOverlap(start1, end1, start2, end2) {
          new Date(start2) <= new Date(end1);
 }
 
+// ============================================================
+// HELPER: Compute occupancy end = start + 5 months + 2 weeks
+// Used everywhere A.DUE DATE was previously used for overlap.
+// ============================================================
+function computeOccupancyEnd(startDateStr) {
+  if (!startDateStr) return null;
+  const d = new Date(startDateStr);
+  if (isNaN(d.getTime())) return null;
+  d.setMonth(d.getMonth() + 5);   // +5 months
+  d.setDate(d.getDate() + 14);    // +2 weeks (14 days)
+  return d.toISOString().slice(0, 10);
+}
+
 function isWindowOpen(assessmentType, assessmentDate) {
   const date = new Date(assessmentDate);
   const now = new Date();
@@ -1679,14 +1692,17 @@ app.get('/api/licenses', async (req, res) => {
 
 // ----------------------------------------------------------------
 // GET /api/get-classroom-matrix
-// CHANGED: now reads capacity column from classroom_occupancy
+// KEY CHANGE: occupancy_end column is returned so the frontend can
+// use the 5m+2w window for matrix rendering and overlap checking.
+// Falls back to computing it from occupancy_start if the column is
+// absent (backward compatibility with older rows).
 // ----------------------------------------------------------------
 app.get("/api/get-classroom-matrix", async (req, res) => {
   try {
     const { data: occupancyRows, error } = await supabase
       .from("classroom_occupancy")
       .select(
-        "batch_no, classroom_name, slot, occupancy_start, occupancy_end, enrolled, capacity, class_room, shifts"
+        "batch_no, classroom_name, slot, occupancy_start, occupancy_end, a_end, enrolled, capacity, class_room, shifts"
       )
       .order("occupancy_start", { ascending: true });
 
@@ -1694,13 +1710,11 @@ app.get("/api/get-classroom-matrix", async (req, res) => {
       console.error("get-classroom-matrix error:", error);
       return res.status(500).json({ error: error.message });
     }
-
     if (!occupancyRows?.length) {
       return res.json({ occupancyRows: [], weeks: [] });
     }
 
     const batchNos = occupancyRows.map((r) => r.batch_no).filter(Boolean);
-
     const { data: plannerData } = await supabase
       .from("course_planner_data")
       .select("batch_no, trainer_name")
@@ -1715,17 +1729,25 @@ app.get("/api/get-classroom-matrix", async (req, res) => {
       }
     });
 
-    const transformedRows = occupancyRows.map((r) => ({
-      batch_no: r.batch_no,
-      classroom_name: r.classroom_name,
-      slot: r.slot,
-      occupancy_start: r.occupancy_start,
-      occupancy_end: r.occupancy_end,
-      enrolled: r.enrolled || 0,
-      capacity: r.capacity || r.enrolled || 0,
-      mode: "OFFLINE",
-      trainer_name: trainerMap[r.batch_no] || "UNASSIGNED",
-    }));
+    const transformedRows = occupancyRows.map((r) => {
+      // Use stored occupancy_end; if absent, compute from start (backward compat)
+      const occEnd =
+        r.occupancy_end ||
+        computeOccupancyEnd(r.occupancy_start);
+
+      return {
+        batch_no:        r.batch_no,
+        classroom_name:  r.classroom_name,
+        slot:            r.slot,
+        occupancy_start: r.occupancy_start,
+        occupancy_end:   occEnd,          // 5m+2w computed end
+        a_end:           r.a_end || null, // original A.DUE DATE (display only)
+        enrolled:        r.enrolled  || 0,
+        capacity:        r.capacity  || r.enrolled || 0,
+        mode:            "OFFLINE",
+        trainer_name:    trainerMap[r.batch_no] || "UNASSIGNED",
+      };
+    });
 
     res.json({ occupancyRows: transformedRows, weeks: [] });
   } catch (err) {
@@ -1736,11 +1758,8 @@ app.get("/api/get-classroom-matrix", async (req, res) => {
 
 
 // ----------------------------------------------------------------
-// NEW: POST /api/get-batch-module-trainers
-// Reads from the new batch_module_trainers table.
-// Called by loadExistingMatrix() on every page load so that
-// Trainer Matrix, Batch Detail popup and License Summary all
-// render correctly after Save + Reload.
+// POST /api/get-batch-module-trainers
+// No change in logic; included for completeness.
 // ----------------------------------------------------------------
 app.post("/api/get-batch-module-trainers", async (req, res) => {
   try {
@@ -1780,21 +1799,18 @@ app.post("/api/get-batch-module-trainers", async (req, res) => {
       if (!row.batch_no) return;
       if (!moduleTrainerMap[row.batch_no]) moduleTrainerMap[row.batch_no] = [];
       moduleTrainerMap[row.batch_no].push({
-        module_type: row.module_type || "",
-        module_name: row.module_name || "",
-        trainer_name: row.trainer_name || "UNASSIGNED",
+        module_type:   row.module_type   || "",
+        module_name:   row.module_name   || "",
+        trainer_name:  row.trainer_name  || "UNASSIGNED",
         trainer_email: row.trainer_email || "",
       });
     });
 
     // Build overlapInfo from saved conflicts
-    // overlapInfo[batch_no] = [{module_type, trainer, conflicts:[{batch_no, start, end}]}]
     const overlapInfo = {};
     (conflictRows || []).forEach((row) => {
       if (!row.batch_no) return;
       if (!overlapInfo[row.batch_no]) overlapInfo[row.batch_no] = [];
-
-      // Find or create entry for this module_type + trainer combo
       let entry = overlapInfo[row.batch_no].find(
         (e) => e.module_type === row.module_type && e.trainer === row.trainer_name
       );
@@ -1802,12 +1818,11 @@ app.post("/api/get-batch-module-trainers", async (req, res) => {
         entry = { module_type: row.module_type || "", trainer: row.trainer_name || "", conflicts: [] };
         overlapInfo[row.batch_no].push(entry);
       }
-
       if (row.conflict_batch_no) {
         entry.conflicts.push({
           batch_no: row.conflict_batch_no,
-          start: row.conflict_start,
-          end: row.conflict_end,
+          start:    row.conflict_start,
+          end:      row.conflict_end,
         });
       }
     });
@@ -1821,15 +1836,11 @@ app.post("/api/get-batch-module-trainers", async (req, res) => {
 
 
 // ----------------------------------------------------------------
-// NEW: POST /api/assign-batch-trainers-by-module
-// Called during file upload.
-// Assigns ONE trainer per module_type per batch (not one per batch).
-// Rules:
-//   BASIC      -> match trainer_domain.domain_handling === domain
-//   CORE_THEORY -> match trainer_domain.trainer_domain === domain
-//   CORE_LAB   -> match trainer_domain.trainer_domain === domain
-// Overlap checking is per trainer across ALL booked dates.
-// Returns moduleTrainerMap and overlapInfo.
+// POST /api/assign-batch-trainers-by-module
+// KEY CHANGE: batch_date_ranges now carries end = occupancy_end
+// (start + 5m + 2w) sent from the frontend. The backend uses this
+// end date for all overlap checks — A.DUE DATE is not used here.
+// If batch_date_ranges is missing an end, we compute it from start.
 // ----------------------------------------------------------------
 app.post("/api/assign-batch-trainers-by-module", async (req, res) => {
   try {
@@ -1840,6 +1851,18 @@ app.post("/api/assign-batch-trainers-by-module", async (req, res) => {
 
     console.log("=== assign-batch-trainers-by-module START ===");
     console.log("batch_nos:", batch_nos);
+
+    // Normalise date ranges: ensure end = occupancy_end (5m+2w from start)
+    const normalisedRanges = {};
+    (batch_nos).forEach((bn) => {
+      const raw = batch_date_ranges?.[bn];
+      if (!raw?.start) return;
+      const start   = raw.start;
+      // Use provided end if it is already the computed end from frontend;
+      // otherwise recompute here as a safety net.
+      const occEnd  = raw.end || computeOccupancyEnd(start);
+      normalisedRanges[bn] = { start, end: occEnd };
+    });
 
     // 1. Fetch trainer_domain
     const { data: trainerDomainData, error: tdError } = await supabase
@@ -1854,16 +1877,16 @@ app.post("/api/assign-batch-trainers-by-module", async (req, res) => {
       .select("domain, module_name, module_type");
     if (mtError) return res.status(500).json({ error: mtError.message });
     console.log(`course_module_template rows: ${moduleTemplates?.length || 0}`);
-    console.log("All template domains:", [...new Set((moduleTemplates||[]).map(t => t.domain))]);
 
     // 3. Fetch existing occupancy for overlap checking
+    // KEY CHANGE: select occupancy_end (5m+2w); fall back to computing it
     const { data: occupancyData, error: ocError } = await supabase
       .from("classroom_occupancy")
       .select("batch_no, occupancy_start, occupancy_end")
       .order("occupancy_start", { ascending: true });
     if (ocError) return res.status(500).json({ error: ocError.message });
 
-    // 4. Fetch existing batch_module_trainers for already-saved batches (not in current upload)
+    // 4. Fetch existing batch_module_trainers for already-saved batches
     const savedBatchNos = (occupancyData || [])
       .map((r) => r.batch_no)
       .filter((bn) => bn && !batch_nos.includes(bn));
@@ -1878,14 +1901,16 @@ app.post("/api/assign-batch-trainers-by-module", async (req, res) => {
     }
 
     // Build trainer booking index from saved batches
+    // KEY CHANGE: use occupancy_end; compute it if missing
     const trainerBookings = {};
     existingModuleAssignments.forEach((row) => {
       if (!row.trainer_name || row.trainer_name === "UNASSIGNED") return;
+      const occEnd = row.occupancy_end || computeOccupancyEnd(row.occupancy_start);
       if (!trainerBookings[row.trainer_name]) trainerBookings[row.trainer_name] = [];
       trainerBookings[row.trainer_name].push({
         batch_no: row.batch_no,
-        start: row.occupancy_start,
-        end: row.occupancy_end,
+        start:    row.occupancy_start,
+        end:      occEnd,
       });
     });
 
@@ -1897,16 +1922,14 @@ app.post("/api/assign-batch-trainers-by-module", async (req, res) => {
       return new Date(s1) <= new Date(e2) && new Date(s2) <= new Date(e1);
     };
 
-    // Returns lowercase domain so it matches normalize() output on both sides
     const inferDomain = (batchNo) => {
       const up = (batchNo || "").toUpperCase();
       if (up.startsWith("DFTFT") || up.startsWith("DFT")) return "dft";
-      if (up.startsWith("DVFT") || up.startsWith("DV")) return "dv";
-      if (up.startsWith("PDFT") || up.startsWith("PD")) return "pd";
+      if (up.startsWith("DVFT")  || up.startsWith("DV"))  return "dv";
+      if (up.startsWith("PDFT")  || up.startsWith("PD"))  return "pd";
       return "";
     };
 
-    // Eligible trainers for a domain + module_type — normalize both sides
     const getEligibleTrainers = (domain, moduleType) => {
       const seen = new Set();
       const result = [];
@@ -1926,18 +1949,18 @@ app.post("/api/assign-batch-trainers-by-module", async (req, res) => {
       return result;
     };
 
-    // Sort batches by start date ascending
+    // Sort batches by (occupancy) start date ascending
     const sortedBatchNos = [...batch_nos].sort((a, b) => {
-      const sa = batch_date_ranges?.[a]?.start || "";
-      const sb = batch_date_ranges?.[b]?.start || "";
+      const sa = normalisedRanges[a]?.start || "";
+      const sb = normalisedRanges[b]?.start || "";
       if (sa !== sb) return sa.localeCompare(sb);
-      const ea = batch_date_ranges?.[a]?.end || "";
-      const eb = batch_date_ranges?.[b]?.end || "";
+      const ea = normalisedRanges[a]?.end || "";
+      const eb = normalisedRanges[b]?.end || "";
       if (ea !== eb) return ea.localeCompare(eb);
       return a.localeCompare(b);
     });
 
-    // Local booking tracker — clone from saved bookings
+    // Local booking tracker (clone from saved)
     const localBookings = {};
     Object.keys(trainerBookings).forEach((tn) => {
       localBookings[tn] = [...trainerBookings[tn]];
@@ -1947,16 +1970,17 @@ app.post("/api/assign-batch-trainers-by-module", async (req, res) => {
     const overlapInfo = {};
 
     for (const batchNo of sortedBatchNos) {
-      const dateRange = batch_date_ranges?.[batchNo];
+      const dateRange = normalisedRanges[batchNo];
       if (!dateRange?.start || !dateRange?.end) {
         console.warn(`No date range for batch: ${batchNo}`);
         moduleTrainerMap[batchNo] = [];
         continue;
       }
 
+      // KEY: bStart / bEnd now use the 5m+2w occupancy window
       const { start: bStart, end: bEnd } = dateRange;
-      const domain = inferDomain(batchNo); // lowercase
-      console.log(`\nBatch: ${batchNo} | domain="${domain}" | ${bStart} → ${bEnd}`);
+      const domain = inferDomain(batchNo);
+      console.log(`\nBatch: ${batchNo} | domain="${domain}" | occupancy ${bStart} → ${bEnd}`);
 
       if (!domain) {
         console.warn(`Cannot infer domain for: ${batchNo}`);
@@ -1964,20 +1988,17 @@ app.post("/api/assign-batch-trainers-by-module", async (req, res) => {
         continue;
       }
 
-      // Get distinct module_types for this domain — normalize t.domain for comparison
+      // Get distinct module_types for this domain
       const moduleTypeMap = new Map();
       (moduleTemplates || []).forEach((t) => {
         if (normalize(t.domain) === domain && t.module_type && !moduleTypeMap.has(t.module_type)) {
           moduleTypeMap.set(t.module_type, t.module_name || t.module_type);
         }
       });
-
       console.log(`Module types for domain "${domain}":`, [...moduleTypeMap.keys()]);
 
       if (!moduleTypeMap.size) {
-        console.warn(`No module templates for domain "${domain}". Domains in table:`, [
-          ...new Set((moduleTemplates || []).map((t) => t.domain)),
-        ]);
+        console.warn(`No module templates for domain "${domain}".`);
         moduleTrainerMap[batchNo] = [];
         continue;
       }
@@ -1989,7 +2010,6 @@ app.post("/api/assign-batch-trainers-by-module", async (req, res) => {
         console.log(`  [${moduleType}] eligible: ${eligible.map((e) => e.trainer_name).join(", ") || "NONE"}`);
 
         if (!eligible.length) {
-          console.warn(`  No eligible trainers for domain="${domain}" moduleType="${moduleType}"`);
           moduleTrainerMap[batchNo].push({
             module_type: moduleType, module_name: moduleName,
             trainer_name: "UNASSIGNED", trainer_email: "",
@@ -1997,11 +2017,11 @@ app.post("/api/assign-batch-trainers-by-module", async (req, res) => {
           continue;
         }
 
+        // Availability check uses occupancy end (5m+2w)
         const available = eligible.filter((t) => {
           const bookings = localBookings[t.trainer_name] || [];
           return !bookings.some((b) => isOverlap(bStart, bEnd, b.start, b.end));
         });
-
         console.log(`  [${moduleType}] available: ${available.map((a) => a.trainer_name).join(", ") || "NONE"}`);
 
         if (!available.length) {
@@ -2025,13 +2045,12 @@ app.post("/api/assign-batch-trainers-by-module", async (req, res) => {
           const bLast = (localBookings[b.trainer_name] || []).reduce((m, x) => x.end > m ? x.end : m, "");
           if (!aLast && !bLast) return a.trainer_name.localeCompare(b.trainer_name);
           if (!aLast) return -1;
-          if (!bLast) return 1;
+          if (!bLast) return  1;
           return aLast.localeCompare(bLast);
         });
 
         const selected = available[0];
         console.log(`  [${moduleType}] ASSIGNED: ${selected.trainer_name}`);
-
         moduleTrainerMap[batchNo].push({
           module_type: moduleType, module_name: moduleName,
           trainer_name: selected.trainer_name, trainer_email: selected.trainer_email || "",
@@ -2043,7 +2062,6 @@ app.post("/api/assign-batch-trainers-by-module", async (req, res) => {
     }
 
     console.log("=== RESULT moduleTrainerMap ===", JSON.stringify(moduleTrainerMap, null, 2));
-
     res.json({ moduleTrainerMap, overlapInfo });
   } catch (err) {
     console.error("assign-batch-trainers-by-module error:", err);
@@ -2410,10 +2428,11 @@ app.post("/api/get-batch-trainers-by-module", async (req, res) => {
 
 // ----------------------------------------------------------------
 // POST /api/save-classroom-matrix
-// CHANGED:
-//   1. Saves capacity column to classroom_occupancy
-//   2. Saves per-module trainer entries to batch_module_trainers table
-//      using upsert on the (batch_no, module_type) unique constraint
+// KEY CHANGE:
+//   occupancy_end in the DB is now the 5m+2w computed end date,
+//   NOT A.DUE DATE.  a_end (original due date) is stored separately
+//   for reference.  The overlap checking in assign-batch-trainers
+//   will read occupancy_end on future loads.
 // ----------------------------------------------------------------
 app.post("/api/save-classroom-matrix", async (req, res) => {
   try {
@@ -2430,19 +2449,33 @@ app.post("/api/save-classroom-matrix", async (req, res) => {
 
     for (const row of sortedRows) {
       const batch_no = row.batch_no?.trim();
-      if (!batch_no || !row.occupancy_start || !row.occupancy_end) { skipped++; continue; }
+      if (!batch_no || !row.occupancy_start) { skipped++; continue; }
 
       const occupancy_start = row.occupancy_start;
-      const occupancy_end   = row.occupancy_end;
-      const enrolled        = Number(row.enrolled) || 0;
-      const capacity        = Number(row.capacity) || enrolled;
-      const classroom_name  = row.classroom_name || null;
-      const slot            = row.slot || null;
+
+      // KEY CHANGE: occupancy_end = 5m+2w window (sent from frontend or recomputed)
+      const occupancy_end =
+        row.occupancy_end ||
+        computeOccupancyEnd(occupancy_start);
+
+      // a_end = original A.DUE DATE (stored for reference, not used in overlap)
+      const a_end          = row.a_end || null;
+
+      const enrolled       = Number(row.enrolled)  || 0;
+      const capacity       = Number(row.capacity)  || enrolled;
+      const classroom_name = row.classroom_name    || null;
+      const slot           = row.slot              || null;
 
       // ── 1. classroom_occupancy ─────────────────────────────────
       const upsertData = {
-        batch_no, classroom_name, slot, occupancy_start, occupancy_end,
-        enrolled, capacity,
+        batch_no,
+        classroom_name,
+        slot,
+        occupancy_start,
+        occupancy_end,    // 5m+2w end
+        a_end,            // original due date
+        enrolled,
+        capacity,
         class_room: classroom_name ? classroom_name.split(" ")[0] : null,
         shifts: slot === "morning" ? "Shift_1" : slot === "evening" ? "Shift_2" : null,
         updated_at: new Date().toISOString(),
@@ -2450,7 +2483,7 @@ app.post("/api/save-classroom-matrix", async (req, res) => {
 
       const { data: existing } = await supabase
         .from("classroom_occupancy")
-        .select("id, occupancy_start, occupancy_end, enrolled, capacity, classroom_name, slot")
+        .select("id, occupancy_start, occupancy_end, a_end, enrolled, capacity, classroom_name, slot")
         .eq("batch_no", batch_no)
         .maybeSingle();
 
@@ -2464,78 +2497,73 @@ app.post("/api/save-classroom-matrix", async (req, res) => {
           existing.slot            !== slot;
 
         if (changed) {
-          const { error } = await supabase.from("classroom_occupancy").update(upsertData).eq("batch_no", batch_no);
+          const { error } = await supabase
+            .from("classroom_occupancy")
+            .update(upsertData)
+            .eq("batch_no", batch_no);
           if (!error) updated++; else console.error("classroom_occupancy update error:", error);
         } else {
           skipped++;
         }
       } else {
-        const { error } = await supabase.from("classroom_occupancy").insert(upsertData);
+        const { error } = await supabase
+          .from("classroom_occupancy")
+          .insert(upsertData);
         if (!error) inserted++; else console.error("classroom_occupancy insert error:", error);
       }
 
       // ── 2. batch_module_trainers ───────────────────────────────
       const moduleTrainers = row.module_trainers || [];
-
       for (const mt of moduleTrainers) {
         if (!mt.module_type) continue;
-
         const bmtData = {
           batch_no,
-          module_name:     mt.module_name     || null,
+          module_name:     mt.module_name   || null,
           module_type:     mt.module_type,
-          trainer_name:    mt.trainer_name    || "UNASSIGNED",
-          trainer_email:   mt.trainer_email   || null,
+          trainer_name:    mt.trainer_name  || "UNASSIGNED",
+          trainer_email:   mt.trainer_email || null,
           occupancy_start,
-          occupancy_end,
+          occupancy_end,   // 5m+2w end stored here too
           updated_at: new Date().toISOString(),
         };
-
         const { error: bmtError } = await supabase
           .from("batch_module_trainers")
           .upsert(bmtData, { onConflict: "batch_no,module_type" });
-
         if (bmtError) {
           console.error(`batch_module_trainers upsert error [${batch_no}/${mt.module_type}]:`, bmtError);
         }
       }
 
       // ── 3. batch_trainer_conflicts ─────────────────────────────
-      // Delete old conflicts for this batch first, then re-insert fresh ones.
-      // This keeps conflicts in sync with every save.
       const overlapInfoForBatch = row.overlap_info || [];
-
       if (overlapInfoForBatch.length > 0) {
         await supabase.from("batch_trainer_conflicts").delete().eq("batch_no", batch_no);
-
         const conflictInserts = [];
         overlapInfoForBatch.forEach((oi) => {
           if (oi.conflicts && oi.conflicts.length > 0) {
             oi.conflicts.forEach((c) => {
               conflictInserts.push({
                 batch_no,
-                module_type:      oi.module_type   || null,
-                trainer_name:     oi.trainer        || null,
-                conflict_batch_no: c.batch_no       || null,
-                conflict_start:   c.start           || null,
-                conflict_end:     c.end             || null,
+                module_type:       oi.module_type || null,
+                trainer_name:      oi.trainer      || null,
+                conflict_batch_no: c.batch_no      || null,
+                conflict_start:    c.start         || null,
+                conflict_end:      c.end           || null,
                 updated_at: new Date().toISOString(),
               });
             });
           } else {
-            // No specific conflict batch — trainer just had no free slot
             conflictInserts.push({
               batch_no,
-              module_type:      oi.module_type || null,
-              trainer_name:     oi.trainer      || null,
+              module_type:       oi.module_type || null,
+              trainer_name:      oi.trainer      || null,
               conflict_batch_no: null,
-              conflict_start:   null,
-              conflict_end:     null,
+              conflict_start:    null,
+              conflict_end:      null,
               updated_at: new Date().toISOString(),
             });
           }
         });
-
         if (conflictInserts.length > 0) {
           const { error: conflictError } = await supabase
             .from("batch_trainer_conflicts")
@@ -2545,7 +2573,6 @@ app.post("/api/save-classroom-matrix", async (req, res) => {
           }
         }
       } else {
-        // No conflicts for this batch — clear any old ones
         await supabase.from("batch_trainer_conflicts").delete().eq("batch_no", batch_no);
       }
 

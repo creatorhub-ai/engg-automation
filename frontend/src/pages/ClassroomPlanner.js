@@ -37,6 +37,20 @@ const slotDisplayMap = {
   Shift_2: "evening",
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// KEY CHANGE: Compute batch occupancy end = A.START DATE + 5 months + 2 weeks.
+// A.DUE DATE is stored for reference only; classroom allocation ignores it.
+// ─────────────────────────────────────────────────────────────────────────────
+function computeOccupancyEnd(startDate) {
+  if (!(startDate instanceof Date) || isNaN(startDate.getTime())) return null;
+  const d = new Date(startDate);
+  // Add 5 months
+  d.setMonth(d.getMonth() + 5);
+  // Add 2 weeks (14 days)
+  d.setDate(d.getDate() + 14);
+  return d;
+}
+
 function parseExcelDate(value) {
   if (!value) return null;
   if (value instanceof Date) return value;
@@ -99,6 +113,12 @@ function getDomainFromCourse(course) {
   return "";
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// planClassroomsForOffline
+// KEY CHANGE: occupancy end date = A.START DATE + 5 months + 2 weeks.
+//             a_end (A.DUE DATE) is preserved in the plan for display/export
+//             but classroom overlap uses occupancy_end exclusively.
+// ─────────────────────────────────────────────────────────────────────────────
 function planClassroomsForOffline(rows) {
   const classrooms = [
     { name: "Ganga",   capacity: 50 },
@@ -113,44 +133,64 @@ function planClassroomsForOffline(rows) {
     .map(normalizeRowKeys)
     .filter((row) => {
       const mode = typeof row["MODE"] === "string" ? row["MODE"].trim().toUpperCase() : "";
-      return row["COURSE"] && mode === "OFFLINE" &&
-        parseExcelDate(row["A.START DATE"]) && parseExcelDate(row["A.DUE DATE"]);
+      return row["COURSE"] && mode === "OFFLINE" && parseExcelDate(row["A.START DATE"]);
     });
 
   filteredRows.sort((a, b) => {
     const diff = parseExcelDate(a["A.START DATE"]) - parseExcelDate(b["A.START DATE"]);
     if (diff !== 0) return diff;
-    const endDiff = parseExcelDate(a["A.DUE DATE"]) - parseExcelDate(b["A.DUE DATE"]);
+    // Secondary sort: computed occupancy end
+    const aOccEnd = computeOccupancyEnd(parseExcelDate(a["A.START DATE"]));
+    const bOccEnd = computeOccupancyEnd(parseExcelDate(b["A.START DATE"]));
+    const endDiff = (aOccEnd ? aOccEnd.getTime() : 0) - (bOccEnd ? bOccEnd.getTime() : 0);
     if (endDiff !== 0) return endDiff;
     return (a["COURSE"] || "").localeCompare(b["COURSE"] || "");
   });
 
   filteredRows.forEach((row) => {
-    const course    = row["COURSE"];
-    const aStart    = toIsoDateString(parseExcelDate(row["A.START DATE"]));
-    const aEnd      = toIsoDateString(parseExcelDate(row["A.DUE DATE"]));
+    const course   = row["COURSE"];
+    const startDt  = parseExcelDate(row["A.START DATE"]);
+    const aStart   = toIsoDateString(startDt);
+
+    // A.DUE DATE preserved for display / export only
+    const dueDt    = parseExcelDate(row["A.DUE DATE"]);
+    const aEnd     = toIsoDateString(dueDt);   // original due date (display only)
+
+    // Classroom occupancy uses the computed end date
+    const occEndDt = computeOccupancyEnd(startDt);
+    const occEnd   = toIsoDateString(occEndDt); // 5 months + 2 weeks from start
+
     const enrolled  = Number(row["ENROLLED"]  || 0);
     const capacity  = Number(row["CAPACITY"]  || 0);
 
     if (enrolled > capacity) {
-      plans.push({ batch_no: course, mode: "OFFLINE", a_start: aStart, a_end: aEnd,
-        enrolled, capacity, classroom_name: "", slot: "", isAllocated: false,
-        trainer_name: "UNASSIGNED", module_trainers: [] });
-      unallocated.push({ batch_no: course, enrolled, a_start: aStart, a_end: aEnd });
+      plans.push({
+        batch_no: course, mode: "OFFLINE",
+        a_start: aStart, a_end: aEnd, occupancy_end: occEnd,
+        enrolled, capacity,
+        classroom_name: "", slot: "", isAllocated: false,
+        trainer_name: "UNASSIGNED", module_trainers: [],
+      });
+      unallocated.push({ batch_no: course, enrolled, a_start: aStart, a_end: aEnd, occupancy_end: occEnd });
       return;
     }
 
     let allocated = false, assignedRoom = "", assignedSlot = "";
+
     for (const room of classrooms) {
       if (enrolled > room.capacity) continue;
       for (const slot of shifts) {
         const key = `${room.name}|${slot}`;
         if (!occupancyIndex[key]) occupancyIndex[key] = [];
-        const overlap = occupancyIndex[key].some((b) => isDateOverlap(aStart, aEnd, b.start, b.end));
+
+        // Use occupancy_end for overlap checking
+        const overlap = occupancyIndex[key].some((b) =>
+          isDateOverlap(aStart, occEnd, b.start, b.end)
+        );
         if (!overlap) {
           assignedRoom = `${room.name} [${room.capacity}]`;
           assignedSlot = slot;
-          occupancyIndex[key].push({ start: aStart, end: aEnd, course });
+          occupancyIndex[key].push({ start: aStart, end: occEnd, course });
           allocated = true;
           break;
         }
@@ -158,11 +198,18 @@ function planClassroomsForOffline(rows) {
       if (allocated) break;
     }
 
-    if (!allocated) unallocated.push({ batch_no: course, enrolled, a_start: aStart, a_end: aEnd });
+    if (!allocated) {
+      unallocated.push({ batch_no: course, enrolled, a_start: aStart, a_end: aEnd, occupancy_end: occEnd });
+    }
 
-    plans.push({ batch_no: course, mode: "OFFLINE", a_start: aStart, a_end: aEnd,
-      enrolled, capacity, classroom_name: assignedRoom, slot: assignedSlot,
-      isAllocated: allocated, trainer_name: "UNASSIGNED", module_trainers: [] });
+    plans.push({
+      batch_no: course, mode: "OFFLINE",
+      a_start: aStart, a_end: aEnd, occupancy_end: occEnd,
+      enrolled, capacity,
+      classroom_name: assignedRoom, slot: assignedSlot,
+      isAllocated: allocated,
+      trainer_name: "UNASSIGNED", module_trainers: [],
+    });
   });
 
   return { plans, unallocated };
@@ -182,7 +229,11 @@ function getBatchColorMap(allMatrixTable) {
 
 function hexToRGB(hex) {
   const c = hex.replace("#", "");
-  return { r: parseInt(c.slice(0,2),16), g: parseInt(c.slice(2,4),16), b: parseInt(c.slice(4,6),16) };
+  return {
+    r: parseInt(c.slice(0,2),16),
+    g: parseInt(c.slice(2,4),16),
+    b: parseInt(c.slice(4,6),16),
+  };
 }
 
 export default function ClassroomPlanner() {
@@ -200,8 +251,12 @@ export default function ClassroomPlanner() {
   const [unallocatedBatches, setUnallocatedBatches] = useState([]);
   const [trainerOverlapInfo, setTrainerOverlapInfo] = useState({});
 
+  // ── computeAndSetWeeks uses occupancy_end (5m+2w) for range calculation ──
   const computeAndSetWeeks = useCallback((normalizedPlans) => {
-    const allDates = normalizedPlans.flatMap((p) => [p.a_start, p.a_end]).filter(Boolean);
+    // Use occupancy_end where available, fall back to a_end
+    const allDates = normalizedPlans
+      .flatMap((p) => [p.a_start, p.occupancy_end || p.a_end])
+      .filter(Boolean);
     if (allDates.length) {
       setWeeks(getWeeksInRange(
         allDates.reduce((a, b) => (a < b ? a : b)),
@@ -214,25 +269,21 @@ export default function ClassroomPlanner() {
 
   // ─────────────────────────────────────────────────────────────────────────
   // loadExistingMatrix
-  // Now calls /api/get-batch-module-trainers which returns BOTH
-  // moduleTrainerMap (trainer matrix) AND overlapInfo (conflicts) from DB.
-  // This means all 3 sections repopulate correctly after every reload.
+  // occupancy_end is stored on the DB row; we use it for matrix rendering.
+  // Falls back to a computed value if missing (older records).
   // ─────────────────────────────────────────────────────────────────────────
   const loadExistingMatrix = useCallback(async () => {
     try {
       setLoading(true);
       setProcessingStatus("Loading saved matrix...");
-
       const res = await fetch(`${API_BASE}/api/get-classroom-matrix`);
       if (!res.ok) {
         setProcessingStatus("No saved matrix found.");
         setPlans([]); setWeeks([]); setUnallocatedBatches([]); setTrainerOverlapInfo({});
         return;
       }
-
       const data = await res.json();
       const { occupancyRows } = data || {};
-
       if (!occupancyRows?.length) {
         setProcessingStatus("No saved data.");
         setPlans([]); setWeeks([]); setUnallocatedBatches([]); setTrainerOverlapInfo({});
@@ -242,14 +293,14 @@ export default function ClassroomPlanner() {
       const sortedRows = [...occupancyRows].sort((a, b) => {
         const sa = a.occupancy_start || "", sb = b.occupancy_start || "";
         if (sa !== sb) return sa.localeCompare(sb);
-        const ea = a.occupancy_end || "", eb = b.occupancy_end || "";
+        const ea = a.occupancy_end || a.a_end || "",
+              eb = b.occupancy_end || b.a_end || "";
         if (ea !== eb) return ea.localeCompare(eb);
         return (a.batch_no || "").localeCompare(b.batch_no || "");
       });
 
       const batchNos = sortedRows.map((r) => r.batch_no).filter(Boolean);
 
-      // Single call returns both moduleTrainerMap AND overlapInfo from DB
       let moduleTrainerMap = {};
       let savedOverlapInfo = {};
       try {
@@ -272,16 +323,23 @@ export default function ClassroomPlanner() {
         const primaryTrainer =
           moduleTrainers.find((mt) => mt.trainer_name && mt.trainer_name !== "UNASSIGNED")
             ?.trainer_name || r.trainer_name || "UNASSIGNED";
+
+        // occupancy_end from DB; if absent, recompute from start date
+        const occEnd =
+          r.occupancy_end ||
+          toIsoDateString(computeOccupancyEnd(parseExcelDate(r.occupancy_start)));
+
         return {
-          batch_no:       r.batch_no,
-          classroom_name: r.classroom_name || "",
-          slot:           r.slot           || "",
-          a_start:        r.occupancy_start,
-          a_end:          r.occupancy_end,
-          enrolled:       r.enrolled       || 0,
-          capacity:       r.capacity       || r.enrolled || 0,
-          mode:           "OFFLINE",
-          trainer_name:   primaryTrainer,
+          batch_no:        r.batch_no,
+          classroom_name:  r.classroom_name || "",
+          slot:            r.slot           || "",
+          a_start:         r.occupancy_start,
+          a_end:           r.a_end          || r.occupancy_end || "",   // original due date
+          occupancy_end:   occEnd,                                       // 5m+2w end
+          enrolled:        r.enrolled       || 0,
+          capacity:        r.capacity       || r.enrolled || 0,
+          mode:            "OFFLINE",
+          trainer_name:    primaryTrainer,
           module_trainers: moduleTrainers,
         };
       });
@@ -289,9 +347,13 @@ export default function ClassroomPlanner() {
       const unallocated = normalizedPlans.filter((p) => !p.classroom_name || !p.slot);
       setPlans(normalizedPlans);
       setUnallocatedBatches(unallocated.map((p) => ({
-        batch_no: p.batch_no, enrolled: p.enrolled, a_start: p.a_start, a_end: p.a_end,
+        batch_no:     p.batch_no,
+        enrolled:     p.enrolled,
+        a_start:      p.a_start,
+        a_end:        p.a_end,
+        occupancy_end: p.occupancy_end,
       })));
-      setTrainerOverlapInfo(savedOverlapInfo); // ← restores Conflicts section after reload
+      setTrainerOverlapInfo(savedOverlapInfo);
       computeAndSetWeeks(normalizedPlans);
       setProcessingStatus(`Loaded ${occupancyRows.length} saved batches.`);
     } catch (e) {
@@ -319,7 +381,6 @@ export default function ClassroomPlanner() {
   }, [loadExistingMatrix]);
 
   // ── Derived state ──────────────────────────────────────────────────────
-
   const classrooms = useMemo(() => {
     const rooms = [...new Set(
       plans.filter((p) => p.classroom_name && p.slot).map((p) => p.classroom_name)
@@ -330,6 +391,7 @@ export default function ClassroomPlanner() {
 
   const slots = ["morning", "evening"];
 
+  // ── table uses occupancy_end for overlap checks ──────────────────────
   const table = useMemo(() => {
     const t = [];
     classrooms.forEach((room) => {
@@ -342,17 +404,20 @@ export default function ClassroomPlanner() {
           weekEnd.setDate(weekEnd.getDate() + 6);
           const startIso = weekStart.toISOString().slice(0, 10);
           const endIso   = weekEnd.toISOString().slice(0, 10);
+
           let batches = [];
           if (room === "UNALLOCATED") {
             batches = unallocatedBatches
-              .filter((p) => isDateOverlap(p.a_start, p.a_end, startIso, endIso))
+              .filter((p) =>
+                isDateOverlap(p.a_start, p.occupancy_end || p.a_end, startIso, endIso)
+              )
               .map((p) => p.batch_no);
           } else {
             batches = plans
               .filter((p) =>
                 p.classroom_name === room &&
                 p.slot === slot &&
-                isDateOverlap(p.a_start, p.a_end, startIso, endIso)
+                isDateOverlap(p.a_start, p.occupancy_end || p.a_end, startIso, endIso)
               )
               .map((p) => p.batch_no);
           }
@@ -394,7 +459,8 @@ export default function ClassroomPlanner() {
         const endIso   = weekEnd.toISOString().slice(0, 10);
         const batches = plans
           .filter((p) => {
-            if (!isDateOverlap(p.a_start, p.a_end, startIso, endIso)) return false;
+            // Use occupancy_end for trainer matrix span too
+            if (!isDateOverlap(p.a_start, p.occupancy_end || p.a_end, startIso, endIso)) return false;
             if (p.module_trainers?.length)
               return p.module_trainers.some((mt) => mt.trainer_name === trainer);
             return (p.trainer_name || "UNASSIGNED") === trainer;
@@ -408,7 +474,8 @@ export default function ClassroomPlanner() {
 
   const batchColorMap        = useMemo(() => getBatchColorMap(table),        [table]);
   const trainerBatchColorMap = useMemo(() => getBatchColorMap(trainerTable), [trainerTable]);
-  const batchDetailMap       = useMemo(() => {
+
+  const batchDetailMap = useMemo(() => {
     const m = {};
     plans.forEach((p) => { m[p.batch_no] = p; });
     return m;
@@ -422,8 +489,8 @@ export default function ClassroomPlanner() {
     );
     if (!domainLicenses.length) return [];
     return domainLicenses.map((lic) => {
-      const licenseCount   = Number(lic.count || 0);
-      const required       = Math.max(Number(enrolled || 0), Number(classroomCapacity || 0));
+      const licenseCount     = Number(lic.count || 0);
+      const required         = Math.max(Number(enrolled || 0), Number(classroomCapacity || 0));
       const additionalNeeded = Math.max(0, required - licenseCount);
       return { license_name: lic.license_name, count: licenseCount, required, additional_needed: additionalNeeded };
     });
@@ -433,15 +500,23 @@ export default function ClassroomPlanner() {
     if (!batch) return;
     const base = batchDetailMap[batch];
     if (!base) { setSelectedBatch(null); return; }
-    setSelectedBatch({ ...base, licenseInfo: getLicenseInfoForBatch(base.batch_no, base.capacity, base.enrolled) });
+    setSelectedBatch({
+      ...base,
+      licenseInfo: getLicenseInfoForBatch(base.batch_no, base.capacity, base.enrolled),
+    });
   };
 
   const fetchModuleTrainersForBatches = async (batchNos, offlinePlans) => {
     try {
+      // Pass occupancy_end so the backend uses the computed range for overlap checks
       const batch_date_ranges = {};
       (offlinePlans || []).forEach((p) => {
-        if (p.batch_no && p.a_start && p.a_end)
-          batch_date_ranges[p.batch_no] = { start: p.a_start, end: p.a_end };
+        if (p.batch_no && p.a_start && p.occupancy_end) {
+          batch_date_ranges[p.batch_no] = {
+            start: p.a_start,
+            end:   p.occupancy_end,   // 5 months + 2 weeks end
+          };
+        }
       });
       const res = await fetch(`${API_BASE}/api/assign-batch-trainers-by-module`, {
         method: "POST",
@@ -464,12 +539,10 @@ export default function ClassroomPlanner() {
     setError("");
     setProcessingStatus("Reading file...");
     setPlans([]); setWeeks([]); setSelectedBatch(null); setSaveStatus(""); setTrainerOverlapInfo({});
-
     try {
       const wb   = XLSX.read(await file.arrayBuffer(), { type: "array" });
       const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "", raw: false });
-
-      setProcessingStatus("Allocating classrooms...");
+      setProcessingStatus("Allocating classrooms (5 months + 2 weeks from start date)...");
       const { plans: offlinePlans, unallocated } = planClassroomsForOffline(rows);
 
       setProcessingStatus("Assigning trainers per module type...");
@@ -489,7 +562,9 @@ export default function ClassroomPlanner() {
 
       const sortedPlans = [...enrichedPlans].sort((a, b) => {
         if (a.a_start !== b.a_start) return a.a_start.localeCompare(b.a_start);
-        if (a.a_end   !== b.a_end)   return a.a_end.localeCompare(b.a_end);
+        const ae = a.occupancy_end || a.a_end || "";
+        const be = b.occupancy_end || b.a_end || "";
+        if (ae !== be) return ae.localeCompare(be);
         return (a.batch_no || "").localeCompare(b.batch_no || "");
       });
 
@@ -497,20 +572,30 @@ export default function ClassroomPlanner() {
       setUnallocatedBatches(
         [...unallocated]
           .sort((a, b) => (a.a_start || "").localeCompare(b.a_start || ""))
-          .map((u) => ({ batch_no: u.batch_no, enrolled: u.enrolled, a_start: u.a_start, a_end: u.a_end }))
+          .map((u) => ({
+            batch_no:     u.batch_no,
+            enrolled:     u.enrolled,
+            a_start:      u.a_start,
+            a_end:        u.a_end,
+            occupancy_end: u.occupancy_end,
+          }))
       );
 
       if (!offlinePlans.length) {
         setError("No OFFLINE batches found in the file.");
       } else {
-        const allDates = offlinePlans.flatMap((p) => [p.a_start, p.a_end]).filter(Boolean);
+        const allDates = offlinePlans
+          .flatMap((p) => [p.a_start, p.occupancy_end || p.a_end])
+          .filter(Boolean);
         if (allDates.length) {
           setWeeks(getWeeksInRange(
             allDates.reduce((a, b) => (a < b ? a : b)),
             allDates.reduce((a, b) => (a > b ? a : b))
           ));
         }
-        setProcessingStatus(`Completed! Planned ${offlinePlans.length} OFFLINE batches.`);
+        setProcessingStatus(
+          `Completed! Planned ${offlinePlans.length} OFFLINE batches (occupancy = start + 5 months + 2 weeks).`
+        );
       }
     } catch (err) {
       console.error("File processing error:", err);
@@ -525,7 +610,7 @@ export default function ClassroomPlanner() {
     try {
       const workbook = new ExcelJS.Workbook();
 
-      // Classroom Matrix sheet
+      // ── Classroom Matrix sheet ──
       const matrixSheet = workbook.addWorksheet("Classroom Matrix");
       matrixSheet.addRow(["Classroom", "Slot", ...weeks.map((w) => `${w.month} W${w.weekNum}`)]);
       const mh = matrixSheet.getRow(1);
@@ -544,9 +629,9 @@ export default function ClassroomPlanner() {
           if (colIdx >= 2 && Array.isArray(cell) && cell.length > 0) {
             const hexColor = batchColorMap[cell[0]];
             if (hexColor) {
-              const rgb = hexToRGB(hexColor);
+              const rgb  = hexToRGB(hexColor);
               const argb = `FF${rgb.r.toString(16).padStart(2,"0")}${rgb.g.toString(16).padStart(2,"0")}${rgb.b.toString(16).padStart(2,"0")}`.toUpperCase();
-              const ec = excelRow.getCell(colIdx + 1);
+              const ec   = excelRow.getCell(colIdx + 1);
               ec.fill      = { type: "pattern", pattern: "solid", fgColor: { argb } };
               ec.font      = { bold: true, color: { argb: "FF222222" } };
               ec.alignment = { horizontal: "center", vertical: "center", wrapText: true };
@@ -558,10 +643,12 @@ export default function ClassroomPlanner() {
       });
       matrixSheet.columns = [{ width: 20 }, { width: 12 }, ...weeks.map(() => ({ width: 18 }))];
 
-      // Offline Plans sheet
+      // ── Offline Plans sheet ──
+      // KEY CHANGE: added OCCUPANCY_END column so the export shows both dates
       const plansSheet = workbook.addWorksheet("Offline Plans");
       plansSheet.addRow([
-        "COURSE","MODE","A.START DATE","A.DUE DATE","CAPACITY","ENROLLED",
+        "COURSE","MODE","A.START DATE","A.DUE DATE","OCCUPANCY_END (5m+2w)",
+        "CAPACITY","ENROLLED",
         "HAS_SUFFICIENT_CAPACITY","LICENSE_ADDITIONAL_NEEDED",
         "CLASSROOM_NAME","SLOT","MODULE_TYPE","TRAINER",
       ]);
@@ -573,26 +660,37 @@ export default function ClassroomPlanner() {
       [...plans]
         .sort((a, b) => {
           if (a.a_start !== b.a_start) return (a.a_start||"").localeCompare(b.a_start||"");
-          if (a.a_end   !== b.a_end)   return (a.a_end  ||"").localeCompare(b.a_end  ||"");
+          const ae = a.occupancy_end||a.a_end||"", be = b.occupancy_end||b.a_end||"";
+          if (ae !== be) return ae.localeCompare(be);
           return (a.batch_no||"").localeCompare(b.batch_no||"");
         })
         .forEach((p) => {
           const li       = getLicenseInfoForBatch(p.batch_no, p.capacity, p.enrolled);
           const shortage = li.reduce((s, l) => s + (l.additional_needed || 0), 0);
+          const occEnd   = p.occupancy_end || "";
+
           if (p.module_trainers?.length) {
             p.module_trainers.forEach((mt, idx) => {
               plansSheet.addRow([
-                idx === 0 ? p.batch_no : "", idx === 0 ? p.mode : "",
-                idx === 0 ? p.a_start  : "", idx === 0 ? p.a_end : "",
-                idx === 0 ? p.capacity : "", idx === 0 ? p.enrolled : "",
-                idx === 0 ? (shortage === 0 ? "YES" : "NO") : "", idx === 0 ? shortage : "",
-                idx === 0 ? p.classroom_name : "", idx === 0 ? p.slot : "",
-                mt.module_type || "", mt.trainer_name || "UNASSIGNED",
+                idx === 0 ? p.batch_no    : "",
+                idx === 0 ? p.mode        : "",
+                idx === 0 ? p.a_start     : "",
+                idx === 0 ? p.a_end       : "",
+                idx === 0 ? occEnd        : "",
+                idx === 0 ? p.capacity    : "",
+                idx === 0 ? p.enrolled    : "",
+                idx === 0 ? (shortage === 0 ? "YES" : "NO") : "",
+                idx === 0 ? shortage      : "",
+                idx === 0 ? p.classroom_name : "",
+                idx === 0 ? p.slot        : "",
+                mt.module_type            || "",
+                mt.trainer_name           || "UNASSIGNED",
               ]);
             });
           } else {
             plansSheet.addRow([
-              p.batch_no, p.mode, p.a_start, p.a_end, p.capacity, p.enrolled,
+              p.batch_no, p.mode, p.a_start, p.a_end, occEnd,
+              p.capacity, p.enrolled,
               shortage === 0 ? "YES" : "NO", shortage,
               p.classroom_name, p.slot, "", p.trainer_name || "UNASSIGNED",
             ]);
@@ -600,8 +698,8 @@ export default function ClassroomPlanner() {
         });
 
       plansSheet.columns = [
-        {width:15},{width:12},{width:15},{width:15},{width:12},{width:12},
-        {width:20},{width:25},{width:20},{width:12},{width:15},{width:20},
+        {width:15},{width:12},{width:15},{width:15},{width:20},
+        {width:12},{width:12},{width:20},{width:25},{width:20},{width:12},{width:15},{width:20},
       ];
 
       const buffer = await workbook.xlsx.writeBuffer();
@@ -617,27 +715,30 @@ export default function ClassroomPlanner() {
   };
 
   // ─────────────────────────────────────────────────────────────────────────
-  // handleSaveMatrix
-  // KEY CHANGE: each occupancyRow now includes overlap_info so the backend
-  // can persist conflicts to batch_trainer_conflicts table.
+  // handleSaveMatrix — passes occupancy_end to backend so it is persisted
   // ─────────────────────────────────────────────────────────────────────────
   const handleSaveMatrix = async () => {
     if (!plans.length && !unallocatedBatches.length) { setError("No matrix to save."); return; }
     setSaving(true); setSaveStatus(""); setError("");
-
     try {
       const allRows = [
         ...plans,
         ...unallocatedBatches.map((u) => ({
-          batch_no: u.batch_no, classroom_name: null, slot: null,
-          a_start: u.a_start, a_end: u.a_end,
-          enrolled: u.enrolled, capacity: u.capacity || 0,
-          trainer_name: null, module_trainers: [],
+          batch_no:      u.batch_no,
+          classroom_name: null,
+          slot:           null,
+          a_start:        u.a_start,
+          a_end:          u.a_end,
+          occupancy_end:  u.occupancy_end,
+          enrolled:       u.enrolled,
+          capacity:       u.capacity || 0,
+          trainer_name:   null,
+          module_trainers: [],
         })),
       ].sort((a, b) => {
         const sa = a.a_start||"", sb = b.a_start||"";
         if (sa !== sb) return sa.localeCompare(sb);
-        const ea = a.a_end||"", eb = b.a_end||"";
+        const ea = a.occupancy_end||a.a_end||"", eb = b.occupancy_end||b.a_end||"";
         if (ea !== eb) return ea.localeCompare(eb);
         return (a.batch_no||"").localeCompare(b.batch_no||"");
       });
@@ -647,12 +748,12 @@ export default function ClassroomPlanner() {
         classroom_name:  p.classroom_name  || null,
         slot:            p.slot            || null,
         occupancy_start: p.a_start,
-        occupancy_end:   p.a_end,
+        occupancy_end:   p.occupancy_end   || p.a_end,   // 5m+2w computed end
+        a_end:           p.a_end           || null,       // original due date
         enrolled:        p.enrolled        || 0,
         capacity:        p.capacity        || p.enrolled || 0,
         trainer_name:    p.trainer_name    || null,
         module_trainers: p.module_trainers || [],
-        // Pass per-batch overlap info so backend can save it to batch_trainer_conflicts
         overlap_info:    trainerOverlapInfo[p.batch_no] || [],
       }));
 
@@ -663,11 +764,8 @@ export default function ClassroomPlanner() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-
       const { inserted, updated, skipped } = data.summary || {};
       setSaveStatus(`✅ ${inserted||0} NEW + ${updated||0} UPDATED + ${skipped||0} unchanged`);
-
-      // Reload from DB — now repopulates Trainer Matrix, License Summary AND Conflicts
       await loadExistingMatrix();
     } catch (err) {
       console.error("Save error:", err);
@@ -690,11 +788,12 @@ export default function ClassroomPlanner() {
       <Paper elevation={5} sx={{ p: 4, borderRadius: 3, mb: 4 }}>
         <Typography variant="h4" color="primary" gutterBottom>Classroom Planner</Typography>
         <Divider sx={{ mb: 3 }} />
-
         <Box sx={{ mb: 3, display: "flex", flexDirection: "column", gap: 2 }}>
           <Typography variant="subtitle1">
             Upload CSV or XLSX with columns: COURSE, MODE, A.START DATE, A.DUE DATE, CAPACITY,
-            ENROLLED. Only MODE = OFFLINE rows are planned. Trainers are assigned per module type
+            ENROLLED. Only MODE = OFFLINE rows are planned.{" "}
+            <strong>Classroom occupancy is calculated as A.START DATE + 5 months + 2 weeks</strong>{" "}
+            (A.DUE DATE is stored for reference only). Trainers are assigned per module type
             (BASIC, CORE_THEORY, CORE_LAB).
           </Typography>
           <Button variant="contained" component="label" disabled={loading}>
@@ -710,7 +809,6 @@ export default function ClassroomPlanner() {
             InputProps={{ endAdornment: <InputAdornment position="end">.xlsx</InputAdornment> }}
           />
         </Box>
-
         <Box sx={{ display: "flex", alignItems: "center", gap: 2, my: 2, flexWrap: "wrap" }}>
           <Typography variant="subtitle1">Actions:</Typography>
           <Button variant="contained" color="success" onClick={handleDownloadXlsx} disabled={loading || !plans.length}>
@@ -721,7 +819,6 @@ export default function ClassroomPlanner() {
           </Button>
           {saveStatus && <Chip label={saveStatus} color="success" variant="filled" sx={{ ml: 1 }} />}
         </Box>
-
         {loading && (
           <Box sx={{ display:"flex", alignItems:"center", gap:2, mt:2, p:2, bgcolor:"primary.main", color:"white", borderRadius:2 }}>
             <CircularProgress size={20} color="inherit" />
@@ -740,7 +837,12 @@ export default function ClassroomPlanner() {
                 <Typography variant="subtitle1" fontWeight="bold">Batch Details: {selectedBatch.batch_no}</Typography>
                 <Box sx={{ mt: 1 }}>
                   <Typography variant="body2">Capacity: {selectedBatch.capacity} | Enrolled: {selectedBatch.enrolled}</Typography>
-                  <Typography variant="body2">Dates: {selectedBatch.a_start} → {selectedBatch.a_end}</Typography>
+                  <Typography variant="body2">
+                    Start Date: {selectedBatch.a_start} | Due Date: {selectedBatch.a_end || "—"}
+                  </Typography>
+                  <Typography variant="body2" color="primary.main" fontWeight={600}>
+                    Occupancy End (5m+2w): {selectedBatch.occupancy_end || "—"}
+                  </Typography>
                   <Typography variant="body2">
                     Classroom: {selectedBatch.classroom_name || "Not assigned"} | Slot:{" "}
                     {slotDisplayMap[selectedBatch.slot] || selectedBatch.slot || "Not assigned"}
@@ -829,6 +931,7 @@ export default function ClassroomPlanner() {
           <>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
               Showing {plans.length} OFFLINE batches across {classrooms.length} classrooms.
+              Occupancy spans <strong>5 months + 2 weeks from each batch's start date</strong>.
             </Typography>
             <TableContainer sx={{ maxHeight: 450 }}>
               <Table size="small" stickyHeader>
@@ -836,7 +939,9 @@ export default function ClassroomPlanner() {
                   <TableRow>
                     <TableCell>Classroom</TableCell>
                     <TableCell>Slot</TableCell>
-                    {weeks.map((w, idx) => <TableCell key={idx} align="center">{w.month} {w.year} W{w.weekNum}</TableCell>)}
+                    {weeks.map((w, idx) => (
+                      <TableCell key={idx} align="center">{w.month} {w.year} W{w.weekNum}</TableCell>
+                    ))}
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -873,7 +978,7 @@ export default function ClassroomPlanner() {
         <Typography variant="h5" fontWeight="bold" mb={2}>Trainer Allocation Matrix</Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
           Each trainer row shows batches they handle across module types (BASIC, CORE_THEORY, CORE_LAB).
-          A batch may appear under multiple trainers.
+          A batch may appear under multiple trainers. Span based on 5 months + 2 weeks occupancy window.
         </Typography>
         {!plans.length ? (
           <Alert severity="info">Upload a file or load saved data to see trainer allocation.</Alert>
@@ -883,7 +988,9 @@ export default function ClassroomPlanner() {
               <TableHead>
                 <TableRow>
                   <TableCell>Trainer</TableCell>
-                  {weeks.map((w, idx) => <TableCell key={idx} align="center">{w.month} {w.year} W{w.weekNum}</TableCell>)}
+                  {weeks.map((w, idx) => (
+                    <TableCell key={idx} align="center">{w.month} {w.year} W{w.weekNum}</TableCell>
+                  ))}
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -919,8 +1026,11 @@ export default function ClassroomPlanner() {
           <Table size="small">
             <TableHead>
               <TableRow>
-                <TableCell>Batch</TableCell><TableCell>Enrolled</TableCell>
-                <TableCell>Start Date</TableCell><TableCell>End Date</TableCell>
+                <TableCell>Batch</TableCell>
+                <TableCell>Enrolled</TableCell>
+                <TableCell>Start Date</TableCell>
+                <TableCell>Due Date</TableCell>
+                <TableCell>Occupancy End (5m+2w)</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -928,8 +1038,11 @@ export default function ClassroomPlanner() {
                 .sort((a, b) => (a.a_start||"").localeCompare(b.a_start||""))
                 .map((u) => (
                   <TableRow key={u.batch_no}>
-                    <TableCell>{u.batch_no}</TableCell><TableCell>{u.enrolled}</TableCell>
-                    <TableCell>{u.a_start}</TableCell><TableCell>{u.a_end}</TableCell>
+                    <TableCell>{u.batch_no}</TableCell>
+                    <TableCell>{u.enrolled}</TableCell>
+                    <TableCell>{u.a_start}</TableCell>
+                    <TableCell>{u.a_end}</TableCell>
+                    <TableCell sx={{ color: "primary.main", fontWeight: 600 }}>{u.occupancy_end}</TableCell>
                   </TableRow>
                 ))}
             </TableBody>
@@ -999,16 +1112,16 @@ export default function ClassroomPlanner() {
                   .filter((l) => l.additional_needed > 0),
               }))
               .filter((p) => p.shortages.length > 0);
-
             if (!issues.length)
               return <Alert severity="success">✅ License is sufficient for all batches.</Alert>;
-
             return (
               <Table size="small">
                 <TableHead>
                   <TableRow>
-                    <TableCell>Batch</TableCell><TableCell>License</TableCell>
-                    <TableCell>Available</TableCell><TableCell>Required (Capacity)</TableCell>
+                    <TableCell>Batch</TableCell>
+                    <TableCell>License</TableCell>
+                    <TableCell>Available</TableCell>
+                    <TableCell>Required (Capacity)</TableCell>
                     <TableCell>Additional Needed</TableCell>
                   </TableRow>
                 </TableHead>
