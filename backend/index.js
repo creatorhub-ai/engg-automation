@@ -460,8 +460,8 @@ function computeOccupancyEnd(startDateStr) {
   if (!startDateStr) return null;
   const d = new Date(startDateStr);
   if (isNaN(d.getTime())) return null;
-  d.setMonth(d.getMonth() + 5);   // +5 months
-  d.setDate(d.getDate() + 14);    // +2 weeks (14 days)
+  d.setMonth(d.getMonth() + 5);
+  d.setDate(d.getDate() + 14);
   return d.toISOString().slice(0, 10);
 }
 
@@ -1692,17 +1692,22 @@ app.get('/api/licenses', async (req, res) => {
 
 // ----------------------------------------------------------------
 // GET /api/get-classroom-matrix
-// KEY CHANGE: occupancy_end column is returned so the frontend can
-// use the 5m+2w window for matrix rendering and overlap checking.
-// Falls back to computing it from occupancy_start if the column is
-// absent (backward compatibility with older rows).
+//
+// FIX: Removed `a_end` from SELECT — that column does not exist in
+// the classroom_occupancy table, which caused a Supabase 500 error
+// on every page refresh, making the DB query return nothing and the
+// frontend show "Upload a file..." after refresh.
+//
+// occupancy_end stores the 5m+2w computed end date (saved during
+// handleSaveMatrix). If a row is missing it (older record), we
+// compute it here from occupancy_start before returning.
 // ----------------------------------------------------------------
 app.get("/api/get-classroom-matrix", async (req, res) => {
   try {
     const { data: occupancyRows, error } = await supabase
       .from("classroom_occupancy")
       .select(
-        "batch_no, classroom_name, slot, occupancy_start, occupancy_end, a_end, enrolled, capacity, class_room, shifts"
+        "batch_no, classroom_name, slot, occupancy_start, occupancy_end, enrolled, capacity, class_room, shifts"
       )
       .order("occupancy_start", { ascending: true });
 
@@ -1715,6 +1720,8 @@ app.get("/api/get-classroom-matrix", async (req, res) => {
     }
 
     const batchNos = occupancyRows.map((r) => r.batch_no).filter(Boolean);
+
+    // Pull primary trainer from course_planner_data (fallback for display)
     const { data: plannerData } = await supabase
       .from("course_planner_data")
       .select("batch_no, trainer_name")
@@ -1730,18 +1737,17 @@ app.get("/api/get-classroom-matrix", async (req, res) => {
     });
 
     const transformedRows = occupancyRows.map((r) => {
-      // Use stored occupancy_end; if absent, compute from start (backward compat)
-      const occEnd =
-        r.occupancy_end ||
-        computeOccupancyEnd(r.occupancy_start);
-
+      // Prefer DB-stored occupancy_end; compute from start if absent
+      const occEnd = r.occupancy_end || computeOccupancyEnd(r.occupancy_start);
       return {
         batch_no:        r.batch_no,
-        classroom_name:  r.classroom_name,
-        slot:            r.slot,
+        classroom_name:  r.classroom_name || null,
+        slot:            r.slot           || null,
         occupancy_start: r.occupancy_start,
-        occupancy_end:   occEnd,          // 5m+2w computed end
-        a_end:           r.a_end || null, // original A.DUE DATE (display only)
+        occupancy_end:   occEnd,
+        // a_end is intentionally omitted — it's not stored in the table.
+        // The frontend will show "—" for due date; it uses occupancy_end
+        // for all scheduling/rendering.
         enrolled:        r.enrolled  || 0,
         capacity:        r.capacity  || r.enrolled || 0,
         mode:            "OFFLINE",
@@ -1759,7 +1765,9 @@ app.get("/api/get-classroom-matrix", async (req, res) => {
 
 // ----------------------------------------------------------------
 // POST /api/get-batch-module-trainers
-// No change in logic; included for completeness.
+// Returns moduleTrainerMap (trainer assignments per batch/module)
+// and overlapInfo (scheduling conflicts) from the DB.
+// Called by loadExistingMatrix on every page load.
 // ----------------------------------------------------------------
 app.post("/api/get-batch-module-trainers", async (req, res) => {
   try {
@@ -1837,10 +1845,9 @@ app.post("/api/get-batch-module-trainers", async (req, res) => {
 
 // ----------------------------------------------------------------
 // POST /api/assign-batch-trainers-by-module
-// KEY CHANGE: batch_date_ranges now carries end = occupancy_end
-// (start + 5m + 2w) sent from the frontend. The backend uses this
-// end date for all overlap checks — A.DUE DATE is not used here.
-// If batch_date_ranges is missing an end, we compute it from start.
+// Called during file upload. batch_date_ranges carries
+// end = occupancy_end (start + 5m + 2w) sent from the frontend.
+// The backend normalises it via computeOccupancyEnd as a fallback.
 // ----------------------------------------------------------------
 app.post("/api/assign-batch-trainers-by-module", async (req, res) => {
   try {
@@ -1852,16 +1859,15 @@ app.post("/api/assign-batch-trainers-by-module", async (req, res) => {
     console.log("=== assign-batch-trainers-by-module START ===");
     console.log("batch_nos:", batch_nos);
 
-    // Normalise date ranges: ensure end = occupancy_end (5m+2w from start)
+    // Normalise date ranges — end is always the 5m+2w occupancy window
     const normalisedRanges = {};
-    (batch_nos).forEach((bn) => {
+    batch_nos.forEach((bn) => {
       const raw = batch_date_ranges?.[bn];
       if (!raw?.start) return;
-      const start   = raw.start;
-      // Use provided end if it is already the computed end from frontend;
-      // otherwise recompute here as a safety net.
-      const occEnd  = raw.end || computeOccupancyEnd(start);
-      normalisedRanges[bn] = { start, end: occEnd };
+      normalisedRanges[bn] = {
+        start: raw.start,
+        end:   raw.end || computeOccupancyEnd(raw.start),
+      };
     });
 
     // 1. Fetch trainer_domain
@@ -1878,8 +1884,7 @@ app.post("/api/assign-batch-trainers-by-module", async (req, res) => {
     if (mtError) return res.status(500).json({ error: mtError.message });
     console.log(`course_module_template rows: ${moduleTemplates?.length || 0}`);
 
-    // 3. Fetch existing occupancy for overlap checking
-    // KEY CHANGE: select occupancy_end (5m+2w); fall back to computing it
+    // 3. Fetch existing occupancy for overlap checking (use occupancy_end)
     const { data: occupancyData, error: ocError } = await supabase
       .from("classroom_occupancy")
       .select("batch_no, occupancy_start, occupancy_end")
@@ -1900,8 +1905,7 @@ app.post("/api/assign-batch-trainers-by-module", async (req, res) => {
       existingModuleAssignments = bmtData || [];
     }
 
-    // Build trainer booking index from saved batches
-    // KEY CHANGE: use occupancy_end; compute it if missing
+    // Build trainer booking index from saved batches (use occupancy_end)
     const trainerBookings = {};
     existingModuleAssignments.forEach((row) => {
       if (!row.trainer_name || row.trainer_name === "UNASSIGNED") return;
@@ -1914,14 +1918,12 @@ app.post("/api/assign-batch-trainers-by-module", async (req, res) => {
       });
     });
 
-    // ── HELPERS ─────────────────────────────────────────────────────
-    const normalize = (str) => (str || "").toString().toLowerCase().trim();
-
-    const isOverlap = (s1, e1, s2, e2) => {
+    // ── Helpers ─────────────────────────────────────────────────────────
+    const normalize  = (str) => (str || "").toString().toLowerCase().trim();
+    const isOverlap  = (s1, e1, s2, e2) => {
       if (!s1 || !e1 || !s2 || !e2) return false;
       return new Date(s1) <= new Date(e2) && new Date(s2) <= new Date(e1);
     };
-
     const inferDomain = (batchNo) => {
       const up = (batchNo || "").toUpperCase();
       if (up.startsWith("DFTFT") || up.startsWith("DFT")) return "dft";
@@ -1929,7 +1931,6 @@ app.post("/api/assign-batch-trainers-by-module", async (req, res) => {
       if (up.startsWith("PDFT")  || up.startsWith("PD"))  return "pd";
       return "";
     };
-
     const getEligibleTrainers = (domain, moduleType) => {
       const seen = new Set();
       const result = [];
@@ -1949,7 +1950,7 @@ app.post("/api/assign-batch-trainers-by-module", async (req, res) => {
       return result;
     };
 
-    // Sort batches by (occupancy) start date ascending
+    // Sort batches by start date ascending
     const sortedBatchNos = [...batch_nos].sort((a, b) => {
       const sa = normalisedRanges[a]?.start || "";
       const sb = normalisedRanges[b]?.start || "";
@@ -1967,7 +1968,7 @@ app.post("/api/assign-batch-trainers-by-module", async (req, res) => {
     });
 
     const moduleTrainerMap = {};
-    const overlapInfo = {};
+    const overlapInfo      = {};
 
     for (const batchNo of sortedBatchNos) {
       const dateRange = normalisedRanges[batchNo];
@@ -1977,7 +1978,6 @@ app.post("/api/assign-batch-trainers-by-module", async (req, res) => {
         continue;
       }
 
-      // KEY: bStart / bEnd now use the 5m+2w occupancy window
       const { start: bStart, end: bEnd } = dateRange;
       const domain = inferDomain(batchNo);
       console.log(`\nBatch: ${batchNo} | domain="${domain}" | occupancy ${bStart} → ${bEnd}`);
@@ -1988,7 +1988,6 @@ app.post("/api/assign-batch-trainers-by-module", async (req, res) => {
         continue;
       }
 
-      // Get distinct module_types for this domain
       const moduleTypeMap = new Map();
       (moduleTemplates || []).forEach((t) => {
         if (normalize(t.domain) === domain && t.module_type && !moduleTypeMap.has(t.module_type)) {
@@ -2017,7 +2016,6 @@ app.post("/api/assign-batch-trainers-by-module", async (req, res) => {
           continue;
         }
 
-        // Availability check uses occupancy end (5m+2w)
         const available = eligible.filter((t) => {
           const bookings = localBookings[t.trainer_name] || [];
           return !bookings.some((b) => isOverlap(bStart, bEnd, b.start, b.end));
@@ -2039,7 +2037,6 @@ app.post("/api/assign-batch-trainers-by-module", async (req, res) => {
           continue;
         }
 
-        // Pick trainer who finished last batch earliest (most idle)
         available.sort((a, b) => {
           const aLast = (localBookings[a.trainer_name] || []).reduce((m, x) => x.end > m ? x.end : m, "");
           const bLast = (localBookings[b.trainer_name] || []).reduce((m, x) => x.end > m ? x.end : m, "");
@@ -2055,7 +2052,6 @@ app.post("/api/assign-batch-trainers-by-module", async (req, res) => {
           module_type: moduleType, module_name: moduleName,
           trainer_name: selected.trainer_name, trainer_email: selected.trainer_email || "",
         });
-
         if (!localBookings[selected.trainer_name]) localBookings[selected.trainer_name] = [];
         localBookings[selected.trainer_name].push({ batch_no: batchNo, start: bStart, end: bEnd });
       }
@@ -2428,11 +2424,13 @@ app.post("/api/get-batch-trainers-by-module", async (req, res) => {
 
 // ----------------------------------------------------------------
 // POST /api/save-classroom-matrix
-// KEY CHANGE:
-//   occupancy_end in the DB is now the 5m+2w computed end date,
-//   NOT A.DUE DATE.  a_end (original due date) is stored separately
-//   for reference.  The overlap checking in assign-batch-trainers
-//   will read occupancy_end on future loads.
+//
+// FIX: Removed a_end from upsertData and from the existing-row
+// comparison query. That column does not exist in classroom_occupancy
+// and was causing Supabase errors that silently broke the save.
+//
+// occupancy_end (5m+2w from start) is what gets stored and used
+// for all scheduling. a_end (original due date) is not persisted.
 // ----------------------------------------------------------------
 app.post("/api/save-classroom-matrix", async (req, res) => {
   try {
@@ -2453,29 +2451,24 @@ app.post("/api/save-classroom-matrix", async (req, res) => {
 
       const occupancy_start = row.occupancy_start;
 
-      // KEY CHANGE: occupancy_end = 5m+2w window (sent from frontend or recomputed)
+      // occupancy_end = 5m+2w window (sent from frontend or computed here)
       const occupancy_end =
         row.occupancy_end ||
         computeOccupancyEnd(occupancy_start);
-
-      // a_end = original A.DUE DATE (stored for reference, not used in overlap)
-      const a_end          = row.a_end || null;
 
       const enrolled       = Number(row.enrolled)  || 0;
       const capacity       = Number(row.capacity)  || enrolled;
       const classroom_name = row.classroom_name    || null;
       const slot           = row.slot              || null;
 
-      // ── 1. classroom_occupancy ─────────────────────────────────
-      // NOTE: a_end (original A.DUE DATE) is intentionally excluded here.
-      // If your classroom_occupancy table has an a_end column you can add it;
-      // omitting it keeps the save compatible with tables that don't have it yet.
+      // ── 1. classroom_occupancy ────────────────────────────────
+      // NOTE: a_end deliberately excluded — column does not exist in table.
       const upsertData = {
         batch_no,
         classroom_name,
         slot,
         occupancy_start,
-        occupancy_end,    // 5m+2w computed end — the only end date used for scheduling
+        occupancy_end,
         enrolled,
         capacity,
         class_room: classroom_name ? classroom_name.split(" ")[0] : null,
@@ -2503,7 +2496,8 @@ app.post("/api/save-classroom-matrix", async (req, res) => {
             .from("classroom_occupancy")
             .update(upsertData)
             .eq("batch_no", batch_no);
-          if (!error) updated++; else console.error("classroom_occupancy update error:", error);
+          if (!error) updated++;
+          else console.error("classroom_occupancy update error:", error);
         } else {
           skipped++;
         }
@@ -2511,10 +2505,11 @@ app.post("/api/save-classroom-matrix", async (req, res) => {
         const { error } = await supabase
           .from("classroom_occupancy")
           .insert(upsertData);
-        if (!error) inserted++; else console.error("classroom_occupancy insert error:", error);
+        if (!error) inserted++;
+        else console.error("classroom_occupancy insert error:", error);
       }
 
-      // ── 2. batch_module_trainers ───────────────────────────────
+      // ── 2. batch_module_trainers ──────────────────────────────
       const moduleTrainers = row.module_trainers || [];
       for (const mt of moduleTrainers) {
         if (!mt.module_type) continue;
@@ -2525,7 +2520,7 @@ app.post("/api/save-classroom-matrix", async (req, res) => {
           trainer_name:    mt.trainer_name  || "UNASSIGNED",
           trainer_email:   mt.trainer_email || null,
           occupancy_start,
-          occupancy_end,   // 5m+2w end stored here too
+          occupancy_end,
           updated_at: new Date().toISOString(),
         };
         const { error: bmtError } = await supabase
@@ -2536,7 +2531,7 @@ app.post("/api/save-classroom-matrix", async (req, res) => {
         }
       }
 
-      // ── 3. batch_trainer_conflicts ─────────────────────────────
+      // ── 3. batch_trainer_conflicts ────────────────────────────
       const overlapInfoForBatch = row.overlap_info || [];
       if (overlapInfoForBatch.length > 0) {
         await supabase.from("batch_trainer_conflicts").delete().eq("batch_no", batch_no);
@@ -2578,7 +2573,7 @@ app.post("/api/save-classroom-matrix", async (req, res) => {
         await supabase.from("batch_trainer_conflicts").delete().eq("batch_no", batch_no);
       }
 
-      // ── 4. course_planner_data (backward compat) ───────────────
+      // ── 4. course_planner_data (backward compat) ──────────────
       const primaryTrainer = moduleTrainers.find(
         (mt) => mt.trainer_name && mt.trainer_name !== "UNASSIGNED"
       )?.trainer_name || row.trainer_name;

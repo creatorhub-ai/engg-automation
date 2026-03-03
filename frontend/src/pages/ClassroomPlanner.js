@@ -39,13 +39,13 @@ const slotDisplayMap = {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Compute batch occupancy end = A.START DATE + 5 months + 2 weeks.
-// A.DUE DATE is stored for reference only; classroom allocation ignores it.
+// A.DUE DATE is preserved for display only; scheduling uses this value.
 // ─────────────────────────────────────────────────────────────────────────────
 function computeOccupancyEnd(startDate) {
   if (!(startDate instanceof Date) || isNaN(startDate.getTime())) return null;
   const d = new Date(startDate);
-  d.setMonth(d.getMonth() + 5);  // +5 months
-  d.setDate(d.getDate() + 14);   // +2 weeks
+  d.setMonth(d.getMonth() + 5);
+  d.setDate(d.getDate() + 14);
   return d;
 }
 
@@ -113,7 +113,7 @@ function getDomainFromCourse(course) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // planClassroomsForOffline
-// occupancy end = A.START DATE + 5 months + 2 weeks (ignores A.DUE DATE)
+// Occupancy end = A.START DATE + 5 months + 2 weeks (A.DUE DATE ignored)
 // ─────────────────────────────────────────────────────────────────────────────
 function planClassroomsForOffline(rows) {
   const classrooms = [
@@ -148,10 +148,9 @@ function planClassroomsForOffline(rows) {
     const startDt  = parseExcelDate(row["A.START DATE"]);
     const aStart   = toIsoDateString(startDt);
     const dueDt    = parseExcelDate(row["A.DUE DATE"]);
-    const aEnd     = toIsoDateString(dueDt);       // original due date (display only)
+    const aEnd     = toIsoDateString(dueDt);
     const occEndDt = computeOccupancyEnd(startDt);
-    const occEnd   = toIsoDateString(occEndDt);    // 5m+2w — used for room allocation
-
+    const occEnd   = toIsoDateString(occEndDt);
     const enrolled = Number(row["ENROLLED"] || 0);
     const capacity = Number(row["CAPACITY"] || 0);
 
@@ -228,6 +227,34 @@ function hexToRGB(hex) {
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// normalizeLoadedRow
+// Converts a raw DB row (from get-classroom-matrix) into the same shape
+// as an in-memory plan so all downstream logic is identical whether data
+// came from a file upload or a page-refresh DB load.
+// ─────────────────────────────────────────────────────────────────────────────
+function normalizeLoadedRow(r, moduleTrainers, primaryTrainer) {
+  // occupancy_end from DB; recompute from start if absent (older records)
+  const occEnd =
+    r.occupancy_end ||
+    toIsoDateString(computeOccupancyEnd(parseExcelDate(r.occupancy_start)));
+
+  return {
+    batch_no:        r.batch_no,
+    classroom_name:  r.classroom_name || "",
+    slot:            r.slot           || "",
+    a_start:         r.occupancy_start || "",
+    // a_end: use whatever the backend returns; it may be null for older rows
+    a_end:           r.a_end           || "",
+    occupancy_end:   occEnd,
+    enrolled:        r.enrolled        || 0,
+    capacity:        r.capacity        || r.enrolled || 0,
+    mode:            "OFFLINE",
+    trainer_name:    primaryTrainer,
+    module_trainers: moduleTrainers,
+  };
+}
+
 export default function ClassroomPlanner() {
   const [plans,              setPlans]              = useState([]);
   const [weeks,              setWeeks]              = useState([]);
@@ -243,11 +270,11 @@ export default function ClassroomPlanner() {
   const [unallocatedBatches, setUnallocatedBatches] = useState([]);
   const [trainerOverlapInfo, setTrainerOverlapInfo] = useState({});
 
-  // Tracks whether there is valid in-memory data so a silent reload
-  // failure after save does NOT wipe what the user sees.
+  // Used only to prevent silent post-save reload from wiping in-memory data
+  // if the DB returns an unexpected empty/error response right after saving.
   const hasInMemoryData = useRef(false);
 
-  // ── computeAndSetWeeks ────────────────────────────────────────────────
+  // ── computeAndSetWeeks ───────────────────────────────────────────────────
   const computeAndSetWeeks = useCallback((normalizedPlans) => {
     const allDates = normalizedPlans
       .flatMap((p) => [p.a_start, p.occupancy_end || p.a_end])
@@ -263,15 +290,56 @@ export default function ClassroomPlanner() {
   }, []);
 
   // ─────────────────────────────────────────────────────────────────────────
+  // applyLoadedData
+  // Shared setter used by both initial page load and silent post-save reload.
+  // Takes validated occupancyRows + moduleTrainerMap + overlapInfo and
+  // updates all state atoms. This is the single source of truth for
+  // "what gets displayed on screen".
+  // ─────────────────────────────────────────────────────────────────────────
+  const applyLoadedData = useCallback((occupancyRows, moduleTrainerMap, savedOverlapInfo) => {
+    const sortedRows = [...occupancyRows].sort((a, b) => {
+      const sa = a.occupancy_start || "", sb = b.occupancy_start || "";
+      if (sa !== sb) return sa.localeCompare(sb);
+      // Sort by occupancy_end (5m+2w); compute if missing
+      const ea = a.occupancy_end || computeOccupancyEnd(a.occupancy_start) || "";
+      const eb = b.occupancy_end || computeOccupancyEnd(b.occupancy_start) || "";
+      if (ea !== eb) return (ea + "").localeCompare(eb + "");
+      return (a.batch_no || "").localeCompare(b.batch_no || "");
+    });
+
+    const normalizedPlans = sortedRows.map((r) => {
+      const moduleTrainers = moduleTrainerMap[r.batch_no] || [];
+      const primaryTrainer =
+        moduleTrainers.find((mt) => mt.trainer_name && mt.trainer_name !== "UNASSIGNED")
+          ?.trainer_name || r.trainer_name || "UNASSIGNED";
+      return normalizeLoadedRow(r, moduleTrainers, primaryTrainer);
+    });
+
+    const unallocated = normalizedPlans.filter((p) => !p.classroom_name || !p.slot);
+
+    hasInMemoryData.current = true;
+    setPlans(normalizedPlans);
+    setUnallocatedBatches(unallocated.map((p) => ({
+      batch_no:      p.batch_no,
+      enrolled:      p.enrolled,
+      a_start:       p.a_start,
+      a_end:         p.a_end,
+      occupancy_end: p.occupancy_end,
+    })));
+    setTrainerOverlapInfo(savedOverlapInfo);
+    computeAndSetWeeks(normalizedPlans);
+  }, [computeAndSetWeeks]);
+
+  // ─────────────────────────────────────────────────────────────────────────
   // loadExistingMatrix
   //
-  // silent=false (default) → initial page load.
-  //   Shows loading spinner. Wipes state on empty/error (nothing to show).
+  // silent=false → initial page load / manual reload.
+  //   Shows loading spinner. On DB error or empty: shows message, clears state.
   //
-  // silent=true → called after Save Matrix.
-  //   No spinner, no state wipe on failure.
-  //   Only updates state when DB returns valid rows (so data stays visible
-  //   even if the column `a_end` doesn't exist yet in the DB schema).
+  // silent=true → background refresh called after Save Matrix.
+  //   No spinner shown. On DB error or empty: does NOT wipe in-memory state
+  //   (the data the user just uploaded stays visible).
+  //   On success: updates state with confirmed DB data.
   // ─────────────────────────────────────────────────────────────────────────
   const loadExistingMatrix = useCallback(async (silent = false) => {
     try {
@@ -283,11 +351,11 @@ export default function ClassroomPlanner() {
       const res = await fetch(`${API_BASE}/api/get-classroom-matrix`);
 
       if (!res.ok) {
+        const errText = await res.text().catch(() => "unknown error");
+        console.error("get-classroom-matrix failed:", res.status, errText);
         if (!silent) {
-          setProcessingStatus("No saved matrix found.");
-          if (!hasInMemoryData.current) {
-            setPlans([]); setWeeks([]); setUnallocatedBatches([]); setTrainerOverlapInfo({});
-          }
+          setProcessingStatus("Failed to load saved data.");
+          setPlans([]); setWeeks([]); setUnallocatedBatches([]); setTrainerOverlapInfo({});
         }
         return;
       }
@@ -297,24 +365,15 @@ export default function ClassroomPlanner() {
 
       if (!occupancyRows?.length) {
         if (!silent) {
-          setProcessingStatus("No saved data.");
-          if (!hasInMemoryData.current) {
-            setPlans([]); setWeeks([]); setUnallocatedBatches([]); setTrainerOverlapInfo({});
-          }
+          setProcessingStatus("No saved data found.");
+          setPlans([]); setWeeks([]); setUnallocatedBatches([]); setTrainerOverlapInfo({});
         }
+        // If silent and no rows, don't wipe — there might be a timing issue
         return;
       }
 
-      const sortedRows = [...occupancyRows].sort((a, b) => {
-        const sa = a.occupancy_start || "", sb = b.occupancy_start || "";
-        if (sa !== sb) return sa.localeCompare(sb);
-        const ea = a.occupancy_end || "", eb = b.occupancy_end || "";
-        if (ea !== eb) return ea.localeCompare(eb);
-        return (a.batch_no || "").localeCompare(b.batch_no || "");
-      });
-
-      const batchNos = sortedRows.map((r) => r.batch_no).filter(Boolean);
-
+      // Fetch module trainers + conflict info for all batch numbers
+      const batchNos = occupancyRows.map((r) => r.batch_no).filter(Boolean);
       let moduleTrainerMap = {};
       let savedOverlapInfo = {};
       try {
@@ -327,59 +386,24 @@ export default function ClassroomPlanner() {
           const mtData     = await mtRes.json();
           moduleTrainerMap = mtData.moduleTrainerMap || {};
           savedOverlapInfo = mtData.overlapInfo      || {};
+        } else {
+          console.warn("get-batch-module-trainers returned", mtRes.status);
         }
       } catch (e) {
         console.warn("Could not fetch module trainers (non-fatal):", e);
       }
 
-      const normalizedPlans = sortedRows.map((r) => {
-        const moduleTrainers = moduleTrainerMap[r.batch_no] || [];
-        const primaryTrainer =
-          moduleTrainers.find((mt) => mt.trainer_name && mt.trainer_name !== "UNASSIGNED")
-            ?.trainer_name || r.trainer_name || "UNASSIGNED";
-
-        // Use DB-stored occupancy_end; compute if absent (backward compat)
-        const occEnd =
-          r.occupancy_end ||
-          toIsoDateString(computeOccupancyEnd(parseExcelDate(r.occupancy_start)));
-
-        return {
-          batch_no:        r.batch_no,
-          classroom_name:  r.classroom_name || "",
-          slot:            r.slot           || "",
-          a_start:         r.occupancy_start,
-          a_end:           r.a_end          || "",
-          occupancy_end:   occEnd,
-          enrolled:        r.enrolled       || 0,
-          capacity:        r.capacity       || r.enrolled || 0,
-          mode:            "OFFLINE",
-          trainer_name:    primaryTrainer,
-          module_trainers: moduleTrainers,
-        };
-      });
-
-      const unallocated = normalizedPlans.filter((p) => !p.classroom_name || !p.slot);
-
-      // Successfully got DB data — update all state
-      hasInMemoryData.current = true;
-      setPlans(normalizedPlans);
-      setUnallocatedBatches(unallocated.map((p) => ({
-        batch_no:      p.batch_no,
-        enrolled:      p.enrolled,
-        a_start:       p.a_start,
-        a_end:         p.a_end,
-        occupancy_end: p.occupancy_end,
-      })));
-      setTrainerOverlapInfo(savedOverlapInfo);
-      computeAndSetWeeks(normalizedPlans);
+      // Apply all loaded data to state
+      applyLoadedData(occupancyRows, moduleTrainerMap, savedOverlapInfo);
 
       if (!silent) {
         setProcessingStatus(`Loaded ${occupancyRows.length} saved batches.`);
       }
     } catch (e) {
-      console.error("loadExistingMatrix error", e);
+      console.error("loadExistingMatrix error:", e);
       if (!silent) {
         setProcessingStatus("Error loading saved matrix.");
+        setPlans([]); setWeeks([]); setUnallocatedBatches([]); setTrainerOverlapInfo({});
       }
       // On silent reload failure, leave existing in-memory state untouched
     } finally {
@@ -387,8 +411,9 @@ export default function ClassroomPlanner() {
         setLoading(false);
       }
     }
-  }, [computeAndSetWeeks]);
+  }, [applyLoadedData]);
 
+  // ── On mount: load licenses + existing DB data ────────────────────────
   useEffect(() => {
     const loadLicenses = async () => {
       try {
@@ -401,11 +426,11 @@ export default function ClassroomPlanner() {
         setLicenseError("Failed to load licenses.");
       }
     };
-    loadExistingMatrix(false);  // initial load — show spinner
+    loadExistingMatrix(false);   // show spinner on first load
     loadLicenses();
   }, [loadExistingMatrix]);
 
-  // ── Derived state ──────────────────────────────────────────────────────
+  // ── Derived state ────────────────────────────────────────────────────────
   const classrooms = useMemo(() => {
     const rooms = [...new Set(
       plans.filter((p) => p.classroom_name && p.slot).map((p) => p.classroom_name)
@@ -736,19 +761,10 @@ export default function ClassroomPlanner() {
   // ─────────────────────────────────────────────────────────────────────────
   // handleSaveMatrix
   //
-  // ROOT CAUSE FIX:
-  //   Before this fix, after a successful save the code called
-  //   `await loadExistingMatrix()` which:
-  //     1. Set loading=true → hid the matrix ("Upload a file..." message showed)
-  //     2. If a_end column didn't exist in DB, Supabase returned an error
-  //        → setPlans([]) wipeout
-  //     3. Even on success, there was a flash of empty state
-  //
-  //   Now:
-  //     - Save sends payload WITHOUT a_end (avoids unknown-column DB errors)
-  //     - State is NOT wiped after save — in-memory plans stay visible
-  //     - A silent background reload is fired (silent=true) that updates
-  //       state from DB only on success, never wipes on failure
+  // After a successful save:
+  //   1. Shows the ✅ status chip immediately (in-memory data stays visible)
+  //   2. Fires a silent background reload to sync state with what's in DB
+  //      (silent=true means no spinner and no state wipe on failure)
   // ─────────────────────────────────────────────────────────────────────────
   const handleSaveMatrix = async () => {
     if (!plans.length && !unallocatedBatches.length) { setError("No matrix to save."); return; }
@@ -776,9 +792,6 @@ export default function ClassroomPlanner() {
         return (a.batch_no||"").localeCompare(b.batch_no||"");
       });
 
-      // NOTE: we intentionally omit `a_end` from the payload so the save
-      // does not break if the `a_end` column has not yet been added to the
-      // classroom_occupancy table. occupancy_end (5m+2w) is what matters.
       const occupancyRows = allRows.map((p) => ({
         batch_no:        p.batch_no?.trim(),
         classroom_name:  p.classroom_name  || null,
@@ -803,8 +816,8 @@ export default function ClassroomPlanner() {
       const { inserted, updated, skipped } = data.summary || {};
       setSaveStatus(`✅ ${inserted||0} NEW + ${updated||0} UPDATED + ${skipped||0} unchanged`);
 
-      // Silent background refresh — will update state from DB if it succeeds,
-      // but NEVER wipes plans/weeks/trainers if it fails or returns empty.
+      // Silent background reload: syncs state from DB without touching
+      // the visible plans/weeks/trainers if anything goes wrong.
       loadExistingMatrix(true);
 
     } catch (err) {
@@ -1013,7 +1026,7 @@ export default function ClassroomPlanner() {
         {loading ? (
           <Box sx={{ display:"flex", justifyContent:"center", alignItems:"center", height:200 }}>
             <CircularProgress />
-            <Typography sx={{ ml: 2 }}>Generating matrix...</Typography>
+            <Typography sx={{ ml: 2 }}>Loading matrix...</Typography>
           </Box>
         ) : !plans.length && !unallocatedBatches.length ? (
           <Alert severity="info">
