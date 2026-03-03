@@ -2467,13 +2467,15 @@ app.post("/api/save-classroom-matrix", async (req, res) => {
       const slot           = row.slot              || null;
 
       // ── 1. classroom_occupancy ─────────────────────────────────
+      // NOTE: a_end (original A.DUE DATE) is intentionally excluded here.
+      // If your classroom_occupancy table has an a_end column you can add it;
+      // omitting it keeps the save compatible with tables that don't have it yet.
       const upsertData = {
         batch_no,
         classroom_name,
         slot,
         occupancy_start,
-        occupancy_end,    // 5m+2w end
-        a_end,            // original due date
+        occupancy_end,    // 5m+2w computed end — the only end date used for scheduling
         enrolled,
         capacity,
         class_room: classroom_name ? classroom_name.split(" ")[0] : null,
@@ -2483,7 +2485,7 @@ app.post("/api/save-classroom-matrix", async (req, res) => {
 
       const { data: existing } = await supabase
         .from("classroom_occupancy")
-        .select("id, occupancy_start, occupancy_end, a_end, enrolled, capacity, classroom_name, slot")
+        .select("id, occupancy_start, occupancy_end, enrolled, capacity, classroom_name, slot")
         .eq("batch_no", batch_no)
         .maybeSingle();
 
