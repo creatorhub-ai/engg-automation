@@ -362,7 +362,8 @@ function attemptRearrangement(occupancyIndex, enrolled, domain, start, end, toda
 ──────────────────────────────────────────────────────────────────────────── */
 
 function smartPlanClassrooms(rows, today = new Date()) {
-  // 1. Parse and filter OFFLINE rows
+
+  // 1️⃣ Parse OFFLINE rows
   const parsed = rows
     .map(normalizeRowKeys)
     .filter(row => {
@@ -371,151 +372,178 @@ function smartPlanClassrooms(rows, today = new Date()) {
     })
     .map(row => {
       const startDt = parseExcelDate(row["A.START DATE"]);
-      const dueDt   = parseExcelDate(row["A.DUE DATE"]);
       const occEndDt = computeOccupancyEnd(startDt);
+      const dueDt = parseExcelDate(row["A.DUE DATE"]);
+
       return {
-        batch_no:      row["COURSE"],
-        a_start:       toISO(startDt),
-        a_end:         dueDt ? toISO(dueDt) : toISO(occEndDt),
+        batch_no: row["COURSE"],
+        a_start: toISO(startDt),
+        a_end: dueDt ? toISO(dueDt) : toISO(occEndDt),
         occupancy_end: toISO(occEndDt),
-        enrolled:      Number(row["ENROLLED"] || 0),
-        capacity:      Number(row["CAPACITY"] || 0),
+        enrolled: Number(row["ENROLLED"] || 0),
+        capacity: Number(row["CAPACITY"] || 0),
         forced_classroom: (row["CLASS_ROOM"] || row["CLASSROOM"] || "").trim(),
-        domain:        getDomainFromBatch(row["COURSE"]),
-        startDt,
+        domain: getDomainFromBatch(row["COURSE"]),
+        startDt
       };
     });
 
-  // 2. Sort: earlier start first; within same start, shorter batch first
+  // 2️⃣ STRICT CHRONOLOGICAL SORT (start → end → batch)
   parsed.sort((a, b) => {
-    if (a.a_start !== b.a_start) return a.a_start.localeCompare(b.a_start);
-    const ae = a.occupancy_end || "", be = b.occupancy_end || "";
-    if (ae !== be) return ae.localeCompare(be);
+    if (a.a_start !== b.a_start)
+      return a.a_start.localeCompare(b.a_start);
+
+    if (a.occupancy_end !== b.occupancy_end)
+      return a.occupancy_end.localeCompare(b.occupancy_end);
+
     return a.batch_no.localeCompare(b.batch_no);
   });
 
-  // 3. Track domain → slot counter for rotation
-  const domainSlotCounter = {}; // domain → number of batches assigned so far
+  const domainSlotCounter = {};
+  const plans = [];
+  const unallocated = [];
+  const rearrangements = [];
+  const conflicts = [];
 
-  const plans           = [];
-  const unallocated     = [];
-  const rearrangements  = [];
-  const conflicts       = [];
-  const occupancyIndex  = {};
-  CLASSROOMS.forEach(room => SLOTS.forEach(slot => { occupancyIndex[`${room.name}|${slot}`] = []; }));
+  const occupancyIndex = {};
+  CLASSROOMS.forEach(room =>
+    SLOTS.forEach(slot => {
+      occupancyIndex[`${room.name}|${slot}`] = [];
+    })
+  );
 
-  const allPlansMap = {}; // batch_no → plan (for reference during rearrangement)
+  const allPlansMap = {};
 
+  // 3️⃣ Allocate strictly one by one
   for (const batch of parsed) {
-    const { batch_no, a_start, occupancy_end, a_end, enrolled, capacity, domain, forced_classroom } = batch;
+
+    const {
+      batch_no,
+      a_start,
+      occupancy_end,
+      a_end,
+      enrolled,
+      capacity,
+      domain,
+      forced_classroom
+    } = batch;
 
     if (enrolled > capacity) {
-      unallocated.push({ ...batch, conflict_reason: `Enrolled (${enrolled}) > Capacity (${capacity})` });
+      unallocated.push({
+        ...batch,
+        conflict_reason: `Enrolled (${enrolled}) > Capacity (${capacity})`
+      });
       continue;
     }
 
-    // Determine preferred slot via domain rotation
     const count = domainSlotCounter[domain] || 0;
     const preferredSlot = SLOTS[count % SLOTS.length];
 
     let assigned = null;
     let rearrangeInfo = null;
 
-    // ── Case A: forced classroom from file ───────────────────────────────
+    // 4️⃣ Forced classroom (validated against full date range)
     if (forced_classroom) {
       const parts = forced_classroom.match(/^(.+?)_(morning|evening|Shift_1|Shift_2)$/i);
       if (parts) {
-        const forcedRoom = CLASSROOMS.find(r => r.name.toLowerCase() === parts[1].toLowerCase());
+        const forcedRoom = CLASSROOMS.find(r =>
+          r.name.toLowerCase() === parts[1].toLowerCase()
+        );
         const forcedSlot = slotDisplayMap[parts[2]] || parts[2].toLowerCase();
-        if (forcedRoom && forcedSlot) {
-          // Still enforce domain-slot rule even for forced
-          if (!hasDomainSlotConflict(occupancyIndex, forcedSlot, domain, a_start, occupancy_end)
-            && !hasRoomConflict(occupancyIndex, forcedRoom.name, forcedSlot, a_start, occupancy_end)) {
-            assigned = { roomName: forcedRoom.name, slot: forcedSlot };
-          } else {
-            conflicts.push({ batch_no, reason: `Forced classroom ${forced_classroom} has a conflict. Auto-assigning instead.` });
-          }
+
+        if (
+          forcedRoom &&
+          !hasDomainSlotConflict(occupancyIndex, forcedSlot, domain, a_start, occupancy_end) &&
+          !hasRoomConflict(occupancyIndex, forcedRoom.name, forcedSlot, a_start, occupancy_end)
+        ) {
+          assigned = { roomName: forcedRoom.name, slot: forcedSlot };
+        } else {
+          conflicts.push({
+            batch_no,
+            reason: `Forced classroom ${forced_classroom} conflicts in full date range`
+          });
         }
       }
     }
 
-    // ── Case B: normal auto-assignment ───────────────────────────────────
+    // 5️⃣ Strict date-based room search
     if (!assigned) {
-      assigned = findFreeRoomSlot(occupancyIndex, enrolled, domain, a_start, occupancy_end, preferredSlot);
+      assigned = findFreeRoomSlot(
+        occupancyIndex,
+        enrolled,
+        domain,
+        a_start,
+        occupancy_end,
+        preferredSlot
+      );
     }
 
-    // ── Case C: rearrangement ─────────────────────────────────────────────
+    // 6️⃣ Rearrangement if required
     if (!assigned) {
-      const result = attemptRearrangement(occupancyIndex, enrolled, domain, a_start, occupancy_end, today, allPlansMap);
+      const result = attemptRearrangement(
+        occupancyIndex,
+        enrolled,
+        domain,
+        a_start,
+        occupancy_end,
+        today,
+        allPlansMap
+      );
+
       if (result.success) {
-        // Apply moves
-        for (const move of result.moves) {
-          // Remove from original slot
+        result.moves.forEach(move => {
           const fromKey = `${move.from_room}|${move.from_slot}`;
           const entry = occupancyIndex[fromKey].find(b => b.batch_no === move.batch_no);
+
           if (entry) {
-            occupancyIndex[fromKey] = occupancyIndex[fromKey].filter(b => b.batch_no !== move.batch_no);
-            // Add to new slot
+            occupancyIndex[fromKey] =
+              occupancyIndex[fromKey].filter(b => b.batch_no !== move.batch_no);
+
             const toKey = `${move.to_room}|${move.to_slot}`;
             if (!occupancyIndex[toKey]) occupancyIndex[toKey] = [];
             occupancyIndex[toKey].push(entry);
-            // Update that batch in plans list
-            const planIdx = plans.findIndex(p => p.batch_no === move.batch_no);
-            if (planIdx >= 0) {
-              plans[planIdx] = {
-                ...plans[planIdx],
-                classroom_name: `${move.to_room} [${CLASSROOMS.find(r => r.name === move.to_room)?.capacity || ""}]`,
-                slot: move.to_slot,
-                rearranged: true,
-                rearrange_reason: `Moved to free ${move.from_room} ${move.from_slot} for ${batch_no} (was ${move.remaining_days}d from end)`,
-              };
-            }
+
             rearrangements.push({ ...move, freed_for: batch_no });
           }
-        }
+        });
+
         assigned = { roomName: result.roomName, slot: result.slot };
         rearrangeInfo = result.moves;
       }
     }
 
-    // ── Case D: still unallocated ─────────────────────────────────────────
+    // 7️⃣ Still not possible
     if (!assigned) {
-      // Build detailed conflict reason
-      const domainConflictSlots = SLOTS.filter(s =>
-        hasDomainSlotConflict(occupancyIndex, s, domain, a_start, occupancy_end)
-      );
-      const roomConflicts = [];
-      CLASSROOMS.forEach(room => {
-        SLOTS.forEach(slot => {
-          if (hasRoomConflict(occupancyIndex, room.name, slot, a_start, occupancy_end)) {
-            const occ = (occupancyIndex[`${room.name}|${slot}`] || [])
-              .filter(b => overlaps(a_start, occupancy_end, b.start, b.end))
-              .map(b => b.batch_no).join(", ");
-            roomConflicts.push(`${room.name}/${slot}: occupied by ${occ}`);
-          }
-        });
+      unallocated.push({
+        ...batch,
+        conflict_reason: "No classroom available for full date range"
       });
-      let reason = "";
-      if (domainConflictSlots.length) reason += `Domain conflict: same-domain batch already in [${domainConflictSlots.join(", ")}]. `;
-      if (roomConflicts.length)       reason += `Room conflicts: ${roomConflicts.slice(0, 3).join("; ")}`;
-      unallocated.push({ ...batch, conflict_reason: reason || "No available room/slot combination" });
       continue;
     }
 
-    // Register in occupancy index
+    // 8️⃣ Register occupancy strictly for full range
     const key = `${assigned.roomName}|${assigned.slot}`;
-    if (!occupancyIndex[key]) occupancyIndex[key] = [];
     occupancyIndex[key].push({
-      batch_no, start: a_start, end: occupancy_end, domain, enrolled,
+      batch_no,
+      start: a_start,
+      end: occupancy_end,
+      domain,
+      enrolled
     });
 
-    // Advance domain slot counter
-    domainSlotCounter[domain] = (domainSlotCounter[domain] || 0) + 1;
+    domainSlotCounter[domain] =
+      (domainSlotCounter[domain] || 0) + 1;
 
     const roomDef = CLASSROOMS.find(r => r.name === assigned.roomName);
+
     const plan = {
-      batch_no, mode: "OFFLINE",
-      a_start, a_end, occupancy_end, enrolled, capacity,
+      batch_no,
+      mode: "OFFLINE",
+      a_start,
+      a_end,
+      occupancy_end,
+      enrolled,
+      capacity,
       classroom_name: `${assigned.roomName} [${roomDef?.capacity || ""}]`,
       slot: assigned.slot,
       isAllocated: true,
@@ -524,15 +552,23 @@ function smartPlanClassrooms(rows, today = new Date()) {
       forced_classroom,
       rearranged: !!rearrangeInfo,
       rearrange_reason: rearrangeInfo
-        ? rearrangeInfo.map(m => `Freed by moving ${m.batch_no} (${m.remaining_days}d left) to ${m.to_room}/${m.to_slot}`).join("; ")
+        ? rearrangeInfo.map(m =>
+            `Moved ${m.batch_no} to ${m.to_room}/${m.to_slot}`
+          ).join("; ")
         : "",
-      domain,
+      domain
     };
+
     plans.push(plan);
     allPlansMap[batch_no] = plan;
   }
 
-  return { plans, unallocated, rearrangements, conflicts };
+  return {
+    plans,
+    unallocated,
+    rearrangements,
+    conflicts
+  };
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
