@@ -8803,137 +8803,128 @@ app.get("/api/hello", (req, res) => {
 });
 
 // === UNIFIED Background Worker (FIXED) ===
-const MAX_RETRIES = 5;
+const MAX_RETRIES = 3;
+const BATCH_SIZE = 20;
 
-cron.schedule("*/1 * * * *", async () => {  // every minute
+cron.schedule("*/2 * * * *", async () => {  // every 2 minutes
+  const now = dayjs().toISOString();
+
   try {
-    const now = dayjs();
+    console.log(`\n⏱ [EmailWorker] Tick at ${now}`);
 
-    // Expand time window by 1 minute backward and forward
-    const windowStart = now.subtract(1, "minute").startOf("minute").toISOString();
-    const windowEnd = now.add(1, "minute").endOf("minute").toISOString();
-
-    console.log(`⏱ Cron running at ${now.toISOString()}`);
-    console.log(`Checking emails between ${windowStart} and ${windowEnd}`);
-
-    // Fetch emails that must be processed
+    // ── Fetch emails due NOW or overdue, not yet sent, under retry limit ──
     const { data: emails, error } = await supabase
       .from("scheduled_emails")
       .select("*")
-      .or("status.eq.scheduled,status.eq.failed")
-      .gte("scheduled_at", windowStart)
-      .lte("scheduled_at", windowEnd)
+      .in("status", ["scheduled", "failed"])
+      .lte("scheduled_at", now)              // due now or overdue
+      .lt("retry_count", MAX_RETRIES)        // haven't exceeded retries
       .order("scheduled_at", { ascending: true })
-      .limit(1000);
+      .limit(BATCH_SIZE);
 
     if (error) {
-      console.error("❌ Error fetching emails:", error.message);
+      console.error("❌ [EmailWorker] Fetch error:", error.message);
       return;
     }
 
     if (!emails || emails.length === 0) {
-      console.log("📭 No scheduled emails in this window.");
+      console.log("📭 [EmailWorker] No emails due.");
       return;
     }
 
-    console.log(`📨 Processing ${emails.length} email(s)...`);
+    console.log(`📨 [EmailWorker] Processing ${emails.length} email(s)...`);
 
     for (const email of emails) {
-      console.log(`➡️ Processing email ID ${email.id} (${email.recipient_email}) status=${email.status}`);
-
-      // STOP if reached max retries
-      if ((email.retry_count || 0) >= MAX_RETRIES) {
-        console.log(`🚫 Email ID ${email.id} reached MAX_RETRIES. Skipping.`);
-        continue;
-      }
-
-      // Mark as processing
-      const { error: markError } = await supabase
+      // ── Mark as processing immediately to prevent double-send ──
+      const { error: lockError } = await supabase
         .from("scheduled_emails")
         .update({
           status: "processing",
           retry_count: (email.retry_count || 0) + 1,
-          last_attempt_at: now.toISOString(),
-          updated_at: now.toISOString(),
+          last_attempt_at: now,
+          updated_at: now,
         })
-        .eq("id", email.id);   // ❗ FIX: remove status condition
+        .eq("id", email.id)
+        .in("status", ["scheduled", "failed"]); // only if still in sendable state
 
-      if (markError) {
-        console.error(`⚠️ Cannot mark email ${email.id} as processing:`, markError.message);
+      if (lockError) {
+        console.warn(`⚠️ [EmailWorker] Could not lock email ${email.id}:`, lockError.message);
         continue;
       }
 
       try {
-        const html = email.body_html || "";
-        const text = html.replace(/<\/?[^>]+(>|$)/g, "");
-        const attachments = [];
+        if (!email.recipient_email || !email.recipient_email.includes("@")) {
+          throw new Error(`Invalid recipient: ${email.recipient_email}`);
+        }
 
+        const attachments = [];
         if (email.attachment_name && email.attachment_data) {
           attachments.push({
             filename: email.attachment_name,
-            content: Buffer.from(email.attachment_data, "base64")
+            content: Buffer.from(email.attachment_data, "base64"),
           });
         }
 
-        if (!email.recipient_email?.includes("@")) {
-          throw new Error("Invalid email address");
-        }
-
-        const sendResult = await sendRawEmail({
+        const result = await sendRawEmail({
           to: email.recipient_email,
-          subject: email.subject || "(No subject)",
-          html,
-          text,
-          attachments
+          subject: email.subject || "(No Subject)",
+          html: email.body_html || "",
+          text: (email.body_html || "").replace(/<[^>]+>/g, ""),
+          attachments,
         });
 
-        if (sendResult?.success) {
-          console.log(`✅ SENT: email ID ${email.id}`);
-
+        if (result.success) {
+          console.log(`✅ [EmailWorker] Sent ID=${email.id} to ${email.recipient_email}`);
           await supabase
             .from("scheduled_emails")
             .update({
               status: "sent",
               sent_at: dayjs().toISOString(),
               error: null,
-              updated_at: dayjs().toISOString()
+              updated_at: dayjs().toISOString(),
             })
             .eq("id", email.id);
-
         } else {
-          console.error(`❌ FAILED email ID ${email.id}:`, sendResult?.error);
-
-          await supabase
-            .from("scheduled_emails")
-            .update({
-              status: "failed",
-              error: sendResult?.error || "Unknown error",
-              updated_at: dayjs().toISOString()
-            })
-            .eq("id", email.id);
+          throw new Error(result.error || "sendRawEmail returned failure");
         }
-
-      } catch (err) {
-        console.error(`⚠️ Exception email ID ${email.id}:`, err.message);
-
+      } catch (sendErr) {
+        console.error(`❌ [EmailWorker] Failed ID=${email.id}:`, sendErr.message);
+        const newRetry = (email.retry_count || 0) + 1;
         await supabase
           .from("scheduled_emails")
           .update({
-            status: "failed",
-            error: err.message,
-            updated_at: dayjs().toISOString()
+            status: newRetry >= MAX_RETRIES ? "permanently_failed" : "failed",
+            error: sendErr.message,
+            updated_at: dayjs().toISOString(),
           })
           .eq("id", email.id);
       }
 
-      // Avoid SMTP throttling
-      await new Promise(r => setTimeout(r, 150));
+      // Gmail rate limit: ~100 emails/day on free, ~500/day with Workspace
+      // Wait 300ms between sends to avoid hitting rate limits
+      await new Promise((r) => setTimeout(r, 300));
     }
 
-  } catch (e) {
-    console.error("🚨 CRON FATAL ERROR:", e);
+    console.log(`[EmailWorker] Done processing batch.\n`);
+  } catch (fatalErr) {
+    console.error("🚨 [EmailWorker] Fatal error:", fatalErr.message);
   }
 });
+
+// ── Keep-alive ping for Render free tier ──
+// Render spins down free services after 15min of inactivity.
+// This self-ping keeps the service alive so cron keeps running.
+// Replace YOUR_RENDER_URL with your actual Render service URL.
+if (process.env.RENDER_EXTERNAL_URL) {
+  cron.schedule("*/10 * * * *", async () => {
+    try {
+      await fetch(`${process.env.RENDER_EXTERNAL_URL}/api/health`);
+      console.log("🏓 Keep-alive ping sent");
+    } catch (e) {
+      console.warn("Keep-alive ping failed:", e.message);
+    }
+  });
+}
 
 
 
