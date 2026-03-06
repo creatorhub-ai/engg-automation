@@ -2,7 +2,6 @@
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
-import nodemailer from "nodemailer";
 import xlsx from "xlsx";
 import cron from "node-cron";
 import fetch from "node-fetch";
@@ -122,28 +121,6 @@ app.use("/api/attendance", attendanceRoutes);
 // =====================================================
 const upload = multer({ dest: "uploads/" });
 
-// Nodemailer transporter - update with your email provider settings
-const mailTransporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 587,
-  secure: false, // STARTTLS
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-  tls: {
-    rejectUnauthorized: false,
-  },
-  connectionTimeout: 10000,
-});
-
-mailTransporter.verify((error, success) => {
-  if (error) {
-    console.error("❌ SMTP ERROR:", error);
-  } else {
-    console.log("✅ SMTP READY – Emails can be sent");
-  }
-});
 
 // ─── TABLE NAME MAP ──────────────────────────────────────────────────────────
 const ASSESSMENT_TABLE_MAP = {
@@ -390,11 +367,10 @@ function normalizeDate(value) {
 }
 
 // Helper used by leave emails
-async function sendEmail({ to, subject, text, html }) {
-  const fromAddress = process.env.EMAIL_USER; // MUST match auth user
-
-  if (!fromAddress) {
-    throw new Error("EMAIL_USER is not defined in environment variables");
+async function sendEmail({ to, subject, text, html }) {{
+  const result = await sendRawEmail({ to, subject, text, html });
+    if (!result.success) throw new Error(result.error);
+    return result;
   }
 
   const mailOptions = {
@@ -940,32 +916,28 @@ function extractAttendanceData(filepath) {
 }
 
 async function sendMail({ name, email, session, absents }) {
-  const formatted_dates = absents.map(d => `• ${d}`).join('\n');
+  const formatted_dates = absents.map(d => `• ${d}`).join("\n");
   const mailText = `Dear ${name},
 
 We noticed that you were absent for the enrolled course ${session} on the following days:
 ${formatted_dates}
 
-Regular attendance is essential to stay aligned with the course content and placement activities. Please ensure you go through the missed session before attending the upcoming ones.
+Regular attendance is essential to stay aligned with the course content.
 
-Kindly note 85% attendance is mandatory to get certification and placement assistance. A minimum of 70% attendance is mandatory to be eligible for certification and placement support.
+Kindly note 85% attendance is mandatory to get certification.
 
 Warm Regards,
+Kowshika
 Learning Coordinator
-ChipEdge Technologies Pvt Ltd
-https://chipedge.com/`;
+9606056288
+ChipEdge Technologies Pvt Ltd`;
 
-  let transporter = nodemailer.createTransport({
-    service: "gmail",
-    auth: { user: SENDER_EMAIL, pass: SENDER_PASS },
-  });
-  const mailOptions = {
-    from: SENDER_EMAIL,
+  const result = await sendRawEmail({
     to: email,
     subject: `Absent Notification: ${session}`,
-    text: mailText
-  };
-  await transporter.sendMail(mailOptions);
+    text: mailText,
+  });
+  if (!result.success) throw new Error(result.error);
 }
 
 app.use(express.json());
@@ -5929,16 +5901,14 @@ app.use('/uploads', express.static('uploads'));
 // Test email endpoint
 app.get("/api/test-email", async (req, res) => {
   try {
-    await mailTransporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: "hariharan@chipedge.com",  //used for checking the mail function works
-      subject: "Render Email Test",
-      text: "If you received this, email sending works 🚀",
+    const result = await sendRawEmail({
+      to: "hariharan@chipedge.com",
+      subject: "Email Test from Render",
+      text: "Email sending works on Render 🚀",
     });
-
-    res.json({ success: true });
+    if (!result.success) throw new Error(result.error);
+    res.json({ success: true, messageId: result.messageId });
   } catch (err) {
-    console.error("MAIL SEND ERROR:", err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -8731,12 +8701,11 @@ app.post("/api/internal/feedback-share", upload.single("file"), async (req, res)
     for (const user of recipients) {
       try {
         // Use your preferred email SMTP method here (Nodemailer, SendGrid, etc.)
-        await mailTransporter.sendMail({
-          from: process.env.MAIL_FROM,
+        await sendRawEmail({
           to: user.email,
           subject: `${feedbackType} for Batch: ${batchNo}`,
           html: `<p>Hello ${user.name},</p><p>PFA for the ${feedbackType} for Batch: ${batchNo}</p>`,
-          attachments: [{ filename: filename, content: fileBuffer }]
+          attachments: [{ filename: filename, content: fileBuffer }],
         });
         successCount++;
       } catch (err) {
