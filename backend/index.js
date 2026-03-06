@@ -293,52 +293,66 @@ function computeTodayISO(timeStr) {
 // FIXED: Properly handles negative offsets
 function computeScheduledAtISO(startDateStr, offsetDays = 0, sendTime = "09:00") {
   try {
-    // CRITICAL: always coerce to integer — DB may return string "-1"
+    // 1. Coerce offset to integer — DB often returns strings like "-1"
     const offset = Number(offsetDays);
     if (Number.isNaN(offset)) {
-      throw new Error(`offsetDays is not a number: ${offsetDays}`);
+      throw new Error(`offsetDays is not a valid number: "${offsetDays}"`);
     }
 
-    // Parse send time
-    const [hhStr, mmStr] = String(sendTime).split(":");
-    const hh = parseInt(hhStr, 10) || 0;
-    const mm = parseInt(mmStr, 10) || 0;
+    // 2. Parse send time
+    const parts = String(sendTime || "09:00").split(":");
+    const hh  = Math.max(0, Math.min(23, parseInt(parts[0], 10) || 0));
+    const mm  = Math.max(0, Math.min(59, parseInt(parts[1], 10) || 0));
 
-    // Parse base date — always treat as IST (Asia/Kolkata)
-    // dayjs.tz(dateStr, tz) correctly handles YYYY-MM-DD as midnight in that TZ
-    let baseDate;
-    if (String(startDateStr).includes("T")) {
-      // Full ISO timestamp — convert to IST first, then strip time
-      baseDate = dayjs(startDateStr).tz("Asia/Kolkata").startOf("day");
-    } else {
-      // Plain YYYY-MM-DD — treat as IST midnight
-      baseDate = dayjs.tz(startDateStr, "Asia/Kolkata");
+    // 3. Extract the calendar date part (first 10 chars = YYYY-MM-DD)
+    //    Works whether startDateStr is "2026-03-09" or "2026-03-09T06:00:00.000Z"
+    const datePart = String(startDateStr).slice(0, 10);
+    const [y, mo, d] = datePart.split("-").map(Number);
+    if (!y || !mo || !d) {
+      throw new Error(`Cannot parse date from: "${startDateStr}"`);
     }
 
-    // Apply offset (add for positive, subtract for negative)
-    const scheduledDate = baseDate
-      .add(offset, "day")   // dayjs.add handles negatives correctly
-      .hour(hh)
-      .minute(mm)
-      .second(0)
-      .millisecond(0);
+    // 4. Apply offset using UTC Date arithmetic to avoid DST/month-end issues
+    //    We only care about the calendar date, so work in pure UTC day units.
+    const baseMs = Date.UTC(y, mo - 1, d);              // midnight UTC of that date
+    const targetMs = baseMs + offset * 24 * 60 * 60 * 1000; // add/subtract days
+    const target = new Date(targetMs);
 
-    const isoOut = scheduledDate.toISOString(); // UTC ISO for DB storage
+    const ty   = target.getUTCFullYear();
+    const tm   = String(target.getUTCMonth() + 1).padStart(2, "0");
+    const td   = String(target.getUTCDate()).padStart(2, "0");
+    const thh  = String(hh).padStart(2, "0");
+    const tmm  = String(mm).padStart(2, "0");
+
+    // 5. Build an explicit IST timestamp string (Node always parses +05:30 correctly)
+    //    "2026-03-08T09:00:00+05:30" → Node converts to "2026-03-08T03:30:00.000Z"
+    const istStr = `${ty}-${tm}-${td}T${thh}:${tmm}:00+05:30`;
+    const result = new Date(istStr);
+
+    if (isNaN(result.getTime())) {
+      throw new Error(`Produced invalid date from: "${istStr}"`);
+    }
+
+    const utcISO = result.toISOString();
+
+    // Human-readable IST for logging
+    const istDisplay = new Date(result.getTime() + 5.5 * 3600 * 1000)
+      .toISOString()
+      .replace("T", " ")
+      .slice(0, 16) + " IST";
 
     console.log("═══ computeScheduledAtISO ═══");
-    console.log("  Input date :", startDateStr);
-    console.log("  Offset days:", offset, `(raw: ${offsetDays}, type: ${typeof offsetDays})`);
-    console.log("  Send time  :", sendTime);
-    console.log("  Base IST   :", baseDate.format("YYYY-MM-DD HH:mm:ss"));
-    console.log("  Scheduled  :", scheduledDate.format("YYYY-MM-DD HH:mm:ss"), "IST");
-    console.log("  UTC ISO    :", isoOut);
-    console.log("  Diff days  :", scheduledDate.diff(baseDate, "day"));
+    console.log(`  startDate  : ${startDateStr}`);
+    console.log(`  offsetDays : ${offset}  (raw="${offsetDays}", type=${typeof offsetDays})`);
+    console.log(`  sendTime   : ${thh}:${tmm} IST`);
+    console.log(`  target IST : ${ty}-${tm}-${td} ${thh}:${tmm}  (${istDisplay})`);
+    console.log(`  stored UTC : ${utcISO}`);
     console.log("═════════════════════════════");
 
-    return isoOut;
-  } catch (error) {
-    console.error("computeScheduledAtISO error:", error);
-    throw error;
+    return utcISO;
+  } catch (err) {
+    console.error("computeScheduledAtISO error:", err.message);
+    throw err;
   }
 }
 
@@ -8779,19 +8793,18 @@ const BATCH_SIZE  = 20;
 
 // Run EVERY MINUTE (was */2 — changed to *)
 cron.schedule("* * * * *", async () => {
-  // Current UTC time for DB comparison (scheduled_at is stored in UTC)
+  // Always compare in UTC — scheduled_at is stored as UTC ISO strings
   const nowUTC = dayjs().utc().toISOString();
   const nowIST = dayjs().tz("Asia/Kolkata").format("YYYY-MM-DD HH:mm:ss");
 
   try {
     console.log(`\n⏱ [EmailWorker] Tick | UTC: ${nowUTC} | IST: ${nowIST}`);
 
-    // Fetch emails due now or overdue, not yet sent, under retry limit
     const { data: emails, error } = await supabase
       .from("scheduled_emails")
       .select("*")
       .in("status", ["scheduled", "failed"])
-      .lte("scheduled_at", nowUTC)          // due now or overdue (UTC vs UTC)
+      .lte("scheduled_at", nowUTC)       // due now or overdue
       .lt("retry_count", MAX_RETRIES)
       .order("scheduled_at", { ascending: true })
       .limit(BATCH_SIZE);
@@ -8809,7 +8822,7 @@ cron.schedule("* * * * *", async () => {
     console.log(`📨 [EmailWorker] Processing ${emails.length} email(s)...`);
 
     for (const email of emails) {
-      // Lock the row immediately to prevent double-send
+      // Lock the row to prevent double-sending across overlapping ticks
       const { error: lockError } = await supabase
         .from("scheduled_emails")
         .update({
@@ -8819,16 +8832,16 @@ cron.schedule("* * * * *", async () => {
           updated_at:      nowUTC,
         })
         .eq("id", email.id)
-        .in("status", ["scheduled", "failed"]);  // only if still sendable
+        .in("status", ["scheduled", "failed"]);  // only lock if still sendable
 
       if (lockError) {
-        console.warn(`⚠️ [EmailWorker] Could not lock email id=${email.id}:`, lockError.message);
+        console.warn(`⚠️ [EmailWorker] Could not lock id=${email.id}:`, lockError.message);
         continue;
       }
 
       try {
         if (!email.recipient_email || !email.recipient_email.includes("@")) {
-          throw new Error(`Invalid recipient: ${email.recipient_email}`);
+          throw new Error(`Invalid recipient: "${email.recipient_email}"`);
         }
 
         const attachments = [];
@@ -8850,7 +8863,7 @@ cron.schedule("* * * * *", async () => {
         const sentAt = dayjs().utc().toISOString();
 
         if (result.success) {
-          console.log(`✅ [EmailWorker] Sent id=${email.id} to ${email.recipient_email}`);
+          console.log(`✅ [EmailWorker] Sent id=${email.id} → ${email.recipient_email}`);
           await supabase
             .from("scheduled_emails")
             .update({
@@ -8865,8 +8878,8 @@ cron.schedule("* * * * *", async () => {
         }
       } catch (sendErr) {
         console.error(`❌ [EmailWorker] Failed id=${email.id}:`, sendErr.message);
-        const newRetry  = (email.retry_count || 0) + 1;
-        const failedAt  = dayjs().utc().toISOString();
+        const newRetry = (email.retry_count || 0) + 1;
+        const failedAt = dayjs().utc().toISOString();
         await supabase
           .from("scheduled_emails")
           .update({
@@ -8877,7 +8890,7 @@ cron.schedule("* * * * *", async () => {
           .eq("id", email.id);
       }
 
-      // 300 ms gap between sends — avoids Mailjet rate limits
+      // 300 ms gap between sends to respect Mailjet rate limits
       await new Promise((r) => setTimeout(r, 300));
     }
 

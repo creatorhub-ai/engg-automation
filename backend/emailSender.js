@@ -23,7 +23,6 @@ export async function sendRawEmail({
     return { success: false, error: "Mailjet credentials not configured" };
   }
 
-  // Normalize recipients
   const toList = Array.isArray(to)
     ? to.map(email => ({ Email: email.trim() }))
     : [{ Email: to.trim() }];
@@ -31,10 +30,7 @@ export async function sendRawEmail({
   const payload = {
     Messages: [
       {
-        From: {
-          Email: FROM_EMAIL,
-          Name:  FROM_NAME,
-        },
+        From: { Email: FROM_EMAIL, Name: FROM_NAME },
         To:       toList,
         Subject:  subject,
         HTMLPart: html || `<p>${text || ""}</p>`,
@@ -43,7 +39,6 @@ export async function sendRawEmail({
     ],
   };
 
-  // Attachments
   if (attachments && attachments.length > 0) {
     payload.Messages[0].Attachments = attachments.map(att => ({
       ContentType:   att.contentType || "application/octet-stream",
@@ -54,57 +49,52 @@ export async function sendRawEmail({
     }));
   }
 
-  // Thread headers
   if (inReplyTo || references) {
     payload.Messages[0].Headers = {};
     if (inReplyTo) payload.Messages[0].Headers["In-Reply-To"] = inReplyTo;
     if (references) payload.Messages[0].Headers["References"]  = references;
   }
 
-  // Basic auth for Mailjet
-  const credentials = Buffer.from(
-    `${MAILJET_API_KEY}:${MAILJET_SECRET_KEY}`
-  ).toString("base64");
+  const credentials = Buffer.from(`${MAILJET_API_KEY}:${MAILJET_SECRET_KEY}`).toString("base64");
 
   try {
-    console.log(`📤 Sending email via Mailjet to: ${to} | Subject: ${subject}`);
+    console.log(`📤 Mailjet → to: ${to} | subject: ${subject}`);
 
-    const response = await fetch(
-      "https://api.mailjet.com/v3.1/send",
-      {
-        method:  "POST",
-        headers: {
-          "Authorization": `Basic ${credentials}`,
-          "Content-Type":  "application/json",
-        },
-        body: JSON.stringify(payload),
-      }
-    );
+    const response = await fetch("https://api.mailjet.com/v3.1/send", {
+      method:  "POST",
+      headers: {
+        "Authorization": `Basic ${credentials}`,
+        "Content-Type":  "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
 
     const result = await response.json();
 
     if (!response.ok) {
-      const errMsg = result?.ErrorMessage
-        || result?.Messages?.[0]?.Errors?.[0]?.ErrorMessage
-        || `HTTP ${response.status}`;
-      console.error(`❌ Mailjet HTTP ${response.status} sending to ${to}:`, JSON.stringify(result));
+      const errMsg =
+        result?.Messages?.[0]?.Errors?.[0]?.ErrorMessage ||
+        result?.ErrorMessage ||
+        `HTTP ${response.status}`;
+      console.error(`❌ Mailjet HTTP ${response.status} for ${to}:`, JSON.stringify(result));
       return { success: false, error: errMsg };
     }
 
-    // Check for per-message errors even on 200
     const msgStatus = result?.Messages?.[0]?.Status;
     if (msgStatus && msgStatus !== "success") {
-      const errMsg = result?.Messages?.[0]?.Errors?.[0]?.ErrorMessage || `Status: ${msgStatus}`;
-      console.error(`❌ Mailjet message error for ${to}:`, JSON.stringify(result.Messages[0]));
+      const errMsg =
+        result?.Messages?.[0]?.Errors?.[0]?.ErrorMessage ||
+        `Mailjet status: ${msgStatus}`;
+      console.error(`❌ Mailjet message-level error for ${to}:`, JSON.stringify(result.Messages[0]));
       return { success: false, error: errMsg };
     }
 
     const msgId = result?.Messages?.[0]?.To?.[0]?.MessageID || "sent";
-    console.log(`✅ Email sent to ${to} | Mailjet ID: ${msgId}`);
+    console.log(`✅ Sent to ${to} | Mailjet ID: ${msgId}`);
     return { success: true, messageId: String(msgId) };
 
   } catch (err) {
-    console.error(`❌ sendRawEmail network/parse error for ${to}:`, err.message);
+    console.error(`❌ sendRawEmail network error for ${to}:`, err.message);
     return { success: false, error: err.message };
   }
 }
