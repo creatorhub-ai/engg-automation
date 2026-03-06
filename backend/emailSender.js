@@ -23,9 +23,10 @@ export async function sendRawEmail({
     return { success: false, error: "Mailjet credentials not configured" };
   }
 
+  // Normalize recipients
   const toList = Array.isArray(to)
-    ? to.map(email => ({ Email: email }))
-    : [{ Email: to }];
+    ? to.map(email => ({ Email: email.trim() }))
+    : [{ Email: to.trim() }];
 
   const payload = {
     Messages: [
@@ -45,7 +46,7 @@ export async function sendRawEmail({
   // Attachments
   if (attachments && attachments.length > 0) {
     payload.Messages[0].Attachments = attachments.map(att => ({
-      ContentType:   "application/octet-stream",
+      ContentType:   att.contentType || "application/octet-stream",
       Filename:      att.filename,
       Base64Content: Buffer.isBuffer(att.content)
         ? att.content.toString("base64")
@@ -66,6 +67,8 @@ export async function sendRawEmail({
   ).toString("base64");
 
   try {
+    console.log(`📤 Sending email via Mailjet to: ${to} | Subject: ${subject}`);
+
     const response = await fetch(
       "https://api.mailjet.com/v3.1/send",
       {
@@ -81,19 +84,27 @@ export async function sendRawEmail({
     const result = await response.json();
 
     if (!response.ok) {
-      const errMsg =
-        result?.ErrorMessage || `HTTP ${response.status}`;
-      console.error(`❌ Mailjet error sending to ${to}:`, errMsg);
+      const errMsg = result?.ErrorMessage
+        || result?.Messages?.[0]?.Errors?.[0]?.ErrorMessage
+        || `HTTP ${response.status}`;
+      console.error(`❌ Mailjet HTTP ${response.status} sending to ${to}:`, JSON.stringify(result));
       return { success: false, error: errMsg };
     }
 
-    const msgId =
-      result?.Messages?.[0]?.To?.[0]?.MessageID || "sent";
+    // Check for per-message errors even on 200
+    const msgStatus = result?.Messages?.[0]?.Status;
+    if (msgStatus && msgStatus !== "success") {
+      const errMsg = result?.Messages?.[0]?.Errors?.[0]?.ErrorMessage || `Status: ${msgStatus}`;
+      console.error(`❌ Mailjet message error for ${to}:`, JSON.stringify(result.Messages[0]));
+      return { success: false, error: errMsg };
+    }
+
+    const msgId = result?.Messages?.[0]?.To?.[0]?.MessageID || "sent";
     console.log(`✅ Email sent to ${to} | Mailjet ID: ${msgId}`);
     return { success: true, messageId: String(msgId) };
 
   } catch (err) {
-    console.error(`❌ sendRawEmail failed for ${to}:`, err.message);
+    console.error(`❌ sendRawEmail network/parse error for ${to}:`, err.message);
     return { success: false, error: err.message };
   }
 }

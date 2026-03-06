@@ -293,53 +293,55 @@ function computeTodayISO(timeStr) {
 // FIXED: Properly handles negative offsets
 function computeScheduledAtISO(startDateStr, offsetDays = 0, sendTime = "09:00") {
   try {
-    // Ensure offsetDays is a NUMBER
-    const offset = parseInt(offsetDays, 10);
-    
-    // Parse time
-    const [hour, minute] = sendTime.split(":").map(Number);
-    
-    // Parse the date - handle both YYYY-MM-DD and full ISO formats
+    // CRITICAL: always coerce to integer — DB may return string "-1"
+    const offset = Number(offsetDays);
+    if (Number.isNaN(offset)) {
+      throw new Error(`offsetDays is not a number: ${offsetDays}`);
+    }
+
+    // Parse send time
+    const [hhStr, mmStr] = String(sendTime).split(":");
+    const hh = parseInt(hhStr, 10) || 0;
+    const mm = parseInt(mmStr, 10) || 0;
+
+    // Parse base date — always treat as IST (Asia/Kolkata)
+    // dayjs.tz(dateStr, tz) correctly handles YYYY-MM-DD as midnight in that TZ
     let baseDate;
-    if (startDateStr.includes('T')) {
-      // Full ISO timestamp
-      baseDate = dayjs(startDateStr);
+    if (String(startDateStr).includes("T")) {
+      // Full ISO timestamp — convert to IST first, then strip time
+      baseDate = dayjs(startDateStr).tz("Asia/Kolkata").startOf("day");
     } else {
-      // Just date YYYY-MM-DD
-      baseDate = dayjs(startDateStr, 'YYYY-MM-DD');
+      // Plain YYYY-MM-DD — treat as IST midnight
+      baseDate = dayjs.tz(startDateStr, "Asia/Kolkata");
     }
-    
-    // CRITICAL: Use subtract() for negative offsets, add() for positive
-    let scheduledDate;
-    if (offset < 0) {
-      // Negative offset means go BACK in time (subtract absolute value)
-      scheduledDate = baseDate.subtract(Math.abs(offset), 'day');
-    } else {
-      // Positive offset means go FORWARD in time
-      scheduledDate = baseDate.add(offset, 'day');
-    }
-    
-    // Set the time
-    scheduledDate = scheduledDate.hour(hour).minute(minute).second(0).millisecond(0);
-    
-    // Detailed logging
-    console.log('═══ computeScheduledAtISO ═══');
-    console.log('Input date:', startDateStr);
-    console.log('Offset (raw):', offsetDays, '(type:', typeof offsetDays, ')');
-    console.log('Offset (parsed):', offset);
-    console.log('Send time:', sendTime);
-    console.log('Base date:', baseDate.format('YYYY-MM-DD'));
-    console.log('Scheduled date:', scheduledDate.format('YYYY-MM-DD HH:mm:ss'));
-    console.log('ISO output:', scheduledDate.toISOString());
-    console.log('Days difference:', scheduledDate.diff(baseDate, 'day'));
-    console.log('═══════════════════════════════');
-    
-    return scheduledDate.toISOString();
+
+    // Apply offset (add for positive, subtract for negative)
+    const scheduledDate = baseDate
+      .add(offset, "day")   // dayjs.add handles negatives correctly
+      .hour(hh)
+      .minute(mm)
+      .second(0)
+      .millisecond(0);
+
+    const isoOut = scheduledDate.toISOString(); // UTC ISO for DB storage
+
+    console.log("═══ computeScheduledAtISO ═══");
+    console.log("  Input date :", startDateStr);
+    console.log("  Offset days:", offset, `(raw: ${offsetDays}, type: ${typeof offsetDays})`);
+    console.log("  Send time  :", sendTime);
+    console.log("  Base IST   :", baseDate.format("YYYY-MM-DD HH:mm:ss"));
+    console.log("  Scheduled  :", scheduledDate.format("YYYY-MM-DD HH:mm:ss"), "IST");
+    console.log("  UTC ISO    :", isoOut);
+    console.log("  Diff days  :", scheduledDate.diff(baseDate, "day"));
+    console.log("═════════════════════════════");
+
+    return isoOut;
   } catch (error) {
-    console.error('Error in computeScheduledAtISO:', error);
+    console.error("computeScheduledAtISO error:", error);
     throw error;
   }
 }
+
 
 /* ======================
    HELPER: DATE PARSER
@@ -8773,21 +8775,24 @@ app.get("/api/hello", (req, res) => {
 
 // === UNIFIED Background Worker (FIXED) ===
 const MAX_RETRIES = 3;
-const BATCH_SIZE = 20;
+const BATCH_SIZE  = 20;
 
-cron.schedule("*/2 * * * *", async () => {  // every 2 minutes
-  const now = dayjs().toISOString();
+// Run EVERY MINUTE (was */2 — changed to *)
+cron.schedule("* * * * *", async () => {
+  // Current UTC time for DB comparison (scheduled_at is stored in UTC)
+  const nowUTC = dayjs().utc().toISOString();
+  const nowIST = dayjs().tz("Asia/Kolkata").format("YYYY-MM-DD HH:mm:ss");
 
   try {
-    console.log(`\n⏱ [EmailWorker] Tick at ${now}`);
+    console.log(`\n⏱ [EmailWorker] Tick | UTC: ${nowUTC} | IST: ${nowIST}`);
 
-    // ── Fetch emails due NOW or overdue, not yet sent, under retry limit ──
+    // Fetch emails due now or overdue, not yet sent, under retry limit
     const { data: emails, error } = await supabase
       .from("scheduled_emails")
       .select("*")
       .in("status", ["scheduled", "failed"])
-      .lte("scheduled_at", now)              // due now or overdue
-      .lt("retry_count", MAX_RETRIES)        // haven't exceeded retries
+      .lte("scheduled_at", nowUTC)          // due now or overdue (UTC vs UTC)
+      .lt("retry_count", MAX_RETRIES)
       .order("scheduled_at", { ascending: true })
       .limit(BATCH_SIZE);
 
@@ -8804,20 +8809,20 @@ cron.schedule("*/2 * * * *", async () => {  // every 2 minutes
     console.log(`📨 [EmailWorker] Processing ${emails.length} email(s)...`);
 
     for (const email of emails) {
-      // ── Mark as processing immediately to prevent double-send ──
+      // Lock the row immediately to prevent double-send
       const { error: lockError } = await supabase
         .from("scheduled_emails")
         .update({
-          status: "processing",
-          retry_count: (email.retry_count || 0) + 1,
-          last_attempt_at: now,
-          updated_at: now,
+          status:          "processing",
+          retry_count:     (email.retry_count || 0) + 1,
+          last_attempt_at: nowUTC,
+          updated_at:      nowUTC,
         })
         .eq("id", email.id)
-        .in("status", ["scheduled", "failed"]); // only if still in sendable state
+        .in("status", ["scheduled", "failed"]);  // only if still sendable
 
       if (lockError) {
-        console.warn(`⚠️ [EmailWorker] Could not lock email ${email.id}:`, lockError.message);
+        console.warn(`⚠️ [EmailWorker] Could not lock email id=${email.id}:`, lockError.message);
         continue;
       }
 
@@ -8830,51 +8835,53 @@ cron.schedule("*/2 * * * *", async () => {  // every 2 minutes
         if (email.attachment_name && email.attachment_data) {
           attachments.push({
             filename: email.attachment_name,
-            content: Buffer.from(email.attachment_data, "base64"),
+            content:  Buffer.from(email.attachment_data, "base64"),
           });
         }
 
         const result = await sendRawEmail({
-          to: email.recipient_email,
-          subject: email.subject || "(No Subject)",
-          html: email.body_html || "",
-          text: (email.body_html || "").replace(/<[^>]+>/g, ""),
+          to:          email.recipient_email,
+          subject:     email.subject || "(No Subject)",
+          html:        email.body_html || "",
+          text:        (email.body_html || "").replace(/<[^>]+>/g, ""),
           attachments,
         });
 
+        const sentAt = dayjs().utc().toISOString();
+
         if (result.success) {
-          console.log(`✅ [EmailWorker] Sent ID=${email.id} to ${email.recipient_email}`);
+          console.log(`✅ [EmailWorker] Sent id=${email.id} to ${email.recipient_email}`);
           await supabase
             .from("scheduled_emails")
             .update({
-              status: "sent",
-              sent_at: dayjs().toISOString(),
-              error: null,
-              updated_at: dayjs().toISOString(),
+              status:     "sent",
+              sent_at:    sentAt,
+              error:      null,
+              updated_at: sentAt,
             })
             .eq("id", email.id);
         } else {
           throw new Error(result.error || "sendRawEmail returned failure");
         }
       } catch (sendErr) {
-        console.error(`❌ [EmailWorker] Failed ID=${email.id}:`, sendErr.message);
-        const newRetry = (email.retry_count || 0) + 1;
+        console.error(`❌ [EmailWorker] Failed id=${email.id}:`, sendErr.message);
+        const newRetry  = (email.retry_count || 0) + 1;
+        const failedAt  = dayjs().utc().toISOString();
         await supabase
           .from("scheduled_emails")
           .update({
-            status: newRetry >= MAX_RETRIES ? "permanently_failed" : "failed",
-            error: sendErr.message,
-            updated_at: dayjs().toISOString(),
+            status:     newRetry >= MAX_RETRIES ? "permanently_failed" : "failed",
+            error:      sendErr.message,
+            updated_at: failedAt,
           })
           .eq("id", email.id);
       }
 
-      // Gmail rate limit: ~100 emails/day on free, ~500/day with Workspace
-      // Wait 300ms between sends to avoid hitting rate limits
+      // 300 ms gap between sends — avoids Mailjet rate limits
       await new Promise((r) => setTimeout(r, 300));
     }
 
-    console.log(`[EmailWorker] Done processing batch.\n`);
+    console.log(`[EmailWorker] Batch done.\n`);
   } catch (fatalErr) {
     console.error("🚨 [EmailWorker] Fatal error:", fatalErr.message);
   }
