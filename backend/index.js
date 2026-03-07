@@ -8799,19 +8799,22 @@ const BATCH_SIZE  = 20;
 
 // Run EVERY MINUTE (was */2 — changed to *)
 cron.schedule("* * * * *", async () => {
-  // Always compare in UTC — scheduled_at is stored as UTC ISO strings
-  const nowUTC = dayjs().utc().toISOString();
+  const nowUTC = new Date().toISOString();
   const nowIST = dayjs().tz("Asia/Kolkata").format("YYYY-MM-DD HH:mm:ss");
 
   try {
     console.log(`\n⏱ [EmailWorker] Tick | UTC: ${nowUTC} | IST: ${nowIST}`);
 
+    // ── THE FIX: include rows where retry_count IS NULL ──────────
+    // Previously: .lt("retry_count", MAX_RETRIES)
+    //   → NULL < 3 = NULL = false in Postgres → new emails skipped
+    // Now: also match rows where retry_count hasn't been set yet
     const { data: emails, error } = await supabase
       .from("scheduled_emails")
       .select("*")
       .in("status", ["scheduled", "failed"])
-      .lte("scheduled_at", nowUTC)       // due now or overdue
-      .lt("retry_count", MAX_RETRIES)
+      .lte("scheduled_at", nowUTC)
+      .or(`retry_count.is.null,retry_count.lt.${MAX_RETRIES}`)
       .order("scheduled_at", { ascending: true })
       .limit(BATCH_SIZE);
 
@@ -8828,17 +8831,19 @@ cron.schedule("* * * * *", async () => {
     console.log(`📨 [EmailWorker] Processing ${emails.length} email(s)...`);
 
     for (const email of emails) {
-      // Lock the row to prevent double-sending across overlapping ticks
+      const currentRetry = Number(email.retry_count) || 0;
+
+      // Lock row to prevent double-sending across overlapping ticks
       const { error: lockError } = await supabase
         .from("scheduled_emails")
         .update({
           status:          "processing",
-          retry_count:     (email.retry_count || 0) + 1,
+          retry_count:     String(currentRetry + 1),
           last_attempt_at: nowUTC,
           updated_at:      nowUTC,
         })
         .eq("id", email.id)
-        .in("status", ["scheduled", "failed"]);  // only lock if still sendable
+        .in("status", ["scheduled", "failed"]);
 
       if (lockError) {
         console.warn(`⚠️ [EmailWorker] Could not lock id=${email.id}:`, lockError.message);
@@ -8866,7 +8871,7 @@ cron.schedule("* * * * *", async () => {
           attachments,
         });
 
-        const sentAt = dayjs().utc().toISOString();
+        const sentAt = new Date().toISOString();
 
         if (result.success) {
           console.log(`✅ [EmailWorker] Sent id=${email.id} → ${email.recipient_email}`);
@@ -8884,8 +8889,8 @@ cron.schedule("* * * * *", async () => {
         }
       } catch (sendErr) {
         console.error(`❌ [EmailWorker] Failed id=${email.id}:`, sendErr.message);
-        const newRetry = (email.retry_count || 0) + 1;
-        const failedAt = dayjs().utc().toISOString();
+        const newRetry = currentRetry + 1;
+        const failedAt = new Date().toISOString();
         await supabase
           .from("scheduled_emails")
           .update({
@@ -8896,7 +8901,7 @@ cron.schedule("* * * * *", async () => {
           .eq("id", email.id);
       }
 
-      // 300 ms gap between sends to respect Mailjet rate limits
+      // 300ms gap to respect Mailjet rate limits
       await new Promise((r) => setTimeout(r, 300));
     }
 
