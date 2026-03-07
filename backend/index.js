@@ -360,19 +360,24 @@ function scheduleIST(startDateStr, offsetDays, sendTime) {
   const offset = Number(offsetDays);
   if (Number.isNaN(offset)) throw new Error(`Invalid offsetDays: "${offsetDays}"`);
 
-  const [hhStr, mmStr] = String(sendTime || "09:00").split(":");
-  const hh  = Math.max(0, Math.min(23, parseInt(hhStr,  10) || 0));
-  const mm  = Math.max(0, Math.min(59, parseInt(mmStr, 10) || 0));
+  // ── FIX 1: normalise send_time — accept both "HH:mm" and "HH.mm" ──
+  const normalised = String(sendTime || "09:00")
+    .trim()
+    .replace(".", ":"); // "11.49" → "11:49"
 
-  // Extract YYYY-MM-DD from whatever format startDateStr arrives in
+  const [hhStr, mmStr] = normalised.split(":");
+  const hh = Math.max(0, Math.min(23, parseInt(hhStr, 10) || 0));
+  const mm = Math.max(0, Math.min(59, parseInt(mmStr, 10) || 0));
+
+  // ── Extract calendar date ──────────────────────────────────────
   const datePart = String(startDateStr).slice(0, 10);
   const [y, mo, d] = datePart.split("-").map(Number);
   if (!y || !mo || !d) throw new Error(`Cannot parse date: "${startDateStr}"`);
 
-  // Apply day offset via UTC arithmetic (avoids DST/month-end edge cases)
-  const baseMs    = Date.UTC(y, mo - 1, d);
-  const targetMs  = baseMs + offset * 86400000;
-  const t         = new Date(targetMs);
+  // ── Apply day offset via UTC arithmetic ────────────────────────
+  const baseMs   = Date.UTC(y, mo - 1, d);
+  const targetMs = baseMs + offset * 86400000;
+  const t        = new Date(targetMs);
 
   const ty  = t.getUTCFullYear();
   const tm  = String(t.getUTCMonth() + 1).padStart(2, "0");
@@ -380,14 +385,15 @@ function scheduleIST(startDateStr, offsetDays, sendTime) {
   const thh = String(hh).padStart(2, "0");
   const tmm = String(mm).padStart(2, "0");
 
-  // Explicit IST offset → Node converts to correct UTC automatically
+  // ── Build explicit IST string → Node converts to correct UTC ──
   const istStr = `${ty}-${tm}-${td}T${thh}:${tmm}:00+05:30`;
   const result = new Date(istStr);
   if (isNaN(result.getTime())) throw new Error(`Produced invalid date: "${istStr}"`);
 
   const utcISO = result.toISOString();
   console.log(
-    `  scheduleIST | base=${datePart} offset=${offset} sendTime=${thh}:${tmm} IST` +
+    `  scheduleIST | base=${datePart} offset=${offset}` +
+    ` sendTime="${sendTime}"→normalised="${normalised}" (${thh}:${tmm} IST)` +
     ` → target IST=${ty}-${tm}-${td} ${thh}:${tmm} → UTC=${utcISO}`
   );
   return utcISO;
@@ -5974,6 +5980,7 @@ app.get("/api/test-email", async (req, res) => {
 app.post("/api/schedule-email", async (req, res) => {
   try {
     const { batch_no, mode, batch_type, class_room } = req.body;
+
     if (!batch_no || !mode) {
       return res.status(400).json({ error: "Batch No and Mode are required" });
     }
@@ -5995,8 +6002,8 @@ app.post("/api/schedule-email", async (req, res) => {
       return res.status(404).json({ error: "Batch course details not found" });
     }
 
-    const startDateStr      = courseData.date;           // "YYYY-MM-DD"
-    const formattedStartDate = formatDate(startDateStr); // display only
+    const startDateStr       = courseData.date;           // "YYYY-MM-DD"
+    const formattedStartDate = formatDate(startDateStr);  // display only
 
     // ── Fetch learners ──────────────────────────────────────────
     const { data: learners, error: learnersError } = await supabase
@@ -6012,7 +6019,7 @@ app.post("/api/schedule-email", async (req, res) => {
       return res.status(404).json({ error: "No learners found for this batch" });
     }
 
-    // ── Fetch email templates ────────────────────────────────────
+    // ── Fetch email templates ───────────────────────────────────
     let query = supabase
       .from("email_templates")
       .select("*")
@@ -6041,11 +6048,12 @@ app.post("/api/schedule-email", async (req, res) => {
     let form_url  = null;
     let sheet_url = null;
     if (mode === "Offline") {
-      let { data: existingForm, error: formError } = await supabase
+      const { data: existingForm, error: formError } = await supabase
         .from("batch_forms")
         .select("*")
         .eq("batch_no", batch_no)
         .maybeSingle();
+
       if (formError) console.error("Error fetching batch form:", formError);
 
       if (!existingForm) {
@@ -6068,25 +6076,21 @@ app.post("/api/schedule-email", async (req, res) => {
 
     // ══════════════════════════════════════════════════════════
     // 1. TEMPLATE-BASED EMAILS
-    //    FIX: use scheduleIST() instead of dayjs.tz chain so
-    //    the result is always correct regardless of server TZ.
     // ══════════════════════════════════════════════════════════
     let scheduledCount = 0;
-    console.log(`\n📧 Scheduling template emails for batch ${batch_no} | startDate=${startDateStr}`);
+    console.log(`\n📧 Template emails | batch=${batch_no} | startDate=${startDateStr}`);
 
     for (const template of templates) {
       const offsetDays = template.offset_days ?? 0;
-      const sendTime   = (template.send_time || "09:00").trim();
+      const sendTime   = template.send_time || "09:00"; // may be "HH.mm" or "HH:mm"
 
       let scheduledAtISO;
       try {
         scheduledAtISO = scheduleIST(startDateStr, offsetDays, sendTime);
       } catch (e) {
-        console.error(`❌ scheduleIST failed for template ${template.id}:`, e.message);
+        console.error(`  ❌ scheduleIST failed for template ${template.id}:`, e.message);
         continue;
       }
-
-      console.log(`  Template "${template.template_name}" | offset=${offsetDays} | time=${sendTime} IST → ${scheduledAtISO}`);
 
       for (const learner of learners) {
         try {
@@ -6107,26 +6111,26 @@ app.post("/api/schedule-email", async (req, res) => {
             .replace(/{{start_date}}/g, formattedStartDate);
 
           const personalizedBody = (template.body_html || "")
-            .replace(/{{batch_no}}/g,    batch_no)
-            .replace(/{{start_date}}/g,  formattedStartDate)
-            .replace(/{{class_name}}/g,  class_room || "")
-            .replace(/{{name}}/g,        learner.name || "Learner");
+            .replace(/{{batch_no}}/g,   batch_no)
+            .replace(/{{start_date}}/g, formattedStartDate)
+            .replace(/{{class_name}}/g, class_room || "")
+            .replace(/{{name}}/g,       learner.name || "Learner");
 
           const { error: insertError } = await supabase
             .from("scheduled_emails")
             .insert({
               batch_no,
-              template_id:    template.id,
-              template_name:  template.template_name,
-              subject:        personalizedSubject,
-              body_html:      personalizedBody,
+              template_id:     template.id,
+              template_name:   template.template_name,
+              subject:         personalizedSubject,
+              body_html:       personalizedBody,
               recipient_email: learner.email,
-              scheduled_at:   scheduledAtISO,
-              status:         "scheduled",
+              scheduled_at:    scheduledAtISO,
+              status:          "scheduled",
               mode,
-              batch_type:     batch_type || null,
-              source:         "email_templates",
-              created_at:     new Date().toISOString(),
+              batch_type:      batch_type || null,
+              source:          "email_templates",
+              created_at:      new Date().toISOString(),
             });
 
           if (insertError) {
@@ -6139,18 +6143,16 @@ app.post("/api/schedule-email", async (req, res) => {
         }
       }
     }
-    console.log(`✅ Template emails scheduled: ${scheduledCount}`);
+    console.log(`  ✅ Template emails scheduled: ${scheduledCount}`);
 
     // ══════════════════════════════════════════════════════════
     // 2. MOCK INTERVIEW REMINDERS
-    //    FIX: computeScheduledAtISO is now scheduleIST() above,
-    //    which is correct. The verification block is also updated.
     // ══════════════════════════════════════════════════════════
     console.log("\n╔════════════════════════════════════════════════╗");
     console.log("║   MOCK INTERVIEW REMINDER SCHEDULING           ║");
     console.log("╚════════════════════════════════════════════════╝");
 
-    const TRAINER_MAIL_TIME          = "15:50";
+    const TRAINER_MAIL_TIME          = "15:50"; // IST
     const MOCK_INTERVIEW_OFFSET_DAYS = -7;
 
     const { data: mockTopics, error: mockTopicsError } = await supabase
@@ -6166,6 +6168,7 @@ app.post("/api/schedule-email", async (req, res) => {
     }
 
     let mockScheduledCount = 0;
+    console.log(`  Found ${mockTopics?.length || 0} mock interview topic(s)`);
 
     for (let i = 0; i < (mockTopics?.length || 0); i++) {
       const row = mockTopics[i];
@@ -6184,16 +6187,10 @@ app.post("/api/schedule-email", async (req, res) => {
         continue;
       }
 
-      // Verify the result is exactly 7 days before the mock interview date
-      const mockDateUTC     = new Date(String(row.date).slice(0,10) + "T00:00:00+05:30"); // IST midnight
-      const scheduledDateMs = new Date(scheduledAtISO).getTime();
-      const diffDays        = Math.round((mockDateUTC.getTime() - scheduledDateMs) / 86400000);
-
-      if (diffDays !== 7) {
-        console.warn(`  ⚠️  Offset check: expected 7 days before, got ${diffDays} days — inserting anyway`);
-      } else {
-        console.log(`  ✅ Verified: reminder is exactly 7 days before mock interview`);
-      }
+      // Verify result is 7 days before the mock date
+      const mockMidnightIST = new Date(String(row.date).slice(0, 10) + "T00:00:00+05:30");
+      const diffDays = Math.round((mockMidnightIST.getTime() - new Date(scheduledAtISO).getTime()) / 86400000);
+      console.log(`  Reminder ${diffDays} days before mock (expected 7)`);
 
       const { data: existing } = await supabase
         .from("scheduled_emails")
@@ -6216,15 +6213,19 @@ app.post("/api/schedule-email", async (req, res) => {
         <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
           <h2 style="color:#2c3e50;">Mock Interview Confirmation Required</h2>
           <p>Dear ${row.trainer_name},</p>
-          <p>The mock interview <strong>${row.topic_name}</strong> for batch <strong>${row.batch_no}</strong> has been scheduled on <strong>${formattedDate}</strong>.</p>
+          <p>The mock interview <strong>${row.topic_name}</strong> for batch <strong>${row.batch_no}</strong>
+             has been scheduled on <strong>${formattedDate}</strong>.</p>
           <p>Please confirm the date by clicking the Confirm button below.<br>
-          If there is any change in the date, please select a new date and then click Confirm.</p>
+             If there is any change in the date, please select a new date and then click Confirm.</p>
           <form action="${confirmUrl}" method="POST" style="margin:20px 0;">
             <div style="margin-bottom:15px;">
-              <label for="confirmed_date" style="display:block;margin-bottom:5px;font-weight:bold;">Change Date (if needed):</label>
-              <input type="date" name="confirmed_date" value="${row.date}" required style="padding:8px;border:1px solid #ddd;border-radius:4px;width:200px;">
+              <label style="display:block;margin-bottom:5px;font-weight:bold;">Change Date (if needed):</label>
+              <input type="date" name="confirmed_date" value="${row.date}" required
+                     style="padding:8px;border:1px solid #ddd;border-radius:4px;width:200px;">
             </div>
-            <button type="submit" style="background:#4CAF50;color:white;padding:12px 30px;border:none;border-radius:5px;cursor:pointer;font-size:16px;font-weight:bold;">
+            <button type="submit"
+                    style="background:#4CAF50;color:white;padding:12px 30px;border:none;
+                           border-radius:5px;cursor:pointer;font-size:16px;font-weight:bold;">
               ✓ Confirm Mock Interview
             </button>
           </form>
@@ -6258,16 +6259,17 @@ app.post("/api/schedule-email", async (req, res) => {
 
     // ══════════════════════════════════════════════════════════
     // 3. SOFT SKILLS REMINDERS
-    //    FIX: all .hour()/.minute() calls now use scheduleIST()
-    //    with explicit +05:30 offset instead of plain dayjs()
-    //    which was setting UTC hours on the UTC Render server.
+    //    FIX: was using dayjs(date).hour(h).minute(m).toISOString()
+    //    which set UTC hours on Render's UTC server.
+    //    Now uses scheduleIST() with explicit +05:30.
     // ══════════════════════════════════════════════════════════
     console.log("\n╔════════════════════════════════════════════════╗");
     console.log("║   SOFT SKILLS REMINDER SCHEDULING              ║");
     console.log("╚════════════════════════════════════════════════╝");
 
-    const TRAINER_SOFT_SKILLS_REMINDER_TIME = "09:00"; // IST
-    const LEARNER_SOFT_SKILLS_REMINDER_TIME = "09:00"; // IST
+    // These times are in IST. Change here if needed.
+    const TRAINER_SOFT_SKILLS_REMINDER_TIME = "09:00";
+    const LEARNER_SOFT_SKILLS_REMINDER_TIME = "09:00";
     const nowIso = new Date().toISOString();
 
     const { data: softSkillsSessions, error: softSkillsError } = await supabase
@@ -6289,14 +6291,14 @@ app.post("/api/schedule-email", async (req, res) => {
       groupedByTrainer[session.trainer_email].push(session);
     }
 
-    let softSkillsMonthlyCount  = 0;
-    let softSkillsOneWeekCount  = 0;
+    let softSkillsMonthlyCount = 0;
+    let softSkillsOneWeekCount = 0;
 
     for (const trainerEmail in groupedByTrainer) {
-      const topics         = groupedByTrainer[trainerEmail];
+      const topics           = groupedByTrainer[trainerEmail];
       const monthlyEmailHtml = generateSoftSkillSummaryEmail(topics, trainerEmail);
 
-      // Monthly summary — send immediately (nowIso)
+      // Monthly summary — send immediately
       const { error: insertMonthlyError } = await supabase
         .from("scheduled_emails")
         .insert({
@@ -6313,27 +6315,24 @@ app.post("/api/schedule-email", async (req, res) => {
         });
 
       if (insertMonthlyError) {
-        console.error(`  ❌ Monthly reminder insert failed for ${trainerEmail}:`, insertMonthlyError.message);
+        console.error(`  ❌ Monthly reminder failed for ${trainerEmail}:`, insertMonthlyError.message);
       } else {
         softSkillsMonthlyCount++;
       }
 
       // 1-week prior reminders per topic
       for (const topic of topics) {
-        // ── FIXED: use scheduleIST with offset=-7 instead of
-        //   dayjs(date).subtract(7,'day').hour(h).minute(m).toISOString()
-        //   (the old code set UTC hours, not IST hours)
         let trainerReminderAt, learnerReminderAt;
         try {
           trainerReminderAt = scheduleIST(topic.date, -7, TRAINER_SOFT_SKILLS_REMINDER_TIME);
           learnerReminderAt = scheduleIST(topic.date, -7, LEARNER_SOFT_SKILLS_REMINDER_TIME);
         } catch (e) {
-          console.error(`  ❌ scheduleIST error for soft skills topic ${topic.id}:`, e.message);
+          console.error(`  ❌ scheduleIST error for topic ${topic.id}:`, e.message);
           continue;
         }
 
         // Trainer 1-week reminder
-        const { error: insertTrainerReminderError } = await supabase
+        const { error: insertTrainerErr } = await supabase
           .from("scheduled_emails")
           .insert({
             batch_no,
@@ -6348,8 +6347,8 @@ app.post("/api/schedule-email", async (req, res) => {
             role:            "Trainer",
           });
 
-        if (insertTrainerReminderError) {
-          console.error(`  ❌ Trainer 1-week reminder failed for ${trainerEmail}:`, insertTrainerReminderError.message);
+        if (insertTrainerErr) {
+          console.error(`  ❌ Trainer 1-week insert failed for ${trainerEmail}:`, insertTrainerErr.message);
         } else {
           softSkillsOneWeekCount++;
         }
@@ -6366,7 +6365,7 @@ app.post("/api/schedule-email", async (req, res) => {
         }
 
         for (const learner of (topicLearners || [])) {
-          const { error: insertLearnerReminderError } = await supabase
+          const { error: insertLearnerErr } = await supabase
             .from("scheduled_emails")
             .insert({
               batch_no,
@@ -6381,8 +6380,8 @@ app.post("/api/schedule-email", async (req, res) => {
               role:            "Learner",
             });
 
-          if (insertLearnerReminderError) {
-            console.error(`  ❌ Learner reminder insert failed for ${learner.email}:`, insertLearnerReminderError.message);
+          if (insertLearnerErr) {
+            console.error(`  ❌ Learner reminder failed for ${learner.email}:`, insertLearnerErr.message);
           } else {
             softSkillsOneWeekCount++;
           }
@@ -6390,18 +6389,18 @@ app.post("/api/schedule-email", async (req, res) => {
       }
     }
 
-    console.log(`  Soft skills monthly: ${softSkillsMonthlyCount} | 1-week reminders: ${softSkillsOneWeekCount}`);
+    console.log(`  Soft skills monthly: ${softSkillsMonthlyCount} | 1-week: ${softSkillsOneWeekCount}`);
 
     // ── Final response ──────────────────────────────────────────
     return res.json({
-      success:                          true,
+      success:                            true,
       batch_no,
-      start_date:                       formattedStartDate,
-      scheduled:                        scheduledCount,
+      start_date:                         formattedStartDate,
+      scheduled:                          scheduledCount,
       mock_interview_reminders_scheduled: mockScheduledCount,
-      soft_skills_monthly_reminders:    softSkillsMonthlyCount,
-      soft_skills_1week_reminders:      softSkillsOneWeekCount,
-      message:                          `Emails scheduled for batch ${batch_no}`,
+      soft_skills_monthly_reminders:      softSkillsMonthlyCount,
+      soft_skills_1week_reminders:        softSkillsOneWeekCount,
+      message:                            `Emails scheduled for batch ${batch_no}`,
     });
 
   } catch (err) {
