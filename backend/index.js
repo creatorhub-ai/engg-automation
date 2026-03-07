@@ -360,21 +360,16 @@ function scheduleIST(startDateStr, offsetDays, sendTime) {
   const offset = Number(offsetDays);
   if (Number.isNaN(offset)) throw new Error(`Invalid offsetDays: "${offsetDays}"`);
 
-  // ── FIX 1: normalise send_time — accept both "HH:mm" and "HH.mm" ──
-  const normalised = String(sendTime || "09:00")
-    .trim()
-    .replace(".", ":"); // "11.49" → "11:49"
-
+  // Normalise: accept both "HH:mm" and "HH.mm" (dot-separated from DB)
+  const normalised = String(sendTime || "09:00").trim().replace(".", ":");
   const [hhStr, mmStr] = normalised.split(":");
   const hh = Math.max(0, Math.min(23, parseInt(hhStr, 10) || 0));
   const mm = Math.max(0, Math.min(59, parseInt(mmStr, 10) || 0));
 
-  // ── Extract calendar date ──────────────────────────────────────
   const datePart = String(startDateStr).slice(0, 10);
   const [y, mo, d] = datePart.split("-").map(Number);
   if (!y || !mo || !d) throw new Error(`Cannot parse date: "${startDateStr}"`);
 
-  // ── Apply day offset via UTC arithmetic ────────────────────────
   const baseMs   = Date.UTC(y, mo - 1, d);
   const targetMs = baseMs + offset * 86400000;
   const t        = new Date(targetMs);
@@ -385,7 +380,6 @@ function scheduleIST(startDateStr, offsetDays, sendTime) {
   const thh = String(hh).padStart(2, "0");
   const tmm = String(mm).padStart(2, "0");
 
-  // ── Build explicit IST string → Node converts to correct UTC ──
   const istStr = `${ty}-${tm}-${td}T${thh}:${tmm}:00+05:30`;
   const result = new Date(istStr);
   if (isNaN(result.getTime())) throw new Error(`Produced invalid date: "${istStr}"`);
@@ -393,8 +387,7 @@ function scheduleIST(startDateStr, offsetDays, sendTime) {
   const utcISO = result.toISOString();
   console.log(
     `  scheduleIST | base=${datePart} offset=${offset}` +
-    ` sendTime="${sendTime}"→normalised="${normalised}" (${thh}:${tmm} IST)` +
-    ` → target IST=${ty}-${tm}-${td} ${thh}:${tmm} → UTC=${utcISO}`
+    ` sendTime="${sendTime}"→${thh}:${tmm} IST → UTC=${utcISO}`
   );
   return utcISO;
 }
@@ -5985,7 +5978,7 @@ app.post("/api/schedule-email", async (req, res) => {
       return res.status(400).json({ error: "Batch No and Mode are required" });
     }
 
-    // ── Fetch batch start date ──────────────────────────────────
+    // ── Fetch batch start date ────────────────────────────────────
     const { data: courseData, error: courseError } = await supabase
       .from("course_planner_data")
       .select("date, trainer_email")
@@ -6002,10 +5995,10 @@ app.post("/api/schedule-email", async (req, res) => {
       return res.status(404).json({ error: "Batch course details not found" });
     }
 
-    const startDateStr       = courseData.date;           // "YYYY-MM-DD"
-    const formattedStartDate = formatDate(startDateStr);  // display only
+    const startDateStr       = courseData.date;
+    const formattedStartDate = formatDate(startDateStr);
 
-    // ── Fetch learners ──────────────────────────────────────────
+    // ── Fetch learners ────────────────────────────────────────────
     const { data: learners, error: learnersError } = await supabase
       .from("learners_data")
       .select("email, name")
@@ -6019,7 +6012,7 @@ app.post("/api/schedule-email", async (req, res) => {
       return res.status(404).json({ error: "No learners found for this batch" });
     }
 
-    // ── Fetch email templates ───────────────────────────────────
+    // ── Fetch email templates ─────────────────────────────────────
     let query = supabase
       .from("email_templates")
       .select("*")
@@ -6044,7 +6037,7 @@ app.post("/api/schedule-email", async (req, res) => {
       return res.status(404).json({ error: "No templates found for this batch/mode" });
     }
 
-    // ── Google Form (Offline only) ──────────────────────────────
+    // ── Google Form (Offline only) ────────────────────────────────
     let form_url  = null;
     let sheet_url = null;
     if (mode === "Offline") {
@@ -6074,15 +6067,15 @@ app.post("/api/schedule-email", async (req, res) => {
       }
     }
 
-    // ══════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════
     // 1. TEMPLATE-BASED EMAILS
-    // ══════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════
     let scheduledCount = 0;
-    console.log(`\n📧 Template emails | batch=${batch_no} | startDate=${startDateStr}`);
+    console.log(`\n📧 Template emails | batch=${batch_no} startDate=${startDateStr}`);
 
     for (const template of templates) {
       const offsetDays = template.offset_days ?? 0;
-      const sendTime   = template.send_time || "09:00"; // may be "HH.mm" or "HH:mm"
+      const sendTime   = template.send_time || "09:00";
 
       let scheduledAtISO;
       try {
@@ -6127,6 +6120,7 @@ app.post("/api/schedule-email", async (req, res) => {
               recipient_email: learner.email,
               scheduled_at:    scheduledAtISO,
               status:          "scheduled",
+              retry_count:     "0",          // ← FIX: must be "0" not NULL
               mode,
               batch_type:      batch_type || null,
               source:          "email_templates",
@@ -6143,16 +6137,16 @@ app.post("/api/schedule-email", async (req, res) => {
         }
       }
     }
-    console.log(`  ✅ Template emails scheduled: ${scheduledCount}`);
+    console.log(`✅ Template emails scheduled: ${scheduledCount}`);
 
-    // ══════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════
     // 2. MOCK INTERVIEW REMINDERS
-    // ══════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════
     console.log("\n╔════════════════════════════════════════════════╗");
     console.log("║   MOCK INTERVIEW REMINDER SCHEDULING           ║");
     console.log("╚════════════════════════════════════════════════╝");
 
-    const TRAINER_MAIL_TIME          = "15:50"; // IST
+    const TRAINER_MAIL_TIME          = "15:50";
     const MOCK_INTERVIEW_OFFSET_DAYS = -7;
 
     const { data: mockTopics, error: mockTopicsError } = await supabase
@@ -6186,11 +6180,6 @@ app.post("/api/schedule-email", async (req, res) => {
         console.error("  ❌ scheduleIST error:", e.message);
         continue;
       }
-
-      // Verify result is 7 days before the mock date
-      const mockMidnightIST = new Date(String(row.date).slice(0, 10) + "T00:00:00+05:30");
-      const diffDays = Math.round((mockMidnightIST.getTime() - new Date(scheduledAtISO).getTime()) / 86400000);
-      console.log(`  Reminder ${diffDays} days before mock (expected 7)`);
 
       const { data: existing } = await supabase
         .from("scheduled_emails")
@@ -6241,6 +6230,7 @@ app.post("/api/schedule-email", async (req, res) => {
         recipient_email: row.trainer_email,
         scheduled_at:    scheduledAtISO,
         status:          "scheduled",
+        retry_count:     "0",              // ← FIX: must be "0" not NULL
         role:            "Trainer",
         source:          "mock_interview_scheduler",
         created_at:      new Date().toISOString(),
@@ -6257,19 +6247,15 @@ app.post("/api/schedule-email", async (req, res) => {
 
     console.log(`\n  Mock interview reminders scheduled: ${mockScheduledCount}`);
 
-    // ══════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════
     // 3. SOFT SKILLS REMINDERS
-    //    FIX: was using dayjs(date).hour(h).minute(m).toISOString()
-    //    which set UTC hours on Render's UTC server.
-    //    Now uses scheduleIST() with explicit +05:30.
-    // ══════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════
     console.log("\n╔════════════════════════════════════════════════╗");
     console.log("║   SOFT SKILLS REMINDER SCHEDULING              ║");
     console.log("╚════════════════════════════════════════════════╝");
 
-    // These times are in IST. Change here if needed.
-    const TRAINER_SOFT_SKILLS_REMINDER_TIME = "09:00";
-    const LEARNER_SOFT_SKILLS_REMINDER_TIME = "09:00";
+    const TRAINER_SOFT_SKILLS_REMINDER_TIME = "09:00"; // IST
+    const LEARNER_SOFT_SKILLS_REMINDER_TIME = "09:00"; // IST
     const nowIso = new Date().toISOString();
 
     const { data: softSkillsSessions, error: softSkillsError } = await supabase
@@ -6284,7 +6270,6 @@ app.post("/api/schedule-email", async (req, res) => {
       return res.status(500).json({ error: "Failed to fetch soft skills data" });
     }
 
-    // Group by trainer email
     const groupedByTrainer = {};
     for (const session of (softSkillsSessions || [])) {
       if (!groupedByTrainer[session.trainer_email]) groupedByTrainer[session.trainer_email] = [];
@@ -6309,6 +6294,7 @@ app.post("/api/schedule-email", async (req, res) => {
           body_html:       monthlyEmailHtml,
           scheduled_at:    nowIso,
           status:          "scheduled",
+          retry_count:     "0",            // ← FIX: must be "0" not NULL
           template_name:   "soft_skills_monthly_summary",
           created_at:      nowIso,
           role:            "Trainer",
@@ -6342,6 +6328,7 @@ app.post("/api/schedule-email", async (req, res) => {
             body_html:       `<p>Dear ${topic.trainer_name},</p><p>This is a reminder for your Soft Skills session "${topic.topic_name}" scheduled on <strong>${dayjs(topic.date).format("DD-MMM-YYYY")}</strong>.</p>`,
             scheduled_at:    trainerReminderAt,
             status:          "scheduled",
+            retry_count:     "0",          // ← FIX: must be "0" not NULL
             template_name:   "soft_skills_1week_trainer",
             created_at:      nowIso,
             role:            "Trainer",
@@ -6375,6 +6362,7 @@ app.post("/api/schedule-email", async (req, res) => {
               body_html:       `<p>Dear ${learner.name},</p><p>This is a reminder for the Soft Skills session "${topic.topic_name}" scheduled on <strong>${dayjs(topic.date).format("DD-MMM-YYYY")}</strong>.</p>`,
               scheduled_at:    learnerReminderAt,
               status:          "scheduled",
+              retry_count:     "0",        // ← FIX: must be "0" not NULL
               template_name:   "soft_skills_1week_learner",
               created_at:      nowIso,
               role:            "Learner",
@@ -6391,7 +6379,6 @@ app.post("/api/schedule-email", async (req, res) => {
 
     console.log(`  Soft skills monthly: ${softSkillsMonthlyCount} | 1-week: ${softSkillsOneWeekCount}`);
 
-    // ── Final response ──────────────────────────────────────────
     return res.json({
       success:                            true,
       batch_no,
