@@ -8782,21 +8782,20 @@ app.get("/api/hello", (req, res) => {
 
 // === UNIFIED Background Worker (FIXED) ===
 const MAX_RETRIES = 3;
-const BATCH_SIZE  = 20;
+const BATCH_SIZE  = 10;
 
 // Run EVERY MINUTE (was */2 — changed to *)
 cron.schedule("* * * * *", async () => {
-  const nowUTC = new Date().toISOString();
-  const nowIST = dayjs().tz("Asia/Kolkata").format("YYYY-MM-DD HH:mm:ss");
+  const nowUTC = new Date().toISOString(); // always plain JS Date for consistency
+  const nowIST = new Date(Date.now() + 5.5 * 3600000)
+    .toISOString().replace("T", " ").slice(0, 19) + " IST";
+
+  console.log(`\n⏱ [Cron] Tick | UTC: ${nowUTC} | IST: ${nowIST}`);
 
   try {
-    console.log(`\n⏱ [EmailWorker] Tick | UTC: ${nowUTC} | IST: ${nowIST}`);
-
-    // ── THE FIX: include rows where retry_count IS NULL ──────────
-    // Previously: .lt("retry_count", MAX_RETRIES)
-    //   → NULL < 3 = NULL = false in Postgres → new emails skipped
-    // Now: also match rows where retry_count hasn't been set yet
-    const { data: emails, error } = await supabase
+    // ── Fetch due emails ─────────────────────────────────────────
+    // KEY FIX: use .or() to include both NULL and numeric retry_count
+    const { data: emails, error: fetchError } = await supabase
       .from("scheduled_emails")
       .select("*")
       .in("status", ["scheduled", "failed"])
@@ -8805,23 +8804,28 @@ cron.schedule("* * * * *", async () => {
       .order("scheduled_at", { ascending: true })
       .limit(BATCH_SIZE);
 
-    if (error) {
-      console.error("❌ [EmailWorker] Fetch error:", error.message);
+    if (fetchError) {
+      console.error("❌ [Cron] Fetch error:", fetchError.message);
       return;
     }
 
     if (!emails || emails.length === 0) {
-      console.log("📭 [EmailWorker] No emails due.");
+      console.log("📭 [Cron] No emails due.");
       return;
     }
 
-    console.log(`📨 [EmailWorker] Processing ${emails.length} email(s)...`);
+    console.log(`📨 [Cron] ${emails.length} email(s) due. Processing...`);
 
     for (const email of emails) {
       const currentRetry = Number(email.retry_count) || 0;
 
-      // Lock row to prevent double-sending across overlapping ticks
-      const { error: lockError } = await supabase
+      console.log(`\n  → id=${email.id} | to=${email.recipient_email} | retry=${currentRetry} | scheduled_at=${email.scheduled_at}`);
+
+      // ── Optimistic lock: set status="processing" ────────────────
+      // Supabase JS v2 returns { data, error } but data is null when
+      // no rows matched (already grabbed by another tick).
+      // We use .select() to detect this.
+      const { data: locked, error: lockError } = await supabase
         .from("scheduled_emails")
         .update({
           status:          "processing",
@@ -8830,13 +8834,21 @@ cron.schedule("* * * * *", async () => {
           updated_at:      nowUTC,
         })
         .eq("id", email.id)
-        .in("status", ["scheduled", "failed"]);
+        .in("status", ["scheduled", "failed"])
+        .select("id");
 
       if (lockError) {
-        console.warn(`⚠️ [EmailWorker] Could not lock id=${email.id}:`, lockError.message);
+        console.warn(`  ⚠️  Lock error id=${email.id}:`, lockError.message);
+        continue;
+      }
+      if (!locked || locked.length === 0) {
+        console.log(`  ⚠️  id=${email.id} already taken by another tick — skipping`);
         continue;
       }
 
+      console.log(`  🔒 Locked id=${email.id}`);
+
+      // ── Send ─────────────────────────────────────────────────────
       try {
         if (!email.recipient_email || !email.recipient_email.includes("@")) {
           throw new Error(`Invalid recipient: "${email.recipient_email}"`);
@@ -8850,6 +8862,7 @@ cron.schedule("* * * * *", async () => {
           });
         }
 
+        console.log(`  📤 Calling sendRawEmail → ${email.recipient_email}`);
         const result = await sendRawEmail({
           to:          email.recipient_email,
           subject:     email.subject || "(No Subject)",
@@ -8857,44 +8870,41 @@ cron.schedule("* * * * *", async () => {
           text:        (email.body_html || "").replace(/<[^>]+>/g, ""),
           attachments,
         });
+        console.log(`  📬 sendRawEmail result:`, JSON.stringify(result));
 
         const sentAt = new Date().toISOString();
 
         if (result.success) {
-          console.log(`✅ [EmailWorker] Sent id=${email.id} → ${email.recipient_email}`);
           await supabase
             .from("scheduled_emails")
-            .update({
-              status:     "sent",
-              sent_at:    sentAt,
-              error:      null,
-              updated_at: sentAt,
-            })
+            .update({ status: "sent", sent_at: sentAt, error: null, updated_at: sentAt })
             .eq("id", email.id);
+          console.log(`  ✅ SENT id=${email.id} → ${email.recipient_email}`);
         } else {
           throw new Error(result.error || "sendRawEmail returned failure");
         }
+
       } catch (sendErr) {
-        console.error(`❌ [EmailWorker] Failed id=${email.id}:`, sendErr.message);
         const newRetry = currentRetry + 1;
         const failedAt = new Date().toISOString();
+        const newStatus = newRetry >= MAX_RETRIES ? "permanently_failed" : "failed";
+
+        console.error(`  ❌ FAILED id=${email.id}: ${sendErr.message} | retry=${newRetry} → status=${newStatus}`);
+
         await supabase
           .from("scheduled_emails")
-          .update({
-            status:     newRetry >= MAX_RETRIES ? "permanently_failed" : "failed",
-            error:      sendErr.message,
-            updated_at: failedAt,
-          })
+          .update({ status: newStatus, error: sendErr.message, updated_at: failedAt })
           .eq("id", email.id);
       }
 
       // 300ms gap to respect Mailjet rate limits
-      await new Promise((r) => setTimeout(r, 300));
+      await new Promise(r => setTimeout(r, 300));
     }
 
-    console.log(`[EmailWorker] Batch done.\n`);
+    console.log(`\n[Cron] Batch complete.`);
+
   } catch (fatalErr) {
-    console.error("🚨 [EmailWorker] Fatal error:", fatalErr.message);
+    console.error("🚨 [Cron] Fatal:", fatalErr.message, fatalErr.stack);
   }
 });
 
