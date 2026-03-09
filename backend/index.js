@@ -8786,15 +8786,13 @@ const BATCH_SIZE  = 10;
 
 // Run EVERY MINUTE (was */2 — changed to *)
 cron.schedule("* * * * *", async () => {
-  const nowUTC = new Date().toISOString(); // always plain JS Date for consistency
+  const nowUTC = new Date().toISOString();
   const nowIST = new Date(Date.now() + 5.5 * 3600000)
     .toISOString().replace("T", " ").slice(0, 19) + " IST";
 
   console.log(`\n⏱ [Cron] Tick | UTC: ${nowUTC} | IST: ${nowIST}`);
 
   try {
-    // ── Fetch due emails ─────────────────────────────────────────
-    // KEY FIX: use .or() to include both NULL and numeric retry_count
     const { data: emails, error: fetchError } = await supabase
       .from("scheduled_emails")
       .select("*")
@@ -8814,17 +8812,13 @@ cron.schedule("* * * * *", async () => {
       return;
     }
 
-    console.log(`📨 [Cron] ${emails.length} email(s) due. Processing...`);
+    console.log(`📨 [Cron] ${emails.length} email(s) due.`);
 
     for (const email of emails) {
       const currentRetry = Number(email.retry_count) || 0;
+      console.log(`\n  → id=${email.id} to=${email.recipient_email} retry=${currentRetry} scheduled_at=${email.scheduled_at}`);
 
-      console.log(`\n  → id=${email.id} | to=${email.recipient_email} | retry=${currentRetry} | scheduled_at=${email.scheduled_at}`);
-
-      // ── Optimistic lock: set status="processing" ────────────────
-      // Supabase JS v2 returns { data, error } but data is null when
-      // no rows matched (already grabbed by another tick).
-      // We use .select() to detect this.
+      // Optimistic lock — only proceed if we actually updated the row
       const { data: locked, error: lockError } = await supabase
         .from("scheduled_emails")
         .update({
@@ -8842,13 +8836,12 @@ cron.schedule("* * * * *", async () => {
         continue;
       }
       if (!locked || locked.length === 0) {
-        console.log(`  ⚠️  id=${email.id} already taken by another tick — skipping`);
+        console.log(`  ⚠️  id=${email.id} already locked by another tick — skipping`);
         continue;
       }
 
-      console.log(`  🔒 Locked id=${email.id}`);
-
-      // ── Send ─────────────────────────────────────────────────────
+      // ── Send ───────────────────────────────────────────────────
+      let result = { success: false, error: "sendRawEmail never called" };
       try {
         if (!email.recipient_email || !email.recipient_email.includes("@")) {
           throw new Error(`Invalid recipient: "${email.recipient_email}"`);
@@ -8862,42 +8855,40 @@ cron.schedule("* * * * *", async () => {
           });
         }
 
-        console.log(`  📤 Calling sendRawEmail → ${email.recipient_email}`);
-        const result = await sendRawEmail({
-          to:          email.recipient_email,
-          subject:     email.subject || "(No Subject)",
-          html:        email.body_html || "",
-          text:        (email.body_html || "").replace(/<[^>]+>/g, ""),
+        result = await sendRawEmail({
+          to:      email.recipient_email,
+          subject: email.subject || "(No Subject)",
+          html:    email.body_html || "",
+          text:    (email.body_html || "").replace(/<[^>]+>/g, ""),
           attachments,
         });
-        console.log(`  📬 sendRawEmail result:`, JSON.stringify(result));
 
-        const sentAt = new Date().toISOString();
-
-        if (result.success) {
-          await supabase
-            .from("scheduled_emails")
-            .update({ status: "sent", sent_at: sentAt, error: null, updated_at: sentAt })
-            .eq("id", email.id);
-          console.log(`  ✅ SENT id=${email.id} → ${email.recipient_email}`);
-        } else {
-          throw new Error(result.error || "sendRawEmail returned failure");
-        }
-
-      } catch (sendErr) {
-        const newRetry = currentRetry + 1;
-        const failedAt = new Date().toISOString();
-        const newStatus = newRetry >= MAX_RETRIES ? "permanently_failed" : "failed";
-
-        console.error(`  ❌ FAILED id=${email.id}: ${sendErr.message} | retry=${newRetry} → status=${newStatus}`);
-
-        await supabase
-          .from("scheduled_emails")
-          .update({ status: newStatus, error: sendErr.message, updated_at: failedAt })
-          .eq("id", email.id);
+      } catch (callErr) {
+        result = { success: false, error: callErr.message };
       }
 
-      // 300ms gap to respect Mailjet rate limits
+      // ── Log the FULL result object — this is what tells us the truth ──
+      console.log(`  📬 sendRawEmail result:`, JSON.stringify(result));
+
+      const doneAt = new Date().toISOString();
+
+      if (result.success === true) {
+        // Only mark sent if result.success is literally true
+        await supabase
+          .from("scheduled_emails")
+          .update({ status: "sent", sent_at: doneAt, error: null, updated_at: doneAt })
+          .eq("id", email.id);
+        console.log(`  ✅ SENT id=${email.id}`);
+      } else {
+        const newRetry  = currentRetry + 1;
+        const newStatus = newRetry >= MAX_RETRIES ? "permanently_failed" : "failed";
+        await supabase
+          .from("scheduled_emails")
+          .update({ status: newStatus, error: result.error || "unknown", updated_at: doneAt })
+          .eq("id", email.id);
+        console.error(`  ❌ FAILED id=${email.id}: ${result.error} → status=${newStatus}`);
+      }
+
       await new Promise(r => setTimeout(r, 300));
     }
 
@@ -8908,10 +8899,7 @@ cron.schedule("* * * * *", async () => {
   }
 });
 
-// ── Keep-alive ping for Render free tier ──
-// Render spins down free services after 15min of inactivity.
-// This self-ping keeps the service alive so cron keeps running.
-// Replace YOUR_RENDER_URL with your actual Render service URL.
+// ── Keep-alive ping ──────────────────────────────────────────
 if (process.env.RENDER_EXTERNAL_URL) {
   cron.schedule("*/10 * * * *", async () => {
     try {
@@ -8922,7 +8910,6 @@ if (process.env.RENDER_EXTERNAL_URL) {
     }
   });
 }
-
 
 
 // === Get Scheduled Emails (Debug endpoint) ===
