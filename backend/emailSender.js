@@ -1,100 +1,127 @@
-// emailSender.js
+// emailSender.js  — uses node-mailjet SDK (no raw fetch, no auth bugs)
+//
+// INSTALL ONCE on your server:
+//   npm install node-mailjet
+//
+// ENV VARS required:
+//   MAILJET_API_KEY    — your Mailjet API key (public key)
+//   MAILJET_SECRET_KEY — your Mailjet secret key
+//   FROM_EMAIL         — verified sender address in Mailjet
+//   FROM_NAME          — display name (optional)
+
+import Mailjet from "node-mailjet";
 import dotenv from "dotenv";
 dotenv.config();
 
-const MAILJET_API_KEY    = process.env.MAILJET_API_KEY;
-const MAILJET_SECRET_KEY = process.env.MAILJET_SECRET_KEY;
-const FROM_EMAIL         = process.env.FROM_EMAIL || "coordinator@chipedge.com";
-const FROM_NAME          = process.env.FROM_NAME  || "ChipEdge Learning";
+const FROM_EMAIL = process.env.FROM_EMAIL || "coordinator@chipedge.com";
+const FROM_NAME  = process.env.FROM_NAME  || "ChipEdge Learning";
 
-if (!MAILJET_API_KEY || !MAILJET_SECRET_KEY) {
-  console.error("❌ MAILJET_API_KEY or MAILJET_SECRET_KEY not set");
+if (!process.env.MAILJET_API_KEY || !process.env.MAILJET_SECRET_KEY) {
+  console.error("❌ MAILJET_API_KEY or MAILJET_SECRET_KEY not set in environment");
 } else {
   console.log("✅ Mailjet email service ready");
+  console.log("   FROM_EMAIL:", FROM_EMAIL);
 }
 
-export async function sendRawEmail({
-  to, subject, html, text, inReplyTo, references, attachments,
-}) {
+// Initialise the SDK client once at module load
+const mailjet = new Mailjet({
+  apiKey:    process.env.MAILJET_API_KEY,
+  apiSecret: process.env.MAILJET_SECRET_KEY,
+});
+
+/**
+ * sendRawEmail({ to, subject, html, text, attachments })
+ *
+ * to          — string or string[]
+ * subject     — string
+ * html        — HTML body string
+ * text        — plain-text body string (auto-stripped from html if omitted)
+ * attachments — [{ filename, content (Buffer|base64 string), contentType }]
+ *
+ * Returns { success: true, messageId } or { success: false, error: string }
+ */
+export async function sendRawEmail({ to, subject, html, text, attachments }) {
+  // ── Validate inputs ──────────────────────────────────────────────
   if (!to || !subject) {
+    console.error("sendRawEmail: missing 'to' or 'subject'");
     return { success: false, error: "Missing 'to' or 'subject'" };
   }
-  if (!MAILJET_API_KEY || !MAILJET_SECRET_KEY) {
+  if (!process.env.MAILJET_API_KEY || !process.env.MAILJET_SECRET_KEY) {
+    console.error("sendRawEmail: Mailjet credentials not configured");
     return { success: false, error: "Mailjet credentials not configured" };
   }
 
-  const toList = Array.isArray(to)
-    ? to.map(email => ({ Email: email.trim() }))
-    : [{ Email: to.trim() }];
+  // ── Build recipient list ─────────────────────────────────────────
+  const toList = (Array.isArray(to) ? to : [to])
+    .map(addr => ({ Email: String(addr).trim() }))
+    .filter(r => r.Email.includes("@"));
 
-  const payload = {
-    Messages: [
-      {
-        From: { Email: FROM_EMAIL, Name: FROM_NAME },
-        To:       toList,
-        Subject:  subject,
-        HTMLPart: html || `<p>${text || ""}</p>`,
-        TextPart: text || (html ? html.replace(/<[^>]+>/g, "") : ""),
-      },
-    ],
+  if (toList.length === 0) {
+    console.error(`sendRawEmail: no valid recipients in "${to}"`);
+    return { success: false, error: `No valid recipient address: "${to}"` };
+  }
+
+  // ── Build HTML / text ────────────────────────────────────────────
+  const htmlPart = html || `<p>${text || ""}</p>`;
+  const textPart = text || htmlPart.replace(/<[^>]+>/g, "").trim();
+
+  // ── Build message object ─────────────────────────────────────────
+  const message = {
+    From:     { Email: FROM_EMAIL, Name: FROM_NAME },
+    To:       toList,
+    Subject:  subject,
+    HTMLPart: htmlPart,
+    TextPart: textPart,
   };
 
+  // ── Attachments (optional) ───────────────────────────────────────
   if (attachments && attachments.length > 0) {
-    payload.Messages[0].Attachments = attachments.map(att => ({
+    message.Attachments = attachments.map(att => ({
       ContentType:   att.contentType || "application/octet-stream",
       Filename:      att.filename,
       Base64Content: Buffer.isBuffer(att.content)
         ? att.content.toString("base64")
-        : att.content,
+        : String(att.content),
     }));
   }
 
-  if (inReplyTo || references) {
-    payload.Messages[0].Headers = {};
-    if (inReplyTo) payload.Messages[0].Headers["In-Reply-To"] = inReplyTo;
-    if (references) payload.Messages[0].Headers["References"]  = references;
-  }
-
-  const credentials = Buffer.from(`${MAILJET_API_KEY}:${MAILJET_SECRET_KEY}`).toString("base64");
+  // ── Send via SDK ─────────────────────────────────────────────────
+  console.log(`📤 Sending → ${toList.map(r => r.Email).join(", ")} | subject: "${subject}"`);
 
   try {
-    console.log(`📤 Mailjet → to: ${to} | subject: ${subject}`);
+    const response = await mailjet
+      .post("send", { version: "v3.1" })
+      .request({ Messages: [message] });
 
-    const response = await fetch("https://api.mailjet.com/v3.1/send", {
-      method:  "POST",
-      headers: {
-        "Authorization": `Basic ${credentials}`,
-        "Content-Type":  "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
+    const body    = response.body;
+    const msgInfo = body?.Messages?.[0];
+    const status  = msgInfo?.Status;
 
-    const result = await response.json();
+    console.log(`   Mailjet HTTP ${response.response.status} | message status: ${status}`);
 
-    if (!response.ok) {
-      const errMsg =
-        result?.Messages?.[0]?.Errors?.[0]?.ErrorMessage ||
-        result?.ErrorMessage ||
-        `HTTP ${response.status}`;
-      console.error(`❌ Mailjet HTTP ${response.status} for ${to}:`, JSON.stringify(result));
-      return { success: false, error: errMsg };
+    if (status === "success") {
+      const messageId = String(msgInfo?.To?.[0]?.MessageID || "sent");
+      console.log(`✅ Delivered → ${toList[0].Email} | Mailjet ID: ${messageId}`);
+      return { success: true, messageId };
     }
 
-    const msgStatus = result?.Messages?.[0]?.Status;
-    if (msgStatus && msgStatus !== "success") {
-      const errMsg =
-        result?.Messages?.[0]?.Errors?.[0]?.ErrorMessage ||
-        `Mailjet status: ${msgStatus}`;
-      console.error(`❌ Mailjet message-level error for ${to}:`, JSON.stringify(result.Messages[0]));
-      return { success: false, error: errMsg };
-    }
-
-    const msgId = result?.Messages?.[0]?.To?.[0]?.MessageID || "sent";
-    console.log(`✅ Sent to ${to} | Mailjet ID: ${msgId}`);
-    return { success: true, messageId: String(msgId) };
+    // Mailjet returned 200 but message-level failure
+    const errMsg = msgInfo?.Errors?.[0]?.ErrorMessage
+      || `Mailjet message status: ${status}`;
+    console.error(`❌ Mailjet message-level error:`, JSON.stringify(msgInfo));
+    return { success: false, error: errMsg };
 
   } catch (err) {
-    console.error(`❌ sendRawEmail network error for ${to}:`, err.message);
-    return { success: false, error: err.message };
+    // SDK throws on non-2xx HTTP responses
+    const mjErr   = err.response?.body;
+    const errMsg  =
+      mjErr?.Messages?.[0]?.Errors?.[0]?.ErrorMessage ||
+      mjErr?.ErrorMessage ||
+      err.message;
+
+    console.error(`❌ Mailjet SDK error for ${toList[0].Email}: ${errMsg}`);
+    if (mjErr) console.error("   Full Mailjet error body:", JSON.stringify(mjErr));
+
+    return { success: false, error: errMsg };
   }
 }
