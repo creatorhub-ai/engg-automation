@@ -4095,6 +4095,264 @@ app.get("/api/scorecard/:batchNo", async (req, res) => {
 });
 
 
+// ==============================
+// SCORECARD API - DVFT BATCHES
+// Tables used:
+//   intermediate_assessment_scores  → Intermediate  (10%)
+//   final_assessment_scores         → Digital(25) + Verilog(25) → Group1 (20%)
+//                                   → SV(30) + UVM(30) + Python(15) → Group2 (30%)
+//   final_project_scores            → Project (30%)
+//   viva_scores                     → Viva (10%)
+//
+// All marks converted to /100 before weightage is applied.
+// Group averages: each subject is first converted to /100, then the group
+// percentage is the average of those /100 values.
+// ==============================
+app.get("/api/scorecard-dvft/:batchNo", async (req, res) => {
+  const { batchNo } = req.params;
+
+  try {
+    // ── 1. Fetch learners ──────────────────────────────────────────────────
+    const { data: learners, error: learnersErr } = await supabase
+      .from("learners_data")
+      .select("id, name, email")
+      .eq("batch_no", batchNo);
+
+    if (learnersErr) {
+      console.error("SCORECARD-DVFT learners error:", learnersErr);
+      return res.status(500).json({ error: "Failed to fetch learners", details: learnersErr.message });
+    }
+
+    if (!learners || learners.length === 0) {
+      return res.json({ data: [] });
+    }
+
+    // ── 2. Pre-fetch ALL intermediate scores ─────────────────────────────────
+    const { data: allIntermediateScores, error: interErr } = await supabase
+      .from("intermediate_assessment_scores")
+      .select("learner_id, points, out_off")
+      .eq("batch_no", batchNo);
+
+    if (interErr) console.error("SCORECARD-DVFT intermediate error:", interErr);
+
+    // ── 3. Pre-fetch ALL final_assessment_scores ──────────────────────────────
+    const { data: allFinalScores, error: finalErr } = await supabase
+      .from("final_assessment_scores")
+      .select("learner_id, course_planner_id, assessment_name, points, out_off")
+      .eq("batch_no", batchNo);
+
+    if (finalErr) console.error("SCORECARD-DVFT final_assessment_scores error:", finalErr);
+
+    // ── 4. Resolve topic_name for each course_planner_id ─────────────────────
+    const plannerIds = [
+      ...new Set((allFinalScores || []).map(r => r.course_planner_id).filter(Boolean)),
+    ];
+
+    let plannerTopicMap = {};
+    if (plannerIds.length > 0) {
+      const { data: plannerRows, error: plannerErr } = await supabase
+        .from("course_planner_data")
+        .select("id, topic_name")
+        .in("id", plannerIds);
+
+      if (plannerErr) {
+        console.error("SCORECARD-DVFT planner lookup error:", plannerErr);
+      } else {
+        (plannerRows || []).forEach(row => {
+          plannerTopicMap[row.id] = row.topic_name || "";
+        });
+      }
+    }
+
+    // ── 5. Pre-fetch ALL final_project_scores ────────────────────────────────
+    const { data: allProjectScores, error: projectErr } = await supabase
+      .from("final_project_scores")
+      .select("learner_id, points, out_off")
+      .eq("batch_no", batchNo);
+
+    if (projectErr) console.error("SCORECARD-DVFT project error:", projectErr);
+
+    // ── 6. Pre-fetch ALL viva_scores ─────────────────────────────────────────
+    const { data: allVivaScores, error: vivaErr } = await supabase
+      .from("viva_scores")
+      .select("learner_id, points, out_off")
+      .eq("batch_no", batchNo);
+
+    if (vivaErr) console.error("SCORECARD-DVFT viva error:", vivaErr);
+
+    // ── Helper: resolve DVFT subject key ──────────────────────────────────────
+    // Combines topic_name (from course_planner_data) + assessment_name for matching.
+    // Order matters: check "uvm" before "sv" (sv is substring of "uvm" variants).
+    const getDvftSubjectKey = (topicName, assessmentName) => {
+      const raw = ((topicName || "") + " " + (assessmentName || "")).toLowerCase();
+      if (raw.includes("intermediate"))                    return "intermediate";
+      if (raw.includes("uvm"))                             return "uvm";
+      if (raw.includes("python"))                          return "python";
+      if (raw.includes("sv"))                              return "sv";
+      if (raw.includes("verilog"))                         return "verilog";
+      if (raw.includes("digital"))                         return "digital";
+      return null;
+    };
+
+    // ── Helper: sum points & out_off across rows ──────────────────────────────
+    const sumRows = rows => ({
+      totalPoints: rows.reduce((s, r) => s + (Number(r.points)  || 0), 0),
+      totalOut:    rows.reduce((s, r) => s + (Number(r.out_off) || 0), 0),
+    });
+
+    // ── Helper: convert to % out of 100 ──────────────────────────────────────
+    const toPct = ({ totalPoints, totalOut }) =>
+      totalOut > 0 ? (totalPoints / totalOut) * 100 : 0;
+
+    // ── 7. Build per-learner results ──────────────────────────────────────────
+    const results = [];
+
+    for (const learner of learners) {
+      const learnerId = Number(learner.id);
+
+      // ── Intermediate ────────────────────────────────────────────────────────
+      const intermediateRows = (allIntermediateScores || []).filter(
+        r => Number(r.learner_id) === learnerId
+      );
+      const intermediateOutOf100 = toPct(sumRows(intermediateRows));
+
+      // ── Final Assessments — bucket by DVFT subject ───────────────────────────
+      const learnerFinalRows = (allFinalScores || []).filter(
+        r => Number(r.learner_id) === learnerId
+      );
+
+      // Each bucket accumulates raw points + out_off so we can compute
+      // each subject's percentage correctly even if multiple rows exist.
+      const buckets = {
+        digital:  { pts: 0, out: 0 },
+        verilog:  { pts: 0, out: 0 },
+        sv:       { pts: 0, out: 0 },
+        uvm:      { pts: 0, out: 0 },
+        python:   { pts: 0, out: 0 },
+      };
+
+      learnerFinalRows.forEach(row => {
+        const topicName      = plannerTopicMap[row.course_planner_id] || "";
+        const assessmentName = row.assessment_name || "";
+        const key            = getDvftSubjectKey(topicName, assessmentName);
+
+        if (key && buckets[key]) {
+          buckets[key].pts += Number(row.points)  || 0;
+          buckets[key].out += Number(row.out_off) || 0;
+        } else {
+          console.log(
+            `[SCORECARD-DVFT] Unrecognised assessment for learner ${learnerId}:`,
+            { topicName, assessmentName, pts: row.points, out: row.out_off }
+          );
+        }
+      });
+
+      // Subject % out of 100 (each subject converted individually)
+      const subjectPct = key =>
+        buckets[key].out > 0 ? (buckets[key].pts / buckets[key].out) * 100 : 0;
+
+      const digitalPct  = subjectPct("digital");
+      const verilogPct  = subjectPct("verilog");
+      const svPct       = subjectPct("sv");
+      const uvmPct      = subjectPct("uvm");
+      const pythonPct   = subjectPct("python");
+
+      // Group 1: average of Digital + Verilog (each /100)
+      const g1Subjects = [
+        buckets.digital.out  > 0 ? digitalPct  : null,
+        buckets.verilog.out  > 0 ? verilogPct  : null,
+      ].filter(v => v !== null);
+      const dvGroup1 = g1Subjects.length > 0
+        ? g1Subjects.reduce((a, b) => a + b, 0) / g1Subjects.length
+        : 0;
+
+      // Group 2: average of SV + UVM + Python (each /100)
+      const g2Subjects = [
+        buckets.sv.out     > 0 ? svPct     : null,
+        buckets.uvm.out    > 0 ? uvmPct    : null,
+        buckets.python.out > 0 ? pythonPct : null,
+      ].filter(v => v !== null);
+      const dvGroup2 = g2Subjects.length > 0
+        ? g2Subjects.reduce((a, b) => a + b, 0) / g2Subjects.length
+        : 0;
+
+      // ── Final Project ────────────────────────────────────────────────────────
+      const projectRows     = (allProjectScores || []).filter(r => Number(r.learner_id) === learnerId);
+      const projectOutOf100 = toPct(sumRows(projectRows));
+
+      // ── Viva ─────────────────────────────────────────────────────────────────
+      const vivaRows     = (allVivaScores || []).filter(r => Number(r.learner_id) === learnerId);
+      const vivaOutOf100 = toPct(sumRows(vivaRows));
+
+      // ── Weighted Overall ──────────────────────────────────────────────────────
+      //   Intermediate          10%
+      //   Group 1 (D + V avg)   20%
+      //   Group 2 (S+U+P avg)   30%
+      //   Final Project         30%
+      //   Viva                  10%
+      const overall =
+        intermediateOutOf100 * 0.10 +
+        dvGroup1             * 0.20 +
+        dvGroup2             * 0.30 +
+        projectOutOf100      * 0.30 +
+        vivaOutOf100         * 0.10;
+
+      // ── Grade ─────────────────────────────────────────────────────────────────
+      let grade = "F";
+      if      (overall >= 90) grade = "A";
+      else if (overall >= 80) grade = "B";
+      else if (overall >= 70) grade = "C";
+      else if (overall >= 60) grade = "D";
+
+      // ── Eligibility ───────────────────────────────────────────────────────────
+      const certification = projectOutOf100 >= 70 && overall >= 70 ? "YES" : "NO";
+      const placement     = projectOutOf100 >= 70 && vivaOutOf100 >= 70 && overall >= 80 ? "YES" : "NO";
+
+      console.log(
+        `[SCORECARD-DVFT] ${learner.name} | ` +
+        `Inter=${intermediateOutOf100.toFixed(1)}% ` +
+        `Digital=${digitalPct.toFixed(1)}% Verilog=${verilogPct.toFixed(1)}% Grp1=${dvGroup1.toFixed(1)}% ` +
+        `SV=${svPct.toFixed(1)}% UVM=${uvmPct.toFixed(1)}% Python=${pythonPct.toFixed(1)}% Grp2=${dvGroup2.toFixed(1)}% ` +
+        `Proj=${projectOutOf100.toFixed(1)}% Viva=${vivaOutOf100.toFixed(1)}% ` +
+        `=> Overall=${overall.toFixed(2)}% Grade=${grade}`
+      );
+
+      results.push({
+        name:  learner.name,
+        email: learner.email,
+
+        // Top-level values used directly by the frontend scorecard table
+        intermediate: intermediateOutOf100.toFixed(2),
+        dvGroup1:     dvGroup1.toFixed(2),
+        dvGroup2:     dvGroup2.toFixed(2),
+        project:      projectOutOf100.toFixed(2),
+        viva:         vivaOutOf100.toFixed(2),
+
+        // Individual subject breakdown (for display in per-subject columns)
+        breakdown: {
+          digital:  digitalPct.toFixed(2),
+          verilog:  verilogPct.toFixed(2),
+          sv:       svPct.toFixed(2),
+          uvm:      uvmPct.toFixed(2),
+          python:   pythonPct.toFixed(2),
+        },
+
+        overall:       overall.toFixed(2),
+        grade,
+        certification,
+        placement,
+      });
+    }
+
+    res.json({ data: results });
+
+  } catch (err) {
+    console.error("SCORECARD-DVFT ERROR:", err);
+    res.status(500).json({ error: "DVFT Scorecard calculation failed", details: err.message });
+  }
+});
+
+
 
 // Download PDF
 app.get('/api/download/pdf/:batchNo/:assessmentType', async (req, res) => {

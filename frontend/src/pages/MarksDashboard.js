@@ -108,232 +108,6 @@ function isDvftBatch(b) {
   return up.includes("DVFT") || (up.startsWith("DV") && !up.includes("PDFT"));
 }
 
-/* ─── Row normaliser ─────────────────────────────────────────────────────── */
-// The /api/scorecard endpoint may return rows with varying field names.
-// This function extracts the correct values regardless of the exact shape.
-function normRow(raw) {
-  // Learner identity — try every possible field name the backend might use
-  const learnerId =
-    raw.learner_id   ?? raw.learnerId   ?? raw.id         ?? raw.learnerid   ?? "";
-  const learnerName =
-    raw.learner_name ?? raw.learnerName ?? raw.name       ?? raw.fullname    ??
-    raw.learner      ?? raw.student     ?? "";
-  const email =
-    raw.email        ?? raw.learner_email ?? raw.learnerEmail ?? raw.learneremail ?? "";
-
-  // Assessment label — prefer assessment_name, fall back to topic_name
-  const assessmentLabel =
-    (raw.assessment_name ?? raw.assessmentName ?? raw.topic_name ?? raw.topicName ?? "").trim();
-
-  const points = Number(raw.points  ?? raw.marks    ?? raw.score   ?? 0);
-  const outOff = Number(raw.out_off ?? raw.out_of   ?? raw.outoff  ?? raw.outOf   ?? 0);
-
-  return { learnerId, learnerName, email, assessmentLabel, points, outOff };
-}
-
-/* ─── Subject key resolvers ──────────────────────────────────────────────── */
-function getPdftSubjectKey(label) {
-  const r = (label || "").toLowerCase();
-  if (r.includes("intermediate"))                    return "intermediate";
-  if (r.includes("digital"))                         return "digital";
-  if (r.includes("cmos"))                            return "cmos";
-  if (r.includes("tcl"))                             return "tcl";
-  if (r.includes("physical") || r.includes("phy"))   return "physical";
-  if (r.includes("final project") || r.includes("project")) return "project";
-  if (r.includes("viva"))                            return "viva";
-  return null;
-}
-
-function getDvftSubjectKey(label) {
-  const r = (label || "").toLowerCase();
-  if (r.includes("intermediate"))                    return "intermediate";
-  if (r.includes("uvm"))                             return "uvm";   // must be before "sv"
-  if (r.includes("python"))                          return "python";
-  if (r.includes("sv"))                              return "sv";
-  if (r.includes("verilog"))                         return "verilog";
-  if (r.includes("digital"))                         return "digital";
-  if (r.includes("final project") || r.includes("project")) return "project";
-  if (r.includes("viva"))                            return "viva";
-  return null;
-}
-
-/* ─── Grade helper ───────────────────────────────────────────────────────── */
-function calcGrade(pct) {
-  if (!pct && pct !== 0) return "—";
-  if (pct >= 90) return "O";
-  if (pct >= 80) return "A+";
-  if (pct >= 70) return "A";
-  if (pct >= 60) return "B+";
-  if (pct >= 50) return "B";
-  return "F";
-}
-
-/* ─── PDFT scorecard calculator ─────────────────────────────────────────── */
-/*
-  Weightage:
-    Intermediate          10%  (any out_off → /out_off*100, typically /25)
-    Digital + CMOS        20%  (average of both /100)
-    TCL + Physical        30%  (average of both /100)
-    Final Project         30%  (out of 100)
-    Viva                  10%  (out of 25 → /25*100)
-*/
-function calcPdftScorecard(rows) {
-  const byLearner = {};
-
-  rows.forEach(raw => {
-    const r   = normRow(raw);
-    // Use email as fallback key when learner_id is missing
-    const uid = String(r.learnerId || r.email || Math.random());
-
-    if (!byLearner[uid]) {
-      byLearner[uid] = {
-        uid,
-        name:     r.learnerName,
-        email:    r.email,
-        subjects: {},
-      };
-    }
-    // Keep name/email in case first row was missing them
-    if (!byLearner[uid].name  && r.learnerName) byLearner[uid].name  = r.learnerName;
-    if (!byLearner[uid].email && r.email)       byLearner[uid].email = r.email;
-
-    const key = getPdftSubjectKey(r.assessmentLabel);
-    if (key) {
-      const pct  = r.outOff > 0 ? (r.points / r.outOff) * 100 : 0;
-      const prev = byLearner[uid].subjects[key];
-      if (prev === undefined || pct > prev) byLearner[uid].subjects[key] = pct;
-    }
-  });
-
-  return Object.values(byLearner).map(l => {
-    const s = l.subjects;
-
-    const intermediateOutOf100 = s.intermediate ?? null;
-
-    const g1 = [s.digital, s.cmos].filter(v => v !== undefined);
-    const theoryGroupOutOf100  = g1.length ? g1.reduce((a, b) => a + b, 0) / g1.length : null;
-
-    const g2 = [s.tcl, s.physical].filter(v => v !== undefined);
-    const designGroupOutOf100  = g2.length ? g2.reduce((a, b) => a + b, 0) / g2.length : null;
-
-    const projectOutOf100 = s.project ?? null;
-    const vivaOutOf100    = s.viva    ?? null;
-
-    const overall =
-      (intermediateOutOf100 !== null ? intermediateOutOf100 * 0.10 : 0) +
-      (theoryGroupOutOf100  !== null ? theoryGroupOutOf100  * 0.20 : 0) +
-      (designGroupOutOf100  !== null ? designGroupOutOf100  * 0.30 : 0) +
-      (projectOutOf100      !== null ? projectOutOf100      * 0.30 : 0) +
-      (vivaOutOf100         !== null ? vivaOutOf100         * 0.10 : 0);
-
-    const grade = calcGrade(overall);
-    const certification = projectOutOf100 !== null
-      ? projectOutOf100 >= 70 && overall >= 70 : null;
-    const placement = projectOutOf100 !== null && vivaOutOf100 !== null
-      ? projectOutOf100 >= 70 && vivaOutOf100 >= 70 && overall >= 80 : null;
-
-    return {
-      name:  l.name  || "(no name)",
-      email: l.email || "(no email)",
-      intermediate: intermediateOutOf100,
-      breakdown: {
-        digital:  s.digital  ?? null,
-        cmos:     s.cmos     ?? null,
-        tcl:      s.tcl      ?? null,
-        physical: s.physical ?? null,
-      },
-      theory:      theoryGroupOutOf100,
-      designGroup: designGroupOutOf100,
-      project:     projectOutOf100,
-      viva:        vivaOutOf100,
-      overall,
-      grade,
-      certification: certification === true ? "YES" : certification === false ? "NO" : "—",
-      placement:     placement     === true ? "YES" : placement     === false ? "NO" : "—",
-    };
-  });
-}
-
-/* ─── DVFT scorecard calculator ─────────────────────────────────────────── */
-/*
-  Weightage:
-    Intermediate              10%  (out of 25 → /25*100)
-    Digital + Verilog         20%  (average of both /100)
-    SV + UVM + Python         30%  (average of all three /100)
-    Final Project             30%  (out of 100)
-    Viva                      10%  (out of 25 → /25*100)
-*/
-function calcDvftScorecard(rows) {
-  const byLearner = {};
-
-  rows.forEach(raw => {
-    const r   = normRow(raw);
-    const uid = String(r.learnerId || r.email || Math.random());
-
-    if (!byLearner[uid]) {
-      byLearner[uid] = { uid, name: r.learnerName, email: r.email, subjects: {} };
-    }
-    if (!byLearner[uid].name  && r.learnerName) byLearner[uid].name  = r.learnerName;
-    if (!byLearner[uid].email && r.email)       byLearner[uid].email = r.email;
-
-    const key = getDvftSubjectKey(r.assessmentLabel);
-    if (key) {
-      const pct  = r.outOff > 0 ? (r.points / r.outOff) * 100 : 0;
-      const prev = byLearner[uid].subjects[key];
-      if (prev === undefined || pct > prev) byLearner[uid].subjects[key] = pct;
-    }
-  });
-
-  return Object.values(byLearner).map(l => {
-    const s = l.subjects;
-
-    const intermediateOutOf100 = s.intermediate ?? null;
-
-    const g1 = [s.digital, s.verilog].filter(v => v !== undefined);
-    const dvGroup1OutOf100 = g1.length ? g1.reduce((a, b) => a + b, 0) / g1.length : null;
-
-    const g2 = [s.sv, s.uvm, s.python].filter(v => v !== undefined);
-    const dvGroup2OutOf100 = g2.length ? g2.reduce((a, b) => a + b, 0) / g2.length : null;
-
-    const projectOutOf100 = s.project ?? null;
-    const vivaOutOf100    = s.viva    ?? null;
-
-    const overall =
-      (intermediateOutOf100 !== null ? intermediateOutOf100 * 0.10 : 0) +
-      (dvGroup1OutOf100     !== null ? dvGroup1OutOf100     * 0.20 : 0) +
-      (dvGroup2OutOf100     !== null ? dvGroup2OutOf100     * 0.30 : 0) +
-      (projectOutOf100      !== null ? projectOutOf100      * 0.30 : 0) +
-      (vivaOutOf100         !== null ? vivaOutOf100         * 0.10 : 0);
-
-    const grade = calcGrade(overall);
-    const certification = projectOutOf100 !== null
-      ? projectOutOf100 >= 70 && overall >= 70 : null;
-    const placement = projectOutOf100 !== null && vivaOutOf100 !== null
-      ? projectOutOf100 >= 70 && vivaOutOf100 >= 70 && overall >= 80 : null;
-
-    return {
-      name:  l.name  || "(no name)",
-      email: l.email || "(no email)",
-      intermediate: intermediateOutOf100,
-      breakdown: {
-        digital:  s.digital  ?? null,
-        verilog:  s.verilog  ?? null,
-        sv:       s.sv       ?? null,
-        uvm:      s.uvm      ?? null,
-        python:   s.python   ?? null,
-      },
-      dvGroup1:    dvGroup1OutOf100,
-      dvGroup2:    dvGroup2OutOf100,
-      project:     projectOutOf100,
-      viva:        vivaOutOf100,
-      overall,
-      grade,
-      certification: certification === true ? "YES" : certification === false ? "NO" : "—",
-      placement:     placement     === true ? "YES" : placement     === false ? "NO" : "—",
-    };
-  });
-}
-
 /* ─── Timestamp helpers ──────────────────────────────────────────────────── */
 function formatTimestamp(d) {
   const p = n => String(n).padStart(2, "0");
@@ -347,6 +121,13 @@ function resolveIntermediateTopic(topicName, assessmentName) {
   if (assessmentName && assessmentName.trim()) return assessmentName.trim();
   if (topicName && topicName.toLowerCase().includes("intermediate")) return topicName;
   return "Intermediate Assessment";
+}
+
+/* ─── Safe number parse ──────────────────────────────────────────────────── */
+// Backend returns all percentages as strings ("12.34"), so parse them safely
+function n(val) {
+  const v = parseFloat(val);
+  return isNaN(v) ? null : v;
 }
 
 /* ─── Sub-components ─────────────────────────────────────────────────────── */
@@ -389,54 +170,63 @@ function StatusBanner({ message }) {
   );
 }
 
-/* Percentage cell — coloured pill */
+/* Percentage cell — coloured pill. Accepts number or string. */
 function PctCell({ value }) {
-  const n = parseFloat(value) || 0;
+  const num = parseFloat(value);
+  if (isNaN(num) || (num === 0 && (value === null || value === undefined || value === ""))) {
+    return <TableCell align="center" sx={{ ...tableCellSx, color: TOKENS.textSub, fontSize: 12 }}>—</TableCell>;
+  }
   const color =
-    n >= 80 ? TOKENS.success.fill :
-    n >= 70 ? TOKENS.accent :
-    n >= 60 ? TOKENS.warning.fill :
-              TOKENS.error.fill;
+    num >= 80 ? TOKENS.success.fill :
+    num >= 70 ? TOKENS.accent :
+    num >= 60 ? TOKENS.warning.fill :
+                TOKENS.error.fill;
   return (
     <TableCell align="center" sx={{ ...tableCellSx, py: 0.8 }}>
       <Box sx={{ display: "inline-flex", alignItems: "center", px: 1.2, py: 0.3, borderRadius: "20px", background: `${color}18`, border: `1px solid ${color}44` }}>
-        <Typography sx={{ fontFamily: "'DM Mono', monospace", fontSize: 12, fontWeight: 700, color }}>{n.toFixed(2)}%</Typography>
+        <Typography sx={{ fontFamily: "'DM Mono', monospace", fontSize: 12, fontWeight: 700, color }}>{num.toFixed(2)}%</Typography>
       </Box>
     </TableCell>
   );
 }
 
-/* Nullable percentage — shows "—" when null */
-function NullPctCell({ value }) {
-  if (value === null || value === undefined)
-    return <TableCell align="center" sx={{ ...tableCellSx, color: TOKENS.textSub, fontSize: 12 }}>—</TableCell>;
-  return <PctCell value={value} />;
+/* Overall cell — slightly larger */
+function OverallCell({ value, accentColor }) {
+  const num = parseFloat(value) || 0;
+  const c = accentColor || (num >= 80 ? TOKENS.success.fill : num >= 70 ? TOKENS.accent : TOKENS.error.fill);
+  return (
+    <TableCell align="center" sx={tableCellSx}>
+      <Box sx={{ display: "inline-flex", px: 1.5, py: 0.4, borderRadius: "20px", background: `${c}18`, border: `1px solid ${c}44` }}>
+        <Typography sx={{ fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 800, color: c }}>{num.toFixed(2)}%</Typography>
+      </Box>
+    </TableCell>
+  );
 }
 
 /* YES / NO chip */
 function YesNoChip({ value }) {
-  const yes     = value === "YES";
-  const neutral = value === "—";
+  const yes = value === "YES";
   return (
-    <Chip label={value} size="small" sx={{
+    <Chip label={value || "—"} size="small" sx={{
       fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 11,
-      background: neutral ? TOKENS.surfaceAlt : yes ? TOKENS.success.light : TOKENS.error.light,
-      color:      neutral ? TOKENS.textSub    : yes ? TOKENS.success.text  : TOKENS.error.text,
-      border: `1px solid ${neutral ? TOKENS.border : yes ? TOKENS.success.fill : TOKENS.error.fill}44`,
+      background: yes ? TOKENS.success.light : TOKENS.error.light,
+      color:      yes ? TOKENS.success.text  : TOKENS.error.text,
+      border: `1px solid ${yes ? TOKENS.success.fill : TOKENS.error.fill}44`,
     }} />
   );
 }
 
 /* Grade chip */
 const gradeColor = g => {
-  if (g === "O" || g === "A+") return TOKENS.success.fill;
-  if (g === "A")               return TOKENS.accent;
-  if (g === "B+" || g === "B") return TOKENS.warning.fill;
+  if (g === "A" || g === "A+") return TOKENS.success.fill;
+  if (g === "B")               return TOKENS.accent;
+  if (g === "C")               return TOKENS.warning.fill;
+  if (g === "D")               return "#8b5cf6";
   return TOKENS.error.fill;
 };
 function GradeChip({ grade }) {
-  const c = gradeColor(grade);
-  return <Chip label={grade} size="small" sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 800, fontSize: 12, background: `${c}18`, color: c, border: `1px solid ${c}44`, minWidth: 34 }} />;
+  const c = gradeColor(grade || "F");
+  return <Chip label={grade || "F"} size="small" sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 800, fontSize: 12, background: `${c}18`, color: c, border: `1px solid ${c}44`, minWidth: 34 }} />;
 }
 
 /* Column group header */
@@ -461,16 +251,9 @@ function BatchPill({ batchNo }) {
   );
 }
 
-/* ─── Debug logger — logs first 2 raw rows to console so you can inspect field names ── */
-function debugRawRows(rows, label) {
-  if (process.env.NODE_ENV === "development") {
-    console.group(`[Scorecard debug] ${label} — first 2 rows`);
-    rows.slice(0, 2).forEach((r, i) => console.log(`Row ${i}:`, JSON.stringify(r, null, 2)));
-    console.groupEnd();
-  }
-}
-
 /* ─── PDFT Scorecard Table ───────────────────────────────────────────────── */
+// Backend returns: { name, email, intermediate, theory, breakdown:{digital,cmos,tcl,physical}, project, viva, overall, grade, certification, placement }
+// All values are strings like "72.50" — parseFloat() them before display.
 function PdftScorecardTable({ data, batchNo }) {
   return (
     <Box sx={{ ...cardSx }}>
@@ -532,25 +315,15 @@ function PdftScorecardTable({ data, batchNo }) {
               <TableRow key={i} sx={{ "&:nth-of-type(even)": { background: TOKENS.surfaceAlt }, "&:hover": { background: `${TOKENS.accent}08` } }}>
                 <TableCell sx={{ ...tableCellSx, fontWeight: 600 }}>{row.name}</TableCell>
                 <TableCell sx={{ ...tableCellSx, color: TOKENS.textSub, fontSize: 12 }}>{row.email}</TableCell>
-                <NullPctCell value={row.intermediate} />
-                <NullPctCell value={row.breakdown?.digital} />
-                <NullPctCell value={row.breakdown?.cmos} />
-                <NullPctCell value={row.breakdown?.tcl} />
-                <NullPctCell value={row.theory} />
-                <NullPctCell value={row.breakdown?.physical} />
-                <NullPctCell value={row.project} />
-                <NullPctCell value={row.viva} />
-                <TableCell align="center" sx={tableCellSx}>
-                  {(() => {
-                    const n = parseFloat(row.overall || 0);
-                    const c = n >= 80 ? TOKENS.success.fill : n >= 70 ? TOKENS.accent : TOKENS.error.fill;
-                    return (
-                      <Box sx={{ display: "inline-flex", px: 1.5, py: 0.4, borderRadius: "20px", background: `${c}18`, border: `1px solid ${c}44` }}>
-                        <Typography sx={{ fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 800, color: c }}>{n.toFixed(2)}%</Typography>
-                      </Box>
-                    );
-                  })()}
-                </TableCell>
+                <PctCell value={row.intermediate} />
+                <PctCell value={row.breakdown?.digital} />
+                <PctCell value={row.breakdown?.cmos} />
+                <PctCell value={row.breakdown?.tcl} />
+                <PctCell value={row.theory} />
+                <PctCell value={row.breakdown?.physical} />
+                <PctCell value={row.project} />
+                <PctCell value={row.viva} />
+                <OverallCell value={row.overall} />
                 <TableCell align="center" sx={tableCellSx}><GradeChip grade={row.grade} /></TableCell>
                 <TableCell align="center" sx={tableCellSx}><YesNoChip value={row.certification} /></TableCell>
                 <TableCell align="center" sx={tableCellSx}><YesNoChip value={row.placement} /></TableCell>
@@ -568,13 +341,16 @@ function PdftScorecardTable({ data, batchNo }) {
           <SchoolIcon sx={{ fontSize: 14, color: TOKENS.textSub }} />
           <Typography sx={{ ...labelSx, fontSize: 10 }}>Placement: Project ≥ 70% AND Viva ≥ 70% AND Overall ≥ 80%</Typography>
         </Box>
-        <Typography sx={{ ...labelSx, fontSize: 10 }}>Weightage: Intermediate 10% · Digital+CMOS 20% · TCL+Physical 30% · Project 30% · Viva 10%</Typography>
+        <Typography sx={{ ...labelSx, fontSize: 10 }}>
+          Weightage: Intermediate 10% · Digital+CMOS+TCL 20% · Physical 30% · Project 30% · Viva 10%
+        </Typography>
       </Box>
     </Box>
   );
 }
 
 /* ─── DVFT Scorecard Table ───────────────────────────────────────────────── */
+// Backend returns: { name, email, intermediate, dvGroup1, dvGroup2, breakdown:{digital,verilog,sv,uvm,python}, project, viva, overall, grade, certification, placement }
 function DvftScorecardTable({ data, batchNo }) {
   return (
     <Box sx={{ ...cardSx }}>
@@ -638,27 +414,17 @@ function DvftScorecardTable({ data, batchNo }) {
               <TableRow key={i} sx={{ "&:nth-of-type(even)": { background: TOKENS.surfaceAlt }, "&:hover": { background: TOKENS.dvft.light } }}>
                 <TableCell sx={{ ...tableCellSx, fontWeight: 600 }}>{row.name}</TableCell>
                 <TableCell sx={{ ...tableCellSx, color: TOKENS.textSub, fontSize: 12 }}>{row.email}</TableCell>
-                <NullPctCell value={row.intermediate} />
-                <NullPctCell value={row.breakdown?.digital} />
-                <NullPctCell value={row.breakdown?.verilog} />
-                <NullPctCell value={row.dvGroup1} />
-                <NullPctCell value={row.breakdown?.sv} />
-                <NullPctCell value={row.breakdown?.uvm} />
-                <NullPctCell value={row.breakdown?.python} />
-                <NullPctCell value={row.dvGroup2} />
-                <NullPctCell value={row.project} />
-                <NullPctCell value={row.viva} />
-                <TableCell align="center" sx={tableCellSx}>
-                  {(() => {
-                    const n = parseFloat(row.overall || 0);
-                    const c = n >= 80 ? TOKENS.success.fill : n >= 70 ? TOKENS.dvft.fill : TOKENS.error.fill;
-                    return (
-                      <Box sx={{ display: "inline-flex", px: 1.5, py: 0.4, borderRadius: "20px", background: `${c}18`, border: `1px solid ${c}44` }}>
-                        <Typography sx={{ fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 800, color: c }}>{n.toFixed(2)}%</Typography>
-                      </Box>
-                    );
-                  })()}
-                </TableCell>
+                <PctCell value={row.intermediate} />
+                <PctCell value={row.breakdown?.digital} />
+                <PctCell value={row.breakdown?.verilog} />
+                <PctCell value={row.dvGroup1} />
+                <PctCell value={row.breakdown?.sv} />
+                <PctCell value={row.breakdown?.uvm} />
+                <PctCell value={row.breakdown?.python} />
+                <PctCell value={row.dvGroup2} />
+                <PctCell value={row.project} />
+                <PctCell value={row.viva} />
+                <OverallCell value={row.overall} accentColor={TOKENS.dvft.fill} />
                 <TableCell align="center" sx={tableCellSx}><GradeChip grade={row.grade} /></TableCell>
                 <TableCell align="center" sx={tableCellSx}><YesNoChip value={row.certification} /></TableCell>
                 <TableCell align="center" sx={tableCellSx}><YesNoChip value={row.placement} /></TableCell>
@@ -717,34 +483,36 @@ export default function MarksDashboard({ user }) {
 
     try {
       if (isScorecard) {
-        /* ── Scorecard path ── */
         if (!isPdft && !isDvft) {
           setMessage("⚠️ Scorecard is only available for PDFT and DVFT batches");
+          setFetchLoading(false);
           return;
         }
 
-        const res = await axios.get(`${API_BASE}/api/scorecard/${batchNo}`);
+        // PDFT → /api/scorecard/:batchNo   (existing endpoint, returns { data: [...] })
+        // DVFT → /api/scorecard-dvft/:batchNo  (new endpoint, same shape)
+        const endpoint = isDvft
+          ? `${API_BASE}/api/scorecard-dvft/${batchNo}`
+          : `${API_BASE}/api/scorecard/${batchNo}`;
 
-        // Handle both { data: [...] } and plain [...] responses
-        const raw = Array.isArray(res.data)
-          ? res.data
-          : Array.isArray(res.data?.data)
-          ? res.data.data
-          : [];
+        const res = await axios.get(endpoint);
 
-        debugRawRows(raw, batchNo);   // dev-only console log for inspection
+        // Backend wraps in { data: [...] }
+        const rows = Array.isArray(res.data?.data) ? res.data.data
+                   : Array.isArray(res.data)       ? res.data
+                   : [];
 
-        if (!raw.length) {
+        if (!rows.length) {
           setMessage("⚠️ No scorecard data found for this batch");
           return;
         }
 
-        const computed = isPdft ? calcPdftScorecard(raw) : calcDvftScorecard(raw);
-        setScorecardData(computed);
-        setMessage(`✅ Loaded scorecard for ${computed.length} learner${computed.length !== 1 ? "s" : ""}`);
+        // The backend already computed all percentages — use directly, no recalculation
+        setScorecardData(rows);
+        setMessage(`✅ Loaded scorecard for ${rows.length} learner${rows.length !== 1 ? "s" : ""}`);
 
       } else {
-        /* ── Regular assessment path ── */
+        /* ── Regular assessment view ── */
         const res = await axios.get(`${API_BASE}/api/assessments/${batchNo}/${assessmentType}`);
         const data = Array.isArray(res.data?.data) ? res.data.data
                    : Array.isArray(res.data)       ? res.data
@@ -801,31 +569,31 @@ export default function MarksDashboard({ user }) {
     if (isScorecard && isPdft) {
       exportData = scorecardData.map(r => ({
         Name: r.name, Email: r.email,
-        "Intermediate (%)":  r.intermediate           != null ? r.intermediate.toFixed(2)          : "",
-        "Digital (%)":       r.breakdown?.digital     != null ? r.breakdown.digital.toFixed(2)      : "",
-        "CMOS (%)":          r.breakdown?.cmos        != null ? r.breakdown.cmos.toFixed(2)         : "",
-        "TCL (%)":           r.breakdown?.tcl         != null ? r.breakdown.tcl.toFixed(2)          : "",
-        "Theory Group (%)":  r.theory                 != null ? r.theory.toFixed(2)                 : "",
-        "Physical (%)":      r.breakdown?.physical    != null ? r.breakdown.physical.toFixed(2)     : "",
-        "Project (%)":       r.project                != null ? r.project.toFixed(2)                : "",
-        "Viva (%)":          r.viva                   != null ? r.viva.toFixed(2)                   : "",
-        "Overall (%)":       r.overall.toFixed(2),
+        "Intermediate (%)": r.intermediate,
+        "Digital (%)":       r.breakdown?.digital,
+        "CMOS (%)":          r.breakdown?.cmos,
+        "TCL (%)":           r.breakdown?.tcl,
+        "Theory Group (%)":  r.theory,
+        "Physical (%)":      r.breakdown?.physical,
+        "Project (%)":       r.project,
+        "Viva (%)":          r.viva,
+        "Overall (%)":       r.overall,
         Grade: r.grade, Certification: r.certification, Placement: r.placement,
       }));
     } else if (isScorecard && isDvft) {
       exportData = scorecardData.map(r => ({
         Name: r.name, Email: r.email,
-        "Intermediate (%)":  r.intermediate           != null ? r.intermediate.toFixed(2)          : "",
-        "Digital (%)":       r.breakdown?.digital     != null ? r.breakdown.digital.toFixed(2)      : "",
-        "Verilog (%)":       r.breakdown?.verilog     != null ? r.breakdown.verilog.toFixed(2)      : "",
-        "Grp1 Avg (%)":      r.dvGroup1               != null ? r.dvGroup1.toFixed(2)               : "",
-        "SV (%)":            r.breakdown?.sv          != null ? r.breakdown.sv.toFixed(2)           : "",
-        "UVM (%)":           r.breakdown?.uvm         != null ? r.breakdown.uvm.toFixed(2)          : "",
-        "Python (%)":        r.breakdown?.python      != null ? r.breakdown.python.toFixed(2)       : "",
-        "Grp2 Avg (%)":      r.dvGroup2               != null ? r.dvGroup2.toFixed(2)               : "",
-        "Project (%)":       r.project                != null ? r.project.toFixed(2)                : "",
-        "Viva (%)":          r.viva                   != null ? r.viva.toFixed(2)                   : "",
-        "Overall (%)":       r.overall.toFixed(2),
+        "Intermediate (%)":  r.intermediate,
+        "Digital (%)":       r.breakdown?.digital,
+        "Verilog (%)":       r.breakdown?.verilog,
+        "Grp1 Avg (%)":      r.dvGroup1,
+        "SV (%)":            r.breakdown?.sv,
+        "UVM (%)":           r.breakdown?.uvm,
+        "Python (%)":        r.breakdown?.python,
+        "Grp2 Avg (%)":      r.dvGroup2,
+        "Project (%)":       r.project,
+        "Viva (%)":          r.viva,
+        "Overall (%)":       r.overall,
         Grade: r.grade, Certification: r.certification, Placement: r.placement,
       }));
     } else {
@@ -856,26 +624,17 @@ export default function MarksDashboard({ user }) {
     doc.text(`Type: ${assessmentType.toUpperCase()}   |   Downloaded: ${tsDisplay}`, 14, 23);
     doc.setTextColor(0);
 
-    const pdfStyles = { fontSize: 7 };
-    const altRow = { fillColor: [245, 247, 255] };
-
     if (isScorecard && isPdft) {
       doc.autoTable({
         startY: 30,
         head: [["Name","Email","Inter %","Digital %","CMOS %","TCL %","Theory %","Physical %","Project %","Viva %","Overall %","Grade","Cert","Place"]],
         body: scorecardData.map(r => [
           r.name, r.email,
-          r.intermediate           != null ? r.intermediate.toFixed(2)         : "—",
-          r.breakdown?.digital     != null ? r.breakdown.digital.toFixed(2)    : "—",
-          r.breakdown?.cmos        != null ? r.breakdown.cmos.toFixed(2)       : "—",
-          r.breakdown?.tcl         != null ? r.breakdown.tcl.toFixed(2)        : "—",
-          r.theory                 != null ? r.theory.toFixed(2)               : "—",
-          r.breakdown?.physical    != null ? r.breakdown.physical.toFixed(2)   : "—",
-          r.project                != null ? r.project.toFixed(2)              : "—",
-          r.viva                   != null ? r.viva.toFixed(2)                 : "—",
-          r.overall.toFixed(2), r.grade, r.certification, r.placement,
+          r.intermediate, r.breakdown?.digital, r.breakdown?.cmos, r.breakdown?.tcl,
+          r.theory, r.breakdown?.physical, r.project, r.viva, r.overall,
+          r.grade, r.certification, r.placement,
         ]),
-        styles: pdfStyles, alternateRowStyles: altRow,
+        styles: { fontSize: 7 }, alternateRowStyles: { fillColor: [245, 247, 255] },
         headStyles: { fillColor: [124, 58, 237], textColor: 255, fontStyle: "bold" },
       });
     } else if (isScorecard && isDvft) {
@@ -884,19 +643,11 @@ export default function MarksDashboard({ user }) {
         head: [["Name","Email","Inter %","Digital %","Verilog %","Grp1 %","SV %","UVM %","Python %","Grp2 %","Project %","Viva %","Overall %","Grade","Cert","Place"]],
         body: scorecardData.map(r => [
           r.name, r.email,
-          r.intermediate           != null ? r.intermediate.toFixed(2)         : "—",
-          r.breakdown?.digital     != null ? r.breakdown.digital.toFixed(2)    : "—",
-          r.breakdown?.verilog     != null ? r.breakdown.verilog.toFixed(2)    : "—",
-          r.dvGroup1               != null ? r.dvGroup1.toFixed(2)             : "—",
-          r.breakdown?.sv          != null ? r.breakdown.sv.toFixed(2)         : "—",
-          r.breakdown?.uvm         != null ? r.breakdown.uvm.toFixed(2)        : "—",
-          r.breakdown?.python      != null ? r.breakdown.python.toFixed(2)     : "—",
-          r.dvGroup2               != null ? r.dvGroup2.toFixed(2)             : "—",
-          r.project                != null ? r.project.toFixed(2)              : "—",
-          r.viva                   != null ? r.viva.toFixed(2)                 : "—",
-          r.overall.toFixed(2), r.grade, r.certification, r.placement,
+          r.intermediate, r.breakdown?.digital, r.breakdown?.verilog, r.dvGroup1,
+          r.breakdown?.sv, r.breakdown?.uvm, r.breakdown?.python, r.dvGroup2,
+          r.project, r.viva, r.overall, r.grade, r.certification, r.placement,
         ]),
-        styles: pdfStyles, alternateRowStyles: { fillColor: [240, 249, 255] },
+        styles: { fontSize: 7 }, alternateRowStyles: { fillColor: [240, 249, 255] },
         headStyles: { fillColor: [8, 145, 178], textColor: 255, fontStyle: "bold" },
       });
     } else {
@@ -911,7 +662,7 @@ export default function MarksDashboard({ user }) {
               : (row[c.key] ?? "")
           )
         ),
-        styles: pdfStyles, alternateRowStyles: altRow,
+        styles: { fontSize: 7 }, alternateRowStyles: { fillColor: [245, 247, 255] },
         headStyles: { fillColor: [61, 90, 254], textColor: 255, fontStyle: "bold" },
       });
     }
@@ -970,16 +721,11 @@ export default function MarksDashboard({ user }) {
             subtitle="Select batch and assessment type, then click Fetch Marks"
           />
           <Box sx={{ p: 3, display: "flex", gap: 2, flexWrap: "wrap", alignItems: "flex-end" }}>
-
-            {/* Batch */}
             <FormControl size="small" sx={{ minWidth: 200 }}>
               <InputLabel sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Select Batch</InputLabel>
-              <Select
-                value={batchNo}
-                label="Select Batch"
+              <Select value={batchNo} label="Select Batch"
                 onChange={e => { setBatchNo(e.target.value); setMarksData([]); setScorecardData([]); setMessage(""); }}
-                sx={inputSx}
-              >
+                sx={inputSx}>
                 <MenuItem value="" sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TOKENS.textSub }}>— Select Batch —</MenuItem>
                 {batches.map((b, i) => (
                   <MenuItem key={i} value={b.batch_no} sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>{b.batch_no}</MenuItem>
@@ -987,15 +733,11 @@ export default function MarksDashboard({ user }) {
               </Select>
             </FormControl>
 
-            {/* Assessment Type */}
             <FormControl size="small" sx={{ minWidth: 220 }}>
               <InputLabel sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Assessment Type</InputLabel>
-              <Select
-                value={assessmentType}
-                label="Assessment Type"
+              <Select value={assessmentType} label="Assessment Type"
                 onChange={e => { setAssessmentType(e.target.value); setMarksData([]); setScorecardData([]); setMessage(""); }}
-                sx={inputSx}
-              >
+                sx={inputSx}>
                 {[
                   { v: "weekly",       l: "Weekly"          },
                   { v: "intermediate", l: "Intermediate"     },
@@ -1008,21 +750,14 @@ export default function MarksDashboard({ user }) {
               </Select>
             </FormControl>
 
-            {/* Fetch */}
-            <Button
-              variant="contained"
-              onClick={fetchMarks}
-              disabled={!batchNo || fetchLoading}
+            <Button variant="contained" onClick={fetchMarks} disabled={!batchNo || fetchLoading}
               startIcon={fetchLoading ? <CircularProgress size={14} color="inherit" /> : <TableChartIcon sx={{ fontSize: 16 }} />}
-              sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 13, borderRadius: "10px", textTransform: "none", px: 3, py: 1.1, background: TOKENS.accent, "&:hover": { background: "#2a3fd4" }, "&:disabled": { opacity: 0.5 } }}
-            >
+              sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 13, borderRadius: "10px", textTransform: "none", px: 3, py: 1.1, background: TOKENS.accent, "&:hover": { background: "#2a3fd4" }, "&:disabled": { opacity: 0.5 } }}>
               {fetchLoading ? "Loading…" : "Fetch Marks"}
             </Button>
 
-            {/* Batch pill */}
             {batchNo && <BatchPill batchNo={batchNo} />}
 
-            {/* Record count */}
             {hasData && (
               <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2, py: 0.8, borderRadius: "10px", background: TOKENS.accentLight, border: `1px solid ${TOKENS.accent}33` }}>
                 <PersonIcon sx={{ fontSize: 14, color: TOKENS.accent }} />
@@ -1032,7 +767,6 @@ export default function MarksDashboard({ user }) {
               </Box>
             )}
           </Box>
-
           <StatusBanner message={message} />
           {message && <Box sx={{ pb: 1 }} />}
         </Box>
@@ -1075,20 +809,17 @@ export default function MarksDashboard({ user }) {
                   <TableHead>
                     <TableRow>
                       <TableCell sx={{ ...tableHeadSx, width: 36 }}>#</TableCell>
-                      {columns.map(col => (
-                        <TableCell key={col.key} sx={tableHeadSx}>{col.label}</TableCell>
-                      ))}
+                      {columns.map(col => <TableCell key={col.key} sx={tableHeadSx}>{col.label}</TableCell>)}
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {marksData.map((row, i) => (
-                      <TableRow key={i}
-                        sx={{ "&:nth-of-type(even)": { background: TOKENS.surfaceAlt }, "&:hover": { background: `${TOKENS.accent}08` } }}>
+                      <TableRow key={i} sx={{ "&:nth-of-type(even)": { background: TOKENS.surfaceAlt }, "&:hover": { background: `${TOKENS.accent}08` } }}>
                         <TableCell sx={{ ...tableCellSx, color: TOKENS.textSub, fontFamily: "'DM Mono', monospace", fontSize: 11 }}>{i + 1}</TableCell>
                         {columns.map(col => {
                           if (col.key === "percentage") {
-                            const n = parseFloat(row[col.key]);
-                            if (!isNaN(n)) return <PctCell key={col.key} value={n} />;
+                            const nv = parseFloat(row[col.key]);
+                            if (!isNaN(nv)) return <PctCell key={col.key} value={nv} />;
                             return <TableCell key={col.key} sx={tableCellSx}>—</TableCell>;
                           }
                           const isName  = col.key === "learner_name";
@@ -1114,7 +845,6 @@ export default function MarksDashboard({ user }) {
             </Box>
           );
         })()}
-
       </Box>
     </Box>
   );
