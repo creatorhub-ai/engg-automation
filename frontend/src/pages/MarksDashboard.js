@@ -197,7 +197,7 @@ function OverallCell({ value, accentColor }) {
   return (
     <TableCell align="center" sx={tableCellSx}>
       <Box sx={{ display: "inline-flex", px: 1.5, py: 0.4, borderRadius: "20px", background: `${c}18`, border: `1px solid ${c}44` }}>
-        <Typography sx={{ fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 800, color: c }}>{num.toFixed(2)}%</Typography>
+        <Typography sx={{ fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 800, color: c }}>{Math.round(num)}%</Typography>
       </Box>
     </TableCell>
   );

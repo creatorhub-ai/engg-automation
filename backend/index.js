@@ -4077,7 +4077,8 @@ app.get("/api/scorecard/:batchNo", async (req, res) => {
         project:      projectOutOf100.toFixed(2),
         viva:         vivaOutOf100.toFixed(2),
 
-        overall:      overall.toFixed(2),
+        overall:      Math.round(overall).toString(),
+
         grade,
         certification,
         placement,
@@ -4255,7 +4256,7 @@ app.get("/api/scorecard-dvft/:batchNo", async (req, res) => {
         project:projectPct.toFixed(2),
         viva:vivaPct.toFixed(2),
 
-        overall:overall.toFixed(2),
+        overall:Math.round(overall).toString(),
         grade,
         certification,
         placement
