@@ -1,33 +1,38 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useEffect, useState } from "react";
+import axios from "axios";
+import * as XLSX from "xlsx";
+import jsPDF from "jspdf";
+import "jspdf-autotable";
 import {
-  Box,
   Typography,
   Button,
   Select,
   MenuItem,
   InputLabel,
   FormControl,
+  Box,
+  Fade,
   Table,
+  TableBody,
+  TableCell,
+  TableContainer,
   TableHead,
   TableRow,
-  TableCell,
-  TableBody,
   CircularProgress,
   Chip,
-  Fade,
-  Tabs,
-  Tab,
 } from "@mui/material";
-import BarChartIcon      from "@mui/icons-material/BarChart";
-import GroupIcon         from "@mui/icons-material/Group";
-import DownloadIcon      from "@mui/icons-material/Download";
-import EmojiEventsIcon   from "@mui/icons-material/EmojiEvents";
-import WorkIcon          from "@mui/icons-material/Work";
-import CheckCircleIcon   from "@mui/icons-material/CheckCircle";
-import CancelIcon        from "@mui/icons-material/Cancel";
-import StarIcon          from "@mui/icons-material/Star";
-import AssignmentIcon    from "@mui/icons-material/Assignment";
-import CalendarTodayIcon from "@mui/icons-material/CalendarToday";
+import {
+  Download         as DownloadIcon,
+  TableChart       as TableChartIcon,
+  BarChart         as BarChartIcon,
+  Person           as PersonIcon,
+  CheckCircle      as CheckCircleIcon,
+  Error            as ErrorIcon,
+  InfoOutlined     as InfoOutlinedIcon,
+  EmojiEvents      as TrophyIcon,
+  School           as SchoolIcon,
+  WorkspacePremium as CertIcon,
+} from "@mui/icons-material";
 
 const API_BASE =
   process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
@@ -51,20 +56,49 @@ const TOKENS = {
 
 const cardSx = {
   background:   TOKENS.surface,
-  borderRadius: "18px",
-  border:       `1.5px solid ${TOKENS.border}`,
-  boxShadow:    "0 2px 16px rgba(60,80,180,0.07)",
-  p:            3,
+  border:       `1px solid ${TOKENS.border}`,
+  borderRadius: "16px",
+  boxShadow:    "0 2px 12px rgba(0,0,0,0.06)",
+  overflow:     "hidden",
 };
 
-/* ─── Assessment map (mirrors MarkSheet.js) ──────────────────────────────── */
-const ASSESSMENT_MAP = {
-  weekly:        { api: "weekly-assessment",       label: "Weekly Assessment",       autoDate: false },
-  intermediate:  { api: "intermediate-assessment", label: "Intermediate Assessment", autoDate: false },
-  module:        { api: "module-level-assessment", label: "Module Level Assessment", autoDate: false },
-  final:         { api: "final-assessment",        label: "Final Assessment",        autoDate: false },
-  final_project: { api: "final-project",           label: "Final Project",           autoDate: true  },
-  viva:          { api: "viva",                    label: "Viva",                    autoDate: true  },
+const labelSx = {
+  fontFamily:    "'DM Sans', sans-serif",
+  fontSize:      11,
+  fontWeight:    700,
+  letterSpacing: "0.08em",
+  textTransform: "uppercase",
+  color:         TOKENS.textSub,
+};
+
+const inputSx = {
+  fontFamily: "'DM Sans', sans-serif",
+  fontSize: 13,
+  borderRadius: "10px",
+  "& .MuiOutlinedInput-notchedOutline": { borderColor: TOKENS.border },
+  "&:hover .MuiOutlinedInput-notchedOutline": { borderColor: TOKENS.accent },
+  "&.Mui-focused .MuiOutlinedInput-notchedOutline": { borderColor: TOKENS.accent },
+};
+
+const tableHeadSx = {
+  fontFamily:    "'DM Sans', sans-serif",
+  fontSize:      11,
+  fontWeight:    700,
+  letterSpacing: "0.06em",
+  textTransform: "uppercase",
+  color:         TOKENS.textSub,
+  borderBottom:  `2px solid ${TOKENS.border}`,
+  py:            1.4,
+  whiteSpace:    "nowrap",
+  background:    TOKENS.surfaceAlt,
+};
+
+const tableCellSx = {
+  fontFamily:   "'DM Sans', sans-serif",
+  fontSize:     13,
+  color:        TOKENS.text,
+  borderBottom: `1px solid ${TOKENS.border}`,
+  whiteSpace:   "nowrap",
 };
 
 /* ─── Batch helpers ──────────────────────────────────────────────────────── */
@@ -74,35 +108,209 @@ function isDvftBatch(b) {
   return up.includes("DVFT") || (up.startsWith("DV") && !up.includes("PDFT"));
 }
 
-/* ─── Subject key resolvers ──────────────────────────────────────────────── */
+/* ─── PDFT subject key ───────────────────────────────────────────────────── */
 function getPdftSubjectKey(name) {
   const r = (name || "").toLowerCase();
-  if (r.includes("intermediate"))                    return "intermediate";
-  if (r.includes("digital"))                         return "digital";
-  if (r.includes("cmos"))                            return "cmos";
-  if (r.includes("tcl"))                             return "tcl";
-  if (r.includes("physical") || r.includes("phy"))  return "physical";
+  if (r.includes("intermediate"))               return "intermediate";
+  if (r.includes("digital"))                    return "digital";
+  if (r.includes("cmos"))                       return "cmos";
+  if (r.includes("tcl"))                        return "tcl";
+  if (r.includes("physical") || r.includes("phy")) return "physical";
   if (r.includes("final project") || r.includes("project")) return "project";
-  if (r.includes("viva"))                            return "viva";
+  if (r.includes("viva"))                       return "viva";
   return null;
 }
 
+/* ─── DVFT subject key ───────────────────────────────────────────────────── */
 function getDvftSubjectKey(name) {
   const r = (name || "").toLowerCase();
-  if (r.includes("intermediate"))                    return "intermediate";
-  if (r.includes("uvm"))                             return "uvm";   // before "sv"
-  if (r.includes("python"))                          return "python";
-  if (r.includes("sv"))                              return "sv";
-  if (r.includes("verilog"))                         return "verilog";
-  if (r.includes("digital"))                         return "digital";
+  if (r.includes("intermediate"))               return "intermediate";
+  if (r.includes("uvm"))                        return "uvm";   // before "sv"
+  if (r.includes("python"))                     return "python";
+  if (r.includes("sv"))                         return "sv";
+  if (r.includes("verilog"))                    return "verilog";
+  if (r.includes("digital"))                    return "digital";
   if (r.includes("final project") || r.includes("project")) return "project";
-  if (r.includes("viva"))                            return "viva";
+  if (r.includes("viva"))                       return "viva";
   return null;
 }
 
-/* ─── Grade helpers ──────────────────────────────────────────────────────── */
-function getGrade(pct) {
-  if (pct == null) return "—";
+/* ─── PDFT scorecard calculator ─────────────────────────────────────────── */
+/*
+  Weightage:
+    Intermediate          10%   (out of 25 → /25*100)
+    Digital + CMOS        20%   (average of both converted to /100)
+    TCL + Physical        30%   (average of both converted to /100)
+    Final Project         30%   (out of 100)
+    Viva                  10%   (out of 25 → /25*100)
+*/
+function calcPdftScorecard(rows) {
+  const byLearner = {};
+  rows.forEach(r => {
+    if (!byLearner[r.learner_id]) {
+      byLearner[r.learner_id] = {
+        id: r.learner_id,
+        name: r.learner_name,
+        email: r.email,
+        subjects: {},
+      };
+    }
+    const key = getPdftSubjectKey(r.assessment_name);
+    if (key) {
+      const pct = r.out_off > 0 ? (r.points / r.out_off) * 100 : 0;
+      const prev = byLearner[r.learner_id].subjects[key];
+      if (prev === undefined || pct > prev) {
+        byLearner[r.learner_id].subjects[key] = pct;
+      }
+    }
+  });
+
+  return Object.values(byLearner).map(l => {
+    const s = l.subjects;
+
+    const intermediateOutOf100 = s.intermediate ?? null;
+
+    const g1 = [s.digital, s.cmos].filter(v => v !== undefined);
+    const theoryGroupOutOf100 = g1.length
+      ? g1.reduce((a, b) => a + b, 0) / g1.length : null;
+
+    const g2 = [s.tcl, s.physical].filter(v => v !== undefined);
+    const designGroupOutOf100 = g2.length
+      ? g2.reduce((a, b) => a + b, 0) / g2.length : null;
+
+    const projectOutOf100 = s.project ?? null;
+    const vivaOutOf100    = s.viva    ?? null;
+
+    const overall =
+      (intermediateOutOf100  !== null ? intermediateOutOf100  * 0.10 : 0) +
+      (theoryGroupOutOf100   !== null ? theoryGroupOutOf100   * 0.20 : 0) +
+      (designGroupOutOf100   !== null ? designGroupOutOf100   * 0.30 : 0) +
+      (projectOutOf100       !== null ? projectOutOf100       * 0.30 : 0) +
+      (vivaOutOf100          !== null ? vivaOutOf100          * 0.10 : 0);
+
+    const grade = calcGrade(overall);
+
+    const certification =
+      projectOutOf100 !== null && overall !== null
+        ? projectOutOf100 >= 70 && overall >= 70
+        : null;
+    const placement =
+      projectOutOf100 !== null && vivaOutOf100 !== null && overall !== null
+        ? projectOutOf100 >= 70 && vivaOutOf100 >= 70 && overall >= 80
+        : null;
+
+    return {
+      name:  l.name,
+      email: l.email,
+      intermediate:  intermediateOutOf100,
+      breakdown: {
+        digital:  s.digital  ?? null,
+        cmos:     s.cmos     ?? null,
+        tcl:      s.tcl      ?? null,
+        physical: s.physical ?? null,
+      },
+      theory:        theoryGroupOutOf100,
+      designGroup:   designGroupOutOf100,
+      project:       projectOutOf100,
+      viva:          vivaOutOf100,
+      overall,
+      grade,
+      certification: certification === true ? "YES" : certification === false ? "NO" : "—",
+      placement:     placement     === true ? "YES" : placement     === false ? "NO" : "—",
+    };
+  });
+}
+
+/* ─── DVFT scorecard calculator ─────────────────────────────────────────── */
+/*
+  Weightage:
+    Intermediate              10%   (out of 25 → /25*100)
+    Digital + Verilog         20%   (average of both converted to /100)
+    SV + UVM + Python         30%   (average of all three converted to /100)
+    Final Project             30%   (out of 100)
+    Viva                      10%   (out of 25 → /25*100)
+*/
+function calcDvftScorecard(rows) {
+  const byLearner = {};
+  rows.forEach(r => {
+    if (!byLearner[r.learner_id]) {
+      byLearner[r.learner_id] = {
+        id: r.learner_id,
+        name: r.learner_name,
+        email: r.email,
+        subjects: {},
+      };
+    }
+    const key = getDvftSubjectKey(r.assessment_name);
+    if (key) {
+      const pct = r.out_off > 0 ? (r.points / r.out_off) * 100 : 0;
+      const prev = byLearner[r.learner_id].subjects[key];
+      if (prev === undefined || pct > prev) {
+        byLearner[r.learner_id].subjects[key] = pct;
+      }
+    }
+  });
+
+  return Object.values(byLearner).map(l => {
+    const s = l.subjects;
+
+    const intermediateOutOf100 = s.intermediate ?? null;
+
+    const g1 = [s.digital, s.verilog].filter(v => v !== undefined);
+    const dvGroup1OutOf100 = g1.length
+      ? g1.reduce((a, b) => a + b, 0) / g1.length : null;
+
+    const g2 = [s.sv, s.uvm, s.python].filter(v => v !== undefined);
+    const dvGroup2OutOf100 = g2.length
+      ? g2.reduce((a, b) => a + b, 0) / g2.length : null;
+
+    const projectOutOf100 = s.project ?? null;
+    const vivaOutOf100    = s.viva    ?? null;
+
+    const overall =
+      (intermediateOutOf100  !== null ? intermediateOutOf100  * 0.10 : 0) +
+      (dvGroup1OutOf100      !== null ? dvGroup1OutOf100      * 0.20 : 0) +
+      (dvGroup2OutOf100      !== null ? dvGroup2OutOf100      * 0.30 : 0) +
+      (projectOutOf100       !== null ? projectOutOf100       * 0.30 : 0) +
+      (vivaOutOf100          !== null ? vivaOutOf100          * 0.10 : 0);
+
+    const grade = calcGrade(overall);
+
+    const certification =
+      projectOutOf100 !== null && overall !== null
+        ? projectOutOf100 >= 70 && overall >= 70
+        : null;
+    const placement =
+      projectOutOf100 !== null && vivaOutOf100 !== null && overall !== null
+        ? projectOutOf100 >= 70 && vivaOutOf100 >= 70 && overall >= 80
+        : null;
+
+    return {
+      name:  l.name,
+      email: l.email,
+      intermediate: intermediateOutOf100,
+      breakdown: {
+        digital:  s.digital  ?? null,
+        verilog:  s.verilog  ?? null,
+        sv:       s.sv       ?? null,
+        uvm:      s.uvm      ?? null,
+        python:   s.python   ?? null,
+      },
+      dvGroup1:      dvGroup1OutOf100,
+      dvGroup2:      dvGroup2OutOf100,
+      project:       projectOutOf100,
+      viva:          vivaOutOf100,
+      overall,
+      grade,
+      certification: certification === true ? "YES" : certification === false ? "NO" : "—",
+      placement:     placement     === true ? "YES" : placement     === false ? "NO" : "—",
+    };
+  });
+}
+
+/* ─── Grade helper ───────────────────────────────────────────────────────── */
+function calcGrade(pct) {
+  if (pct === null || pct === undefined) return "—";
   if (pct >= 90) return "O";
   if (pct >= 80) return "A+";
   if (pct >= 70) return "A";
@@ -110,750 +318,806 @@ function getGrade(pct) {
   if (pct >= 50) return "B";
   return "F";
 }
-function gradeColor(g) {
-  return ({
-    O:    TOKENS.success,
-    "A+": TOKENS.success,
-    A:    { fill: "#3d5afe", light: "#e8ecff", text: "#1e3a8a" },
-    "B+": TOKENS.warning,
-    B:    TOKENS.warning,
-    F:    TOKENS.error,
-  })[g] || { fill: TOKENS.textSub, light: "#f3f4f6", text: TOKENS.textSub };
+
+/* ─── Timestamp helpers ──────────────────────────────────────────────────── */
+function formatTimestamp(d) {
+  const p = n => String(n).padStart(2, "0");
+  return `${p(d.getDate())}/${p(d.getMonth()+1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
-function pctColor(v) {
-  if (v == null) return TOKENS.textSub;
-  if (v >= 70) return TOKENS.success.text;
-  if (v >= 50) return TOKENS.warning.text;
-  return TOKENS.error.text;
+function fileTimestamp(d) {
+  const p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
-/* ─── Scorecard calculators ──────────────────────────────────────────────── */
-function calcPdftScorecard(rows) {
-  const byL = {};
-  rows.forEach(r => {
-    if (!byL[r.learner_id])
-      byL[r.learner_id] = { id: r.learner_id, name: r.learner_name, email: r.email, s: {} };
-    const key = getPdftSubjectKey(r.assessment_name);
-    if (key) {
-      const pct = r.out_off > 0 ? (r.points / r.out_off) * 100 : 0;
-      if (byL[r.learner_id].s[key] == null || pct > byL[r.learner_id].s[key])
-        byL[r.learner_id].s[key] = pct;
-    }
-  });
-  return Object.values(byL).map(l => {
-    const s = l.s;
-    const intV     = s.intermediate ?? null;
-    const dg       = [s.digital, s.cmos].filter(v => v != null);
-    const digCmosV = dg.length ? dg.reduce((a,b)=>a+b,0)/dg.length : null;
-    const tp       = [s.tcl, s.physical].filter(v => v != null);
-    const tclPhyV  = tp.length ? tp.reduce((a,b)=>a+b,0)/tp.length : null;
-    const projV    = s.project ?? null;
-    const vivaV    = s.viva    ?? null;
-    const overall  = (intV     ?? 0)*0.10 + (digCmosV ?? 0)*0.20
-                   + (tclPhyV ?? 0)*0.30 + (projV    ?? 0)*0.30
-                   + (vivaV   ?? 0)*0.10;
-    return {
-      id: l.id, name: l.name, email: l.email,
-      intermediate: intV,
-      digital: s.digital ?? null, cmos: s.cmos ?? null,
-      tcl: s.tcl ?? null, physical: s.physical ?? null,
-      project: projV, viva: vivaV, overall,
-      grade: getGrade(overall),
-      certification: projV != null ? projV >= 70 && overall >= 70 : null,
-      placement: (projV != null && vivaV != null) ? projV >= 70 && vivaV >= 70 && overall >= 80 : null,
-    };
-  });
+function resolveIntermediateTopic(topicName, assessmentName) {
+  if (assessmentName && assessmentName.trim()) return assessmentName.trim();
+  if (topicName && topicName.toLowerCase().includes("intermediate")) return topicName;
+  return "Intermediate Assessment";
 }
 
-function calcDvftScorecard(rows) {
-  const byL = {};
-  rows.forEach(r => {
-    if (!byL[r.learner_id])
-      byL[r.learner_id] = { id: r.learner_id, name: r.learner_name, email: r.email, s: {} };
-    const key = getDvftSubjectKey(r.assessment_name);
-    if (key) {
-      const pct = r.out_off > 0 ? (r.points / r.out_off) * 100 : 0;
-      if (byL[r.learner_id].s[key] == null || pct > byL[r.learner_id].s[key])
-        byL[r.learner_id].s[key] = pct;
-    }
-  });
-  return Object.values(byL).map(l => {
-    const s = l.s;
-    const intV    = s.intermediate ?? null;
-    const dv      = [s.digital, s.verilog].filter(v => v != null);
-    const digVerV = dv.length ? dv.reduce((a,b)=>a+b,0)/dv.length : null;
-    const sv      = [s.sv, s.uvm, s.python].filter(v => v != null);
-    const svGrpV  = sv.length ? sv.reduce((a,b)=>a+b,0)/sv.length : null;
-    const projV   = s.project ?? null;
-    const vivaV   = s.viva    ?? null;
-    const overall = (intV    ?? 0)*0.10 + (digVerV ?? 0)*0.20
-                  + (svGrpV ?? 0)*0.30 + (projV   ?? 0)*0.30
-                  + (vivaV  ?? 0)*0.10;
-    return {
-      id: l.id, name: l.name, email: l.email,
-      intermediate: intV,
-      digital: s.digital ?? null, verilog: s.verilog ?? null,
-      sv: s.sv ?? null, uvm: s.uvm ?? null, python: s.python ?? null,
-      project: projV, viva: vivaV, overall,
-      grade: getGrade(overall),
-      certification: projV != null ? projV >= 70 && overall >= 70 : null,
-      placement: (projV != null && vivaV != null) ? projV >= 70 && vivaV >= 70 && overall >= 80 : null,
-    };
-  });
+/* ─── Sub-components ─────────────────────────────────────────────────────── */
+function SectionHeader({ icon, title, subtitle, right }) {
+  return (
+    <Box sx={{
+      px: 3, py: 2.5,
+      background: `linear-gradient(135deg, ${TOKENS.accent}0d 0%, ${TOKENS.accentLight} 100%)`,
+      borderBottom: `1px solid ${TOKENS.border}`,
+      display: "flex", alignItems: "center", justifyContent: "space-between",
+      gap: 1.5, flexWrap: "wrap",
+    }}>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+        <Box sx={{ color: TOKENS.accent, display: "flex" }}>{icon}</Box>
+        <Box>
+          <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 16, fontWeight: 800, color: TOKENS.text, letterSpacing: "-0.02em" }}>
+            {title}
+          </Typography>
+          {subtitle && <Typography sx={{ ...labelSx, fontSize: 10, mt: 0.2 }}>{subtitle}</Typography>}
+        </Box>
+      </Box>
+      {right && <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>{right}</Box>}
+    </Box>
+  );
 }
 
-/* ─── CSV export ─────────────────────────────────────────────────────────── */
-function exportCsv(rows, cols, filename) {
-  const header = cols.map(c => c.label).join(",");
-  const body = rows.map(r =>
-    cols.map(c => {
-      const v = c.get(r);
-      if (v == null) return "";
-      return String(v).includes(",") ? `"${v}"` : v;
-    }).join(",")
-  ).join("\n");
-  const blob = new Blob([`${header}\n${body}`], { type: "text/csv" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
-  URL.revokeObjectURL(url);
+function StatusBanner({ message }) {
+  if (!message) return null;
+  const isSuccess = message.startsWith("✅");
+  const isWarning = message.startsWith("⚠️");
+  const colors = isSuccess ? TOKENS.success : isWarning ? TOKENS.warning : TOKENS.error;
+  const Icon = isSuccess ? CheckCircleIcon : isWarning ? InfoOutlinedIcon : ErrorIcon;
+  return (
+    <Fade in>
+      <Box sx={{ mt: 2, px: 2.5, py: 1.5, borderRadius: "10px", background: colors.light, border: `1px solid ${colors.fill}44`, display: "flex", alignItems: "center", gap: 1.5 }}>
+        <Icon sx={{ fontSize: 16, color: colors.fill, flexShrink: 0 }} />
+        <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, color: colors.text }}>{message}</Typography>
+      </Box>
+    </Fade>
+  );
 }
 
-/* ─── Shared table cells ─────────────────────────────────────────────────── */
-function PctCell({ val }) {
-  if (val == null) return <TableCell align="center" sx={{ color: TOKENS.textSub, fontSize:12 }}>—</TableCell>;
-  return <TableCell align="center" sx={{ fontWeight:600, fontSize:13, color: pctColor(val) }}>{Math.round(val*10)/10}%</TableCell>;
+function PctCell({ value }) {
+  const n = parseFloat(value) || 0;
+  const color =
+    n >= 80 ? TOKENS.success.fill :
+    n >= 70 ? TOKENS.accent :
+    n >= 60 ? TOKENS.warning.fill :
+              TOKENS.error.fill;
+  return (
+    <TableCell align="center" sx={{ ...tableCellSx, py: 0.8 }}>
+      <Box sx={{ display: "inline-flex", alignItems: "center", px: 1.2, py: 0.3, borderRadius: "20px", background: `${color}18`, border: `1px solid ${color}44` }}>
+        <Typography sx={{ fontFamily: "'DM Mono', monospace", fontSize: 12, fontWeight: 700, color }}>{n.toFixed(2)}%</Typography>
+      </Box>
+    </TableCell>
+  );
 }
-function GradeCell({ grade }) {
+
+function NullablePctCell({ value }) {
+  if (value === null || value === undefined) {
+    return <TableCell align="center" sx={{ ...tableCellSx, color: TOKENS.textSub, fontSize: 12 }}>—</TableCell>;
+  }
+  return <PctCell value={value} />;
+}
+
+function YesNoChip({ value }) {
+  const yes = value === "YES";
+  const neutral = value === "—";
+  return (
+    <Chip
+      label={value}
+      size="small"
+      sx={{
+        fontFamily: "'DM Sans', sans-serif",
+        fontWeight: 700,
+        fontSize:   11,
+        background: neutral ? TOKENS.surfaceAlt : yes ? TOKENS.success.light : TOKENS.error.light,
+        color:      neutral ? TOKENS.textSub    : yes ? TOKENS.success.text  : TOKENS.error.text,
+        border:     `1px solid ${neutral ? TOKENS.border : yes ? TOKENS.success.fill : TOKENS.error.fill}44`,
+      }}
+    />
+  );
+}
+
+const gradeColor = (grade) => {
+  if (grade === "O")  return TOKENS.success.fill;
+  if (grade === "A+") return TOKENS.success.fill;
+  if (grade === "A")  return TOKENS.accent;
+  if (grade === "B+") return TOKENS.warning.fill;
+  if (grade === "B")  return TOKENS.warning.fill;
+  return TOKENS.error.fill;
+};
+
+function GradeChip({ grade }) {
   const c = gradeColor(grade);
   return (
-    <TableCell align="center">
-      <Chip label={grade} size="small" sx={{ background: c.light, color: c.text, fontWeight:800, fontSize:12, minWidth:36 }} />
-    </TableCell>
+    <Chip label={grade} size="small" sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 800, fontSize: 12, background: `${c}18`, color: c, border: `1px solid ${c}44`, minWidth: 34 }} />
   );
 }
-function BoolCell({ val }) {
-  if (val == null) return <TableCell align="center" sx={{ color: TOKENS.textSub, fontSize:12 }}>—</TableCell>;
+
+function ColGroupHeader({ label, color, colSpan }) {
   return (
-    <TableCell align="center">
-      {val
-        ? <Chip icon={<CheckCircleIcon sx={{ fontSize:13 }} />} label="Yes" size="small"
-            sx={{ background: TOKENS.success.light, color: TOKENS.success.text, fontWeight:700, fontSize:11 }} />
-        : <Chip icon={<CancelIcon     sx={{ fontSize:13 }} />} label="No"  size="small"
-            sx={{ background: TOKENS.error.light,   color: TOKENS.error.text,   fontWeight:700, fontSize:11 }} />}
+    <TableCell
+      align="center"
+      colSpan={colSpan}
+      sx={{ ...tableHeadSx, background: color, color: TOKENS.text, borderRight: `1px solid ${TOKENS.border}`, textAlign: "center" }}
+    >
+      {label}
     </TableCell>
   );
 }
 
-/* ─── Batch type pill ────────────────────────────────────────────────────── */
 function BatchPill({ batchNo }) {
   const isPdft = isPdftBatch(batchNo);
   const isDvft = isDvftBatch(batchNo);
   if (!isPdft && !isDvft) return null;
-  const { fill, light, text } = isPdft ? TOKENS.pdft : TOKENS.dvft;
-  return <Chip label={isPdft ? "PDFT Batch" : "DVFT Batch"} size="small"
-    sx={{ background: light, color: text, fontWeight:700, fontSize:11, border:`1px solid ${fill}30`, ml:1 }} />;
-}
-
-/* ─── Summary stat card ──────────────────────────────────────────────────── */
-function StatCard({ label, value, color = TOKENS.accent, sub }) {
+  const tok = isPdft ? TOKENS.pdft : TOKENS.dvft;
   return (
-    <Box sx={{ ...cardSx, p:2.5, minWidth:130, flex:"1 1 130px" }}>
-      <Typography sx={{ fontSize:11, color: TOKENS.textSub, fontWeight:600, textTransform:"uppercase", letterSpacing:0.5, mb:0.5 }}>{label}</Typography>
-      <Typography sx={{ fontSize:26, fontWeight:800, color, lineHeight:1 }}>{value}</Typography>
-      {sub && <Typography sx={{ fontSize:11, color: TOKENS.textSub, mt:0.5 }}>{sub}</Typography>}
-    </Box>
+    <Chip
+      label={isPdft ? "PDFT Batch" : "DVFT Batch"}
+      size="small"
+      sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 11, background: tok.light, color: tok.text, border: `1px solid ${tok.fill}40`, ml: 1 }}
+    />
   );
 }
 
-/* ─── Per-assessment marks table ─────────────────────────────────────────── */
-function AssessmentMarksTable({ rows, assessmentLabel, batchNo }) {
-  if (!rows.length) return (
-    <Box sx={{ textAlign:"center", py:4, color: TOKENS.textSub }}>
-      <Typography sx={{ fontSize:13 }}>No marks found for this selection.</Typography>
-    </Box>
-  );
-
-  const csvCols = [
-    { label: "Name",       get: r => r.learner_name },
-    { label: "Email",      get: r => r.email },
-    { label: "Assessment", get: r => r.assessment_name },
-    { label: "Date",       get: r => r.assessment_date?.slice(0,10) || "" },
-    { label: "Points",     get: r => r.points },
-    { label: "Out Of",     get: r => r.out_off },
-    { label: "% Score",    get: r => r.out_off > 0 ? Math.round((r.points/r.out_off)*1000)/10 : "" },
-    { label: "Grade",      get: r => getGrade(r.out_off > 0 ? (r.points/r.out_off)*100 : null) },
-  ];
-
-  const colSx = { fontWeight:700, fontSize:12, color: TOKENS.textSub, whiteSpace:"nowrap" };
-  const avg   = Math.round(rows.reduce((s,r) => s + (r.out_off>0 ? (r.points/r.out_off)*100 : 0), 0) / rows.length * 10) / 10;
-  const passed = rows.filter(r => r.out_off>0 && (r.points/r.out_off)*100 >= 50).length;
-
-  return (
-    <>
-      <Box sx={{ display:"flex", gap:2, flexWrap:"wrap", mb:2 }}>
-        <StatCard label="Learners"   value={rows.length} color={TOKENS.text} />
-        <StatCard label="Avg Score"  value={`${avg}%`}   color={TOKENS.accent} />
-        <StatCard label="≥ 50% Pass" value={passed}       color={TOKENS.success.fill}
-          sub={`${Math.round((passed/rows.length)*100)}%`} />
-      </Box>
-
-      <Box sx={{ display:"flex", justifyContent:"flex-end", mb:1.5 }}>
-        <Button size="small" variant="outlined" startIcon={<DownloadIcon sx={{ fontSize:14 }} />}
-          onClick={() => exportCsv(rows, csvCols, `${batchNo}_${assessmentLabel}.csv`)}
-          sx={{ fontFamily:"'DM Sans', sans-serif", fontWeight:700, fontSize:12, textTransform:"none",
-               borderRadius:"10px", borderColor: TOKENS.border, color: TOKENS.textSub,
-               "&:hover": { borderColor: TOKENS.accent, color: TOKENS.accent } }}>
-          Export CSV
-        </Button>
-      </Box>
-
-      <Box sx={{ overflowX:"auto" }}>
-        <Table size="small">
-          <TableHead>
-            <TableRow sx={{ background: TOKENS.surfaceAlt }}>
-              <TableCell sx={colSx}>#</TableCell>
-              <TableCell sx={colSx}>Name</TableCell>
-              <TableCell sx={colSx}>Email</TableCell>
-              <TableCell sx={colSx}>Assessment / Topic</TableCell>
-              <TableCell sx={{ ...colSx, textAlign:"center" }}>Date</TableCell>
-              <TableCell sx={{ ...colSx, textAlign:"center" }}>Points</TableCell>
-              <TableCell sx={{ ...colSx, textAlign:"center" }}>Out Of</TableCell>
-              <TableCell sx={{ ...colSx, textAlign:"center" }}>% Score</TableCell>
-              <TableCell sx={{ ...colSx, textAlign:"center" }}>Grade</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {rows.map((r, i) => {
-              const pct = r.out_off > 0 ? (r.points / r.out_off) * 100 : null;
-              return (
-                <TableRow key={i} hover sx={{ "&:nth-of-type(even)": { background: TOKENS.surfaceAlt } }}>
-                  <TableCell sx={{ fontSize:12, color: TOKENS.textSub }}>{i+1}</TableCell>
-                  <TableCell sx={{ fontSize:13, fontWeight:600, color: TOKENS.text, whiteSpace:"nowrap" }}>{r.learner_name}</TableCell>
-                  <TableCell sx={{ fontSize:12, color: TOKENS.textSub }}>{r.email}</TableCell>
-                  <TableCell sx={{ fontSize:12 }}>{r.assessment_name}</TableCell>
-                  <TableCell align="center" sx={{ fontSize:12, color: TOKENS.textSub, whiteSpace:"nowrap" }}>{r.assessment_date?.slice(0,10) || "—"}</TableCell>
-                  <TableCell align="center" sx={{ fontSize:13, fontWeight:700 }}>{r.points}</TableCell>
-                  <TableCell align="center" sx={{ fontSize:12, color: TOKENS.textSub }}>{r.out_off}</TableCell>
-                  <PctCell val={pct} />
-                  <GradeCell grade={getGrade(pct)} />
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
-      </Box>
-    </>
-  );
-}
-
-/* ─── PDFT Scorecard table ───────────────────────────────────────────────── */
+/* ─── PDFT Scorecard Table ───────────────────────────────────────────────── */
 function PdftScorecardTable({ data, batchNo }) {
-  const colSx = { fontWeight:700, fontSize:12, color: TOKENS.textSub, whiteSpace:"nowrap" };
-  const csvCols = [
-    { label: "Name",          get: r => r.name },
-    { label: "Email",         get: r => r.email },
-    { label: "Intermediate%", get: r => r.intermediate != null ? Math.round(r.intermediate*10)/10 : "" },
-    { label: "Digital%",      get: r => r.digital  != null ? Math.round(r.digital*10)/10  : "" },
-    { label: "CMOS%",         get: r => r.cmos     != null ? Math.round(r.cmos*10)/10     : "" },
-    { label: "TCL%",          get: r => r.tcl      != null ? Math.round(r.tcl*10)/10      : "" },
-    { label: "Physical%",     get: r => r.physical != null ? Math.round(r.physical*10)/10 : "" },
-    { label: "Project%",      get: r => r.project  != null ? Math.round(r.project*10)/10  : "" },
-    { label: "Viva%",         get: r => r.viva     != null ? Math.round(r.viva*10)/10     : "" },
-    { label: "Overall%",      get: r => Math.round(r.overall*10)/10 },
-    { label: "Grade",         get: r => r.grade },
-    { label: "Certification", get: r => r.certification === true ? "Yes" : r.certification === false ? "No" : "" },
-    { label: "Placement",     get: r => r.placement === true ? "Yes" : r.placement === false ? "No" : "" },
-  ];
   return (
-    <>
-      <Box sx={{ display:"flex", justifyContent:"flex-end", mb:1.5 }}>
-        <Button size="small" variant="outlined" startIcon={<DownloadIcon sx={{ fontSize:14 }} />}
-          onClick={() => exportCsv(data, csvCols, `${batchNo}_pdft_scorecard.csv`)}
-          sx={{ fontFamily:"'DM Sans', sans-serif", fontWeight:700, fontSize:12, textTransform:"none",
-               borderRadius:"10px", borderColor: TOKENS.border, color: TOKENS.textSub,
-               "&:hover": { borderColor: TOKENS.pdft.fill, color: TOKENS.pdft.fill } }}>
-          Export CSV
-        </Button>
-      </Box>
-      <Box sx={{ overflowX:"auto" }}>
-        <Table size="small" sx={{ minWidth:920 }}>
+    <Box sx={{ ...cardSx }}>
+      <SectionHeader
+        icon={<TrophyIcon sx={{ fontSize: 20 }} />}
+        title={<>Scorecard <BatchPill batchNo={batchNo} /></>}
+        subtitle={`Batch ${batchNo} · ${data.length} learners`}
+        right={
+          <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+            {[
+              { label: "Intermediate 10%", color: "#e3f2fd" },
+              { label: "Theory 20%",       color: "#f3e5f5" },
+              { label: "Physical 30%",     color: "#fff3e0" },
+              { label: "Project 30%",      color: "#fce4ec" },
+              { label: "Viva 10%",         color: "#e0f7fa" },
+            ].map(item => (
+              <Chip key={item.label} label={item.label} size="small"
+                sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 10, background: item.color, border: `1px solid ${TOKENS.border}` }} />
+            ))}
+          </Box>
+        }
+      />
+      <TableContainer sx={{ maxHeight: 600 }}>
+        <Table stickyHeader size="small">
           <TableHead>
-            <TableRow sx={{ background: TOKENS.surfaceAlt }}>
-              <TableCell sx={colSx}>#</TableCell>
-              <TableCell sx={colSx}>Name</TableCell>
-              <TableCell sx={{ ...colSx, textAlign:"center" }}>Intermediate<br/><span style={{ fontWeight:400, fontSize:10 }}>(10%)</span></TableCell>
-              <TableCell sx={{ ...colSx, textAlign:"center" }}>Digital %</TableCell>
-              <TableCell sx={{ ...colSx, textAlign:"center" }}>CMOS %<br/><span style={{ fontWeight:400, fontSize:10 }}>(Theory 20%)</span></TableCell>
-              <TableCell sx={{ ...colSx, textAlign:"center" }}>TCL %</TableCell>
-              <TableCell sx={{ ...colSx, textAlign:"center" }}>Physical %<br/><span style={{ fontWeight:400, fontSize:10 }}>(Design 30%)</span></TableCell>
-              <TableCell sx={{ ...colSx, textAlign:"center" }}>Project<br/><span style={{ fontWeight:400, fontSize:10 }}>(30%)</span></TableCell>
-              <TableCell sx={{ ...colSx, textAlign:"center" }}>Viva<br/><span style={{ fontWeight:400, fontSize:10 }}>(10%)</span></TableCell>
-              <TableCell sx={{ ...colSx, textAlign:"center" }}>Overall %</TableCell>
-              <TableCell sx={{ ...colSx, textAlign:"center" }}>Grade</TableCell>
-              <TableCell sx={{ ...colSx, textAlign:"center" }}><EmojiEventsIcon sx={{ fontSize:13 }} /> Cert</TableCell>
-              <TableCell sx={{ ...colSx, textAlign:"center" }}><WorkIcon sx={{ fontSize:13 }} /> Place</TableCell>
+            {/* Group row */}
+            <TableRow>
+              <TableCell colSpan={2} sx={{ ...tableHeadSx, background: TOKENS.surfaceAlt }} />
+              <ColGroupHeader label="Intermediate"  color="#e3f2fd" colSpan={1} />
+              <ColGroupHeader label="Theory Group"  color="#f3e5f5" colSpan={4} />
+              <ColGroupHeader label="Physical"      color="#fff3e0" colSpan={1} />
+              <ColGroupHeader label="Project"       color="#fce4ec" colSpan={1} />
+              <ColGroupHeader label="Viva"          color="#e0f7fa" colSpan={1} />
+              <TableCell colSpan={3} sx={{ ...tableHeadSx, background: TOKENS.surfaceAlt }} />
+            </TableRow>
+            {/* Label row */}
+            <TableRow>
+              {[
+                { l: "Name",            align: "left"   },
+                { l: "Email",           align: "left"   },
+                { l: "Intermediate %",  align: "center", bg: "#e3f2fd" },
+                { l: "Digital %",       align: "center", bg: "#f3e5f5" },
+                { l: "CMOS %",          align: "center", bg: "#f3e5f5" },
+                { l: "TCL %",           align: "center", bg: "#f3e5f5" },
+                { l: "Theory Group %",  align: "center", bg: "#f3e5f5" },
+                { l: "Physical %",      align: "center", bg: "#fff3e0" },
+                { l: "Project %",       align: "center", bg: "#fce4ec" },
+                { l: "Viva %",          align: "center", bg: "#e0f7fa" },
+                { l: "Overall %",       align: "center" },
+                { l: "Grade",           align: "center" },
+                { l: "Certification",   align: "center" },
+                { l: "Placement",       align: "center" },
+              ].map(h => (
+                <TableCell key={h.l} align={h.align} sx={{ ...tableHeadSx, background: h.bg || TOKENS.surfaceAlt }}>{h.l}</TableCell>
+              ))}
             </TableRow>
           </TableHead>
           <TableBody>
-            {data.map((r, i) => (
-              <TableRow key={r.id} hover sx={{ "&:nth-of-type(even)": { background: TOKENS.surfaceAlt } }}>
-                <TableCell sx={{ fontSize:12, color: TOKENS.textSub }}>{i+1}</TableCell>
-                <TableCell sx={{ fontSize:13, fontWeight:600, color: TOKENS.text, whiteSpace:"nowrap" }}>
-                  {r.name}<br/><span style={{ fontSize:11, fontWeight:400, color: TOKENS.textSub }}>{r.email}</span>
+            {data.map((row, i) => (
+              <TableRow key={i} sx={{ "&:nth-of-type(even)": { background: TOKENS.surfaceAlt }, "&:hover": { background: `${TOKENS.accent}08`, transition: "background 0.15s" } }}>
+                <TableCell sx={{ ...tableCellSx, fontWeight: 600 }}>{row.name}</TableCell>
+                <TableCell sx={{ ...tableCellSx, color: TOKENS.textSub, fontSize: 12 }}>{row.email}</TableCell>
+                <NullablePctCell value={row.intermediate} />
+                <NullablePctCell value={row.breakdown?.digital} />
+                <NullablePctCell value={row.breakdown?.cmos} />
+                <NullablePctCell value={row.breakdown?.tcl} />
+                <NullablePctCell value={row.theory} />
+                <NullablePctCell value={row.breakdown?.physical} />
+                <NullablePctCell value={row.project} />
+                <NullablePctCell value={row.viva} />
+                <TableCell align="center" sx={tableCellSx}>
+                  {(() => {
+                    const n = parseFloat(row.overall || 0);
+                    const c = n >= 80 ? TOKENS.success.fill : n >= 70 ? TOKENS.accent : TOKENS.error.fill;
+                    return (
+                      <Box sx={{ display: "inline-flex", alignItems: "center", px: 1.5, py: 0.4, borderRadius: "20px", background: `${c}18`, border: `1px solid ${c}44` }}>
+                        <Typography sx={{ fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 800, color: c }}>{n.toFixed(2)}%</Typography>
+                      </Box>
+                    );
+                  })()}
                 </TableCell>
-                <PctCell val={r.intermediate} />
-                <PctCell val={r.digital} />
-                <PctCell val={r.cmos} />
-                <PctCell val={r.tcl} />
-                <PctCell val={r.physical} />
-                <PctCell val={r.project} />
-                <PctCell val={r.viva} />
-                <PctCell val={r.overall} />
-                <GradeCell grade={r.grade} />
-                <BoolCell val={r.certification} />
-                <BoolCell val={r.placement} />
+                <TableCell align="center" sx={tableCellSx}><GradeChip grade={row.grade} /></TableCell>
+                <TableCell align="center" sx={tableCellSx}><YesNoChip value={row.certification} /></TableCell>
+                <TableCell align="center" sx={tableCellSx}><YesNoChip value={row.placement} /></TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
+      </TableContainer>
+      <Box sx={{ px: 3, py: 2, background: TOKENS.surfaceAlt, borderTop: `1px solid ${TOKENS.border}`, display: "flex", gap: 3, flexWrap: "wrap", alignItems: "center" }}>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          <CertIcon sx={{ fontSize: 14, color: TOKENS.textSub }} />
+          <Typography sx={{ ...labelSx, fontSize: 10 }}>Certification: Project ≥ 70% AND Overall ≥ 70%</Typography>
+        </Box>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          <SchoolIcon sx={{ fontSize: 14, color: TOKENS.textSub }} />
+          <Typography sx={{ ...labelSx, fontSize: 10 }}>Placement: Project ≥ 70% AND Viva ≥ 70% AND Overall ≥ 80%</Typography>
+        </Box>
+        <Typography sx={{ ...labelSx, fontSize: 10 }}>Weightage: Intermediate 10% · Digital+CMOS 20% · TCL+Physical 30% · Project 30% · Viva 10%</Typography>
       </Box>
-    </>
-  );
-}
-
-/* ─── DVFT Scorecard table ───────────────────────────────────────────────── */
-function DvftScorecardTable({ data, batchNo }) {
-  const colSx = { fontWeight:700, fontSize:12, color: TOKENS.textSub, whiteSpace:"nowrap" };
-  const csvCols = [
-    { label: "Name",          get: r => r.name },
-    { label: "Email",         get: r => r.email },
-    { label: "Intermediate%", get: r => r.intermediate != null ? Math.round(r.intermediate*10)/10 : "" },
-    { label: "Digital%",      get: r => r.digital  != null ? Math.round(r.digital*10)/10  : "" },
-    { label: "Verilog%",      get: r => r.verilog  != null ? Math.round(r.verilog*10)/10  : "" },
-    { label: "SV%",           get: r => r.sv       != null ? Math.round(r.sv*10)/10       : "" },
-    { label: "UVM%",          get: r => r.uvm      != null ? Math.round(r.uvm*10)/10      : "" },
-    { label: "Python%",       get: r => r.python   != null ? Math.round(r.python*10)/10   : "" },
-    { label: "Project%",      get: r => r.project  != null ? Math.round(r.project*10)/10  : "" },
-    { label: "Viva%",         get: r => r.viva     != null ? Math.round(r.viva*10)/10     : "" },
-    { label: "Overall%",      get: r => Math.round(r.overall*10)/10 },
-    { label: "Grade",         get: r => r.grade },
-    { label: "Certification", get: r => r.certification === true ? "Yes" : r.certification === false ? "No" : "" },
-    { label: "Placement",     get: r => r.placement === true ? "Yes" : r.placement === false ? "No" : "" },
-  ];
-  return (
-    <>
-      <Box sx={{ display:"flex", justifyContent:"flex-end", mb:1.5 }}>
-        <Button size="small" variant="outlined" startIcon={<DownloadIcon sx={{ fontSize:14 }} />}
-          onClick={() => exportCsv(data, csvCols, `${batchNo}_dvft_scorecard.csv`)}
-          sx={{ fontFamily:"'DM Sans', sans-serif", fontWeight:700, fontSize:12, textTransform:"none",
-               borderRadius:"10px", borderColor: TOKENS.border, color: TOKENS.textSub,
-               "&:hover": { borderColor: TOKENS.dvft.fill, color: TOKENS.dvft.fill } }}>
-          Export CSV
-        </Button>
-      </Box>
-      <Box sx={{ overflowX:"auto" }}>
-        <Table size="small" sx={{ minWidth:1020 }}>
-          <TableHead>
-            <TableRow sx={{ background: TOKENS.surfaceAlt }}>
-              <TableCell sx={colSx}>#</TableCell>
-              <TableCell sx={colSx}>Name</TableCell>
-              <TableCell sx={{ ...colSx, textAlign:"center" }}>Intermediate<br/><span style={{ fontWeight:400, fontSize:10 }}>(10%)</span></TableCell>
-              <TableCell sx={{ ...colSx, textAlign:"center" }}>Digital %</TableCell>
-              <TableCell sx={{ ...colSx, textAlign:"center" }}>Verilog %<br/><span style={{ fontWeight:400, fontSize:10 }}>(Grp1 20%)</span></TableCell>
-              <TableCell sx={{ ...colSx, textAlign:"center" }}>SV %</TableCell>
-              <TableCell sx={{ ...colSx, textAlign:"center" }}>UVM %</TableCell>
-              <TableCell sx={{ ...colSx, textAlign:"center" }}>Python %<br/><span style={{ fontWeight:400, fontSize:10 }}>(Grp2 30%)</span></TableCell>
-              <TableCell sx={{ ...colSx, textAlign:"center" }}>Project<br/><span style={{ fontWeight:400, fontSize:10 }}>(30%)</span></TableCell>
-              <TableCell sx={{ ...colSx, textAlign:"center" }}>Viva<br/><span style={{ fontWeight:400, fontSize:10 }}>(10%)</span></TableCell>
-              <TableCell sx={{ ...colSx, textAlign:"center" }}>Overall %</TableCell>
-              <TableCell sx={{ ...colSx, textAlign:"center" }}>Grade</TableCell>
-              <TableCell sx={{ ...colSx, textAlign:"center" }}><EmojiEventsIcon sx={{ fontSize:13 }} /> Cert</TableCell>
-              <TableCell sx={{ ...colSx, textAlign:"center" }}><WorkIcon sx={{ fontSize:13 }} /> Place</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {data.map((r, i) => (
-              <TableRow key={r.id} hover sx={{ "&:nth-of-type(even)": { background: TOKENS.surfaceAlt } }}>
-                <TableCell sx={{ fontSize:12, color: TOKENS.textSub }}>{i+1}</TableCell>
-                <TableCell sx={{ fontSize:13, fontWeight:600, color: TOKENS.text, whiteSpace:"nowrap" }}>
-                  {r.name}<br/><span style={{ fontSize:11, fontWeight:400, color: TOKENS.textSub }}>{r.email}</span>
-                </TableCell>
-                <PctCell val={r.intermediate} />
-                <PctCell val={r.digital} />
-                <PctCell val={r.verilog} />
-                <PctCell val={r.sv} />
-                <PctCell val={r.uvm} />
-                <PctCell val={r.python} />
-                <PctCell val={r.project} />
-                <PctCell val={r.viva} />
-                <PctCell val={r.overall} />
-                <GradeCell grade={r.grade} />
-                <BoolCell val={r.certification} />
-                <BoolCell val={r.placement} />
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </Box>
-    </>
-  );
-}
-
-/* ─── Weightage chips ────────────────────────────────────────────────────── */
-function WeightageChips({ batchNo }) {
-  const isPdft = isPdftBatch(batchNo);
-  const isDvft = isDvftBatch(batchNo);
-  if (!isPdft && !isDvft) return null;
-  const { light, text } = isPdft ? TOKENS.pdft : TOKENS.dvft;
-  const chips = isPdft
-    ? ["Intermediate: 10%", "Digital + CMOS: 20%", "TCL + Physical: 30%", "Project: 30%", "Viva: 10%"]
-    : ["Intermediate: 10%", "Digital + Verilog: 20%", "SV + UVM + Python: 30%", "Project: 30%", "Viva: 10%"];
-  return (
-    <Box sx={{ display:"flex", flexWrap:"wrap", gap:1, mb:2 }}>
-      {chips.map(c => (
-        <Chip key={c} size="small" label={c}
-          sx={{ fontSize:11, background: light, color: text, fontWeight:600 }} />
-      ))}
     </Box>
   );
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   MAIN COMPONENT
-═══════════════════════════════════════════════════════════════════════════ */
-export default function MarksDashboard() {
-  /* ── State ── */
-  const [availableBatches, setAvailableBatches] = useState([]);
-  const [loadingBatches,   setLoadingBatches]   = useState(true);
-  const [batchNo,          setBatchNo]          = useState("");
-  const [assessmentType,   setAssessmentType]   = useState("weekly");
+/* ─── DVFT Scorecard Table ───────────────────────────────────────────────── */
+function DvftScorecardTable({ data, batchNo }) {
+  return (
+    <Box sx={{ ...cardSx }}>
+      <SectionHeader
+        icon={<TrophyIcon sx={{ fontSize: 20 }} />}
+        title={<>Scorecard <BatchPill batchNo={batchNo} /></>}
+        subtitle={`Batch ${batchNo} · ${data.length} learners`}
+        right={
+          <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+            {[
+              { label: "Intermediate 10%",         color: "#e3f2fd" },
+              { label: "Digital + Verilog 20%",    color: "#f3e5f5" },
+              { label: "SV + UVM + Python 30%",    color: "#fff3e0" },
+              { label: "Project 30%",              color: "#fce4ec" },
+              { label: "Viva 10%",                 color: "#e0f7fa" },
+            ].map(item => (
+              <Chip key={item.label} label={item.label} size="small"
+                sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 10, background: item.color, border: `1px solid ${TOKENS.border}` }} />
+            ))}
+          </Box>
+        }
+      />
+      <TableContainer sx={{ maxHeight: 600 }}>
+        <Table stickyHeader size="small">
+          <TableHead>
+            {/* Group row */}
+            <TableRow>
+              <TableCell colSpan={2} sx={{ ...tableHeadSx, background: TOKENS.surfaceAlt }} />
+              <ColGroupHeader label="Intermediate"        color="#e3f2fd" colSpan={1} />
+              <ColGroupHeader label="Group 1 — Digital + Verilog" color="#f3e5f5" colSpan={3} />
+              <ColGroupHeader label="Group 2 — SV + UVM + Python" color="#fff3e0" colSpan={4} />
+              <ColGroupHeader label="Project"             color="#fce4ec" colSpan={1} />
+              <ColGroupHeader label="Viva"                color="#e0f7fa" colSpan={1} />
+              <TableCell colSpan={3} sx={{ ...tableHeadSx, background: TOKENS.surfaceAlt }} />
+            </TableRow>
+            {/* Label row */}
+            <TableRow>
+              {[
+                { l: "Name",           align: "left"   },
+                { l: "Email",          align: "left"   },
+                { l: "Intermediate %", align: "center", bg: "#e3f2fd" },
+                { l: "Digital %",      align: "center", bg: "#f3e5f5" },
+                { l: "Verilog %",      align: "center", bg: "#f3e5f5" },
+                { l: "Grp1 %",         align: "center", bg: "#f3e5f5" },
+                { l: "SV %",           align: "center", bg: "#fff3e0" },
+                { l: "UVM %",          align: "center", bg: "#fff3e0" },
+                { l: "Python %",       align: "center", bg: "#fff3e0" },
+                { l: "Grp2 %",         align: "center", bg: "#fff3e0" },
+                { l: "Project %",      align: "center", bg: "#fce4ec" },
+                { l: "Viva %",         align: "center", bg: "#e0f7fa" },
+                { l: "Overall %",      align: "center" },
+                { l: "Grade",          align: "center" },
+                { l: "Certification",  align: "center" },
+                { l: "Placement",      align: "center" },
+              ].map(h => (
+                <TableCell key={h.l} align={h.align} sx={{ ...tableHeadSx, background: h.bg || TOKENS.surfaceAlt }}>{h.l}</TableCell>
+              ))}
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {data.map((row, i) => (
+              <TableRow key={i} sx={{ "&:nth-of-type(even)": { background: TOKENS.surfaceAlt }, "&:hover": { background: `${TOKENS.dvft.light}`, transition: "background 0.15s" } }}>
+                <TableCell sx={{ ...tableCellSx, fontWeight: 600 }}>{row.name}</TableCell>
+                <TableCell sx={{ ...tableCellSx, color: TOKENS.textSub, fontSize: 12 }}>{row.email}</TableCell>
+                <NullablePctCell value={row.intermediate} />
+                <NullablePctCell value={row.breakdown?.digital} />
+                <NullablePctCell value={row.breakdown?.verilog} />
+                <NullablePctCell value={row.dvGroup1} />
+                <NullablePctCell value={row.breakdown?.sv} />
+                <NullablePctCell value={row.breakdown?.uvm} />
+                <NullablePctCell value={row.breakdown?.python} />
+                <NullablePctCell value={row.dvGroup2} />
+                <NullablePctCell value={row.project} />
+                <NullablePctCell value={row.viva} />
+                <TableCell align="center" sx={tableCellSx}>
+                  {(() => {
+                    const n = parseFloat(row.overall || 0);
+                    const c = n >= 80 ? TOKENS.success.fill : n >= 70 ? TOKENS.dvft.fill : TOKENS.error.fill;
+                    return (
+                      <Box sx={{ display: "inline-flex", alignItems: "center", px: 1.5, py: 0.4, borderRadius: "20px", background: `${c}18`, border: `1px solid ${c}44` }}>
+                        <Typography sx={{ fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 800, color: c }}>{n.toFixed(2)}%</Typography>
+                      </Box>
+                    );
+                  })()}
+                </TableCell>
+                <TableCell align="center" sx={tableCellSx}><GradeChip grade={row.grade} /></TableCell>
+                <TableCell align="center" sx={tableCellSx}><YesNoChip value={row.certification} /></TableCell>
+                <TableCell align="center" sx={tableCellSx}><YesNoChip value={row.placement} /></TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </TableContainer>
+      <Box sx={{ px: 3, py: 2, background: TOKENS.surfaceAlt, borderTop: `1px solid ${TOKENS.border}`, display: "flex", gap: 3, flexWrap: "wrap", alignItems: "center" }}>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          <CertIcon sx={{ fontSize: 14, color: TOKENS.textSub }} />
+          <Typography sx={{ ...labelSx, fontSize: 10 }}>Certification: Project ≥ 70% AND Overall ≥ 70%</Typography>
+        </Box>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          <SchoolIcon sx={{ fontSize: 14, color: TOKENS.textSub }} />
+          <Typography sx={{ ...labelSx, fontSize: 10 }}>Placement: Project ≥ 70% AND Viva ≥ 70% AND Overall ≥ 80%</Typography>
+        </Box>
+        <Typography sx={{ ...labelSx, fontSize: 10 }}>
+          Weightage: Intermediate 10% · Digital+Verilog 20% · SV+UVM+Python 30% · Project 30% · Viva 10%
+        </Typography>
+      </Box>
+    </Box>
+  );
+}
 
-  // periods for non-autoDate types
-  const [periods,        setPeriods]        = useState([]);
-  const [loadingPeriods, setLoadingPeriods] = useState(false);
-  const [selectedPeriod, setSelectedPeriod] = useState("");
+/* ─── Main Component ─────────────────────────────────────────────────────── */
+export default function MarksDashboard({ user }) {
+  const [batchNo,        setBatchNo]        = useState("");
+  const [assessmentType, setAssessmentType] = useState("weekly");
+  const [marksData,      setMarksData]      = useState([]);
+  const [scorecardData,  setScorecardData]  = useState([]);
+  const [batches,        setBatches]        = useState([]);
+  const [fetchLoading,   setFetchLoading]   = useState(false);
+  const [message,        setMessage]        = useState("");
 
-  // marks for assessment view
-  const [loadingMarks, setLoadingMarks] = useState(false);
-  const [marksRows,    setMarksRows]    = useState([]);
-  const [error,        setError]        = useState("");
+  const welcomeName = user?.name || "User";
+  const roleTitle   = user?.role
+    ? user.role.charAt(0).toUpperCase() + user.role.slice(1)
+    : "Dashboard";
 
-  // scorecard for PDFT/DVFT
-  const [scorecardRows,    setScorecardRows]    = useState([]);
-  const [loadingScorecard, setLoadingScorecard] = useState(false);
-  const [scorecardError,   setScorecardError]   = useState("");
-
-  // tab: 0 = assessment view, 1 = scorecard
-  const [tab, setTab] = useState(0);
-
-  const isPdft         = isPdftBatch(batchNo);
-  const isDvft         = isDvftBatch(batchNo);
-  const isSpecialBatch = isPdft || isDvft;
-  const accentColor    = isPdft ? TOKENS.pdft.fill : isDvft ? TOKENS.dvft.fill : TOKENS.accent;
-  const cfg            = ASSESSMENT_MAP[assessmentType];
+  const isPdft      = isPdftBatch(batchNo);
+  const isDvft      = isDvftBatch(batchNo);
+  const isScorecard = assessmentType === "scorecard";
 
   /* ── Load batches ── */
   useEffect(() => {
-    fetch(`${API_BASE}/api/batches`)
-      .then(r => r.json())
-      .then(data => setAvailableBatches(
-        Array.isArray(data)
-          ? [...new Set(data.map(b => typeof b === "string" ? b : b.batch_no))]
-          : []
-      ))
-      .catch(() => {})
-      .finally(() => setLoadingBatches(false));
+    axios.get(`${API_BASE}/api/batches`)
+      .then(res => { if (Array.isArray(res.data)) setBatches(res.data); })
+      .catch(() => setMessage("Error loading batches"));
   }, []);
 
-  /* ── Load periods when batch + type changes ── */
-  useEffect(() => {
-    setPeriods([]); setSelectedPeriod(""); setMarksRows([]); setError("");
-    if (!batchNo || cfg.autoDate) return;
-    setLoadingPeriods(true);
-    fetch(`${API_BASE}/apiperiods/${batchNo}/${cfg.api}`)
-      .then(r => r.json())
-      .then(data => {
-        if (!Array.isArray(data)) return;
-        const seen = new Map();
-        data.forEach(p => {
-          const k = `${p.date}::${(p.topic_name||"").trim().toLowerCase()}`;
-          if (!seen.has(k)) seen.set(k, p);
-        });
-        const sorted = Array.from(seen.values()).sort((a,b) => new Date(a.date) - new Date(b.date));
-        setPeriods(sorted);
-      })
-      .catch(() => setPeriods([]))
-      .finally(() => setLoadingPeriods(false));
-  }, [batchNo, assessmentType]);
-
-  /* ── Auto-load marks for autoDate types (Final Project, Viva) ── */
-  useEffect(() => {
-    setMarksRows([]); setError("");
-    if (!batchNo || !cfg.autoDate) return;
-    setLoadingMarks(true);
-    fetch(`${API_BASE}/api/marks/${cfg.api}?batch_no=${batchNo}`)
-      .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
-      .then(data => setMarksRows(Array.isArray(data) ? data : []))
-      .catch(e => setError(`Failed to load marks: ${e.message}`))
-      .finally(() => setLoadingMarks(false));
-  }, [batchNo, assessmentType]);
-
-  /* ── Load scorecard when batch changes ── */
-  useEffect(() => {
-    setScorecardRows([]); setScorecardError("");
-    if (!batchNo || !isSpecialBatch) return;
-    setLoadingScorecard(true);
-    fetch(`${API_BASE}/api/scorecard/${encodeURIComponent(batchNo)}`)
-      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-      .then(data => {
-        if (!Array.isArray(data)) throw new Error("Unexpected response");
-        if (isPdftBatch(batchNo))      setScorecardRows(calcPdftScorecard(data));
-        else if (isDvftBatch(batchNo)) setScorecardRows(calcDvftScorecard(data));
-      })
-      .catch(e => setScorecardError(`Failed to load scorecard: ${e.message}`))
-      .finally(() => setLoadingScorecard(false));
-  }, [batchNo]);
-
-  /* ── Load marks for a selected period ── */
-  const loadMarksForPeriod = useCallback(async (plannerId, date) => {
-    if (!batchNo || !date) return;
-    setLoadingMarks(true); setError(""); setMarksRows([]);
+  /* ── Fetch marks ── */
+  const fetchMarks = async () => {
+    if (!batchNo) { setMessage("⚠️ Please select a batch"); return; }
+    setFetchLoading(true); setMessage(""); setMarksData([]); setScorecardData([]);
     try {
-      const url = `${API_BASE}/api/marks/${cfg.api}?batch_no=${batchNo}&course_planner_id=${plannerId || ""}&assessment_date=${date}`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      setMarksRows(Array.isArray(data) ? data : []);
-    } catch(e) {
-      setError(`Failed to load marks: ${e.message}`);
+      if (isScorecard) {
+        /* ── Scorecard: fetch all raw marks, compute client-side ── */
+        const res = await axios.get(`${API_BASE}/api/scorecard/${batchNo}`);
+        const raw = Array.isArray(res.data) ? res.data
+                  : Array.isArray(res.data?.data) ? res.data.data
+                  : [];
+
+        if (!raw.length) {
+          setMessage("No scorecard data found");
+          return;
+        }
+
+        let computed;
+        if (isPdftBatch(batchNo)) {
+          computed = calcPdftScorecard(raw);
+        } else if (isDvftBatch(batchNo)) {
+          computed = calcDvftScorecard(raw);
+        } else {
+          setMessage("⚠️ Scorecard is only available for PDFT and DVFT batches");
+          return;
+        }
+
+        setScorecardData(computed);
+        setMessage(`✅ Loaded scorecard for ${computed.length} learner${computed.length !== 1 ? "s" : ""}`);
+      } else {
+        /* ── Regular assessment view ── */
+        const res = await axios.get(`${API_BASE}/api/assessments/${batchNo}/${assessmentType}`);
+        const data = Array.isArray(res.data?.data) ? res.data.data : [];
+        const processed = data.map(row =>
+          assessmentType === "intermediate"
+            ? { ...row, topic_name: resolveIntermediateTopic(row.topic_name, row.assessment_name) }
+            : row
+        );
+        setMarksData(processed);
+        setMessage(
+          processed.length
+            ? `✅ Loaded ${processed.length} record${processed.length !== 1 ? "s" : ""}`
+            : "No data found"
+        );
+      }
+    } catch {
+      setMessage("Error fetching data");
     } finally {
-      setLoadingMarks(false);
+      setFetchLoading(false);
     }
-  }, [batchNo, assessmentType]);
-
-  /* ── Period select handler ── */
-  const handlePeriodSelect = (val) => {
-    setSelectedPeriod(val);
-    if (!val) { setMarksRows([]); return; }
-    const [plannerId, , date] = val.split("::");
-    loadMarksForPeriod(plannerId, date);
   };
 
-  /* ── Batch change ── */
-  const handleBatchChange = (val) => {
-    setBatchNo(val);
-    setSelectedPeriod(""); setMarksRows([]); setPeriods([]); setError("");
-    setTab(0);
+  /* ── Column definitions for non-scorecard ── */
+  const getNonScorecardColumns = () => {
+    if (!marksData.length || isScorecard) return [];
+    const sample = marksData[0];
+    const cols = [
+      { key: "learner_name",  label: "Name"  },
+      { key: "learner_email", label: "Email" },
+      { key: "batch_no",      label: "Batch" },
+    ];
+    if (assessmentType === "module") {
+      if (sample.module_no !== undefined) cols.push({ key: "module_no", label: "Module" });
+    } else {
+      if (sample.week_no !== undefined) cols.push({ key: "week_no", label: "Week" });
+    }
+    cols.push(
+      { key: "assessment_date", label: "Date"       },
+      { key: "topic_name",      label: "Assessment" },
+      { key: "out_off",         label: "Out Of"     },
+      { key: "points",          label: "Points"     },
+      { key: "percentage",      label: "Percentage" },
+    );
+    return cols;
   };
 
-  /* ── Scorecard summary stats ── */
-  const totalLearners = scorecardRows.length;
-  const certified     = scorecardRows.filter(r => r.certification === true).length;
-  const placed        = scorecardRows.filter(r => r.placement === true).length;
-  const avgOverall    = totalLearners
-    ? Math.round(scorecardRows.reduce((s,r)=>s+(r.overall||0),0)/totalLearners*10)/10
-    : 0;
-  const topPerf = scorecardRows.filter(r => r.overall >= 80).length;
+  /* ── Excel export ── */
+  const downloadExcel = () => {
+    const now = new Date();
+    const tsDisplay = formatTimestamp(now), tsFile = fileTimestamp(now);
+    let exportData;
 
-  /* ── Render ── */
+    if (isScorecard && isPdft) {
+      exportData = scorecardData.map(r => ({
+        Name: r.name, Email: r.email,
+        "Intermediate (%)":  r.intermediate  !== null ? r.intermediate.toFixed(2)         : "",
+        "Digital (%)":       r.breakdown?.digital  !== null ? r.breakdown.digital.toFixed(2)   : "",
+        "CMOS (%)":          r.breakdown?.cmos     !== null ? r.breakdown.cmos.toFixed(2)     : "",
+        "TCL (%)":           r.breakdown?.tcl      !== null ? r.breakdown.tcl.toFixed(2)      : "",
+        "Theory Group (%)":  r.theory !== null ? r.theory.toFixed(2)           : "",
+        "Physical (%)":      r.breakdown?.physical !== null ? r.breakdown.physical.toFixed(2) : "",
+        "Project (%)":       r.project !== null ? r.project.toFixed(2)         : "",
+        "Viva (%)":          r.viva    !== null ? r.viva.toFixed(2)            : "",
+        "Overall (%)":       r.overall.toFixed(2),
+        Grade:               r.grade,
+        Certification:       r.certification,
+        Placement:           r.placement,
+      }));
+    } else if (isScorecard && isDvft) {
+      exportData = scorecardData.map(r => ({
+        Name: r.name, Email: r.email,
+        "Intermediate (%)":  r.intermediate       !== null ? r.intermediate.toFixed(2)             : "",
+        "Digital (%)":       r.breakdown?.digital  !== null ? r.breakdown.digital.toFixed(2)         : "",
+        "Verilog (%)":       r.breakdown?.verilog  !== null ? r.breakdown.verilog.toFixed(2)         : "",
+        "Grp1 Avg (%)":      r.dvGroup1            !== null ? r.dvGroup1.toFixed(2)                  : "",
+        "SV (%)":            r.breakdown?.sv       !== null ? r.breakdown.sv.toFixed(2)              : "",
+        "UVM (%)":           r.breakdown?.uvm      !== null ? r.breakdown.uvm.toFixed(2)             : "",
+        "Python (%)":        r.breakdown?.python   !== null ? r.breakdown.python.toFixed(2)          : "",
+        "Grp2 Avg (%)":      r.dvGroup2            !== null ? r.dvGroup2.toFixed(2)                  : "",
+        "Project (%)":       r.project             !== null ? r.project.toFixed(2)                   : "",
+        "Viva (%)":          r.viva                !== null ? r.viva.toFixed(2)                      : "",
+        "Overall (%)":       r.overall.toFixed(2),
+        Grade:               r.grade,
+        Certification:       r.certification,
+        Placement:           r.placement,
+      }));
+    } else {
+      const cols = getNonScorecardColumns();
+      exportData = marksData.map(row => {
+        const obj = {};
+        cols.forEach(c => { obj[c.label] = row[c.key] ?? ""; });
+        return obj;
+      });
+    }
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet([]);
+    XLSX.utils.sheet_add_aoa(ws, [[`Batch: ${batchNo}  |  Type: ${assessmentType.toUpperCase()}  |  Downloaded: ${tsDisplay}`]], { origin: "A1" });
+    XLSX.utils.sheet_add_json(ws, exportData, { origin: "A3" });
+    XLSX.utils.book_append_sheet(wb, ws, "Marks Data");
+    XLSX.writeFile(wb, `marks_${batchNo}_${assessmentType}_${tsFile}.xlsx`);
+  };
+
+  /* ── PDF export ── */
+  const downloadPDF = () => {
+    const now = new Date();
+    const tsDisplay = formatTimestamp(now), tsFile = fileTimestamp(now);
+    const doc = new jsPDF({ orientation: "landscape" });
+    doc.setFontSize(14); doc.setFont(undefined, "bold");
+    doc.text(`Marks Report — ${batchNo}`, 14, 16);
+    doc.setFontSize(9); doc.setFont(undefined, "normal"); doc.setTextColor(100);
+    doc.text(`Assessment Type: ${assessmentType.toUpperCase()}   |   Downloaded: ${tsDisplay}`, 14, 23);
+    doc.setTextColor(0);
+
+    if (isScorecard && isPdft) {
+      doc.autoTable({
+        startY: 30,
+        head: [["Name","Email","Inter %","Digital %","CMOS %","TCL %","Theory %","Physical %","Project %","Viva %","Overall %","Grade","Cert","Place"]],
+        body: scorecardData.map(r => [
+          r.name, r.email,
+          r.intermediate !== null ? r.intermediate.toFixed(2) : "—",
+          r.breakdown?.digital  !== null ? r.breakdown.digital.toFixed(2)  : "—",
+          r.breakdown?.cmos     !== null ? r.breakdown.cmos.toFixed(2)     : "—",
+          r.breakdown?.tcl      !== null ? r.breakdown.tcl.toFixed(2)      : "—",
+          r.theory !== null ? r.theory.toFixed(2) : "—",
+          r.breakdown?.physical !== null ? r.breakdown.physical.toFixed(2) : "—",
+          r.project !== null ? r.project.toFixed(2) : "—",
+          r.viva    !== null ? r.viva.toFixed(2)    : "—",
+          r.overall.toFixed(2), r.grade, r.certification, r.placement,
+        ]),
+        styles: { fontSize: 7 },
+        headStyles: { fillColor: [124, 58, 237], textColor: 255, fontStyle: "bold" },
+        alternateRowStyles: { fillColor: [245, 247, 255] },
+      });
+    } else if (isScorecard && isDvft) {
+      doc.autoTable({
+        startY: 30,
+        head: [["Name","Email","Inter %","Digital %","Verilog %","Grp1 %","SV %","UVM %","Python %","Grp2 %","Project %","Viva %","Overall %","Grade","Cert","Place"]],
+        body: scorecardData.map(r => [
+          r.name, r.email,
+          r.intermediate          !== null ? r.intermediate.toFixed(2)          : "—",
+          r.breakdown?.digital    !== null ? r.breakdown.digital.toFixed(2)     : "—",
+          r.breakdown?.verilog    !== null ? r.breakdown.verilog.toFixed(2)     : "—",
+          r.dvGroup1              !== null ? r.dvGroup1.toFixed(2)              : "—",
+          r.breakdown?.sv         !== null ? r.breakdown.sv.toFixed(2)          : "—",
+          r.breakdown?.uvm        !== null ? r.breakdown.uvm.toFixed(2)         : "—",
+          r.breakdown?.python     !== null ? r.breakdown.python.toFixed(2)      : "—",
+          r.dvGroup2              !== null ? r.dvGroup2.toFixed(2)              : "—",
+          r.project               !== null ? r.project.toFixed(2)               : "—",
+          r.viva                  !== null ? r.viva.toFixed(2)                  : "—",
+          r.overall.toFixed(2), r.grade, r.certification, r.placement,
+        ]),
+        styles: { fontSize: 7 },
+        headStyles: { fillColor: [8, 145, 178], textColor: 255, fontStyle: "bold" },
+        alternateRowStyles: { fillColor: [240, 249, 255] },
+      });
+    } else {
+      const cols = getNonScorecardColumns();
+      doc.autoTable({
+        startY: 30,
+        head: [cols.map(c => c.label)],
+        body: marksData.map(row =>
+          cols.map(c =>
+            c.key === "percentage" && row[c.key] != null
+              ? `${parseFloat(row[c.key]).toFixed(2)}%`
+              : (row[c.key] ?? "")
+          )
+        ),
+        styles: { fontSize: 7 },
+        headStyles: { fillColor: [61, 90, 254], textColor: 255, fontStyle: "bold" },
+        alternateRowStyles: { fillColor: [245, 247, 255] },
+      });
+    }
+
+    const pages = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= pages; i++) {
+      doc.setPage(i); doc.setFontSize(7); doc.setTextColor(150);
+      doc.text(
+        `Page ${i} of ${pages}   |   Downloaded: ${tsDisplay}`,
+        doc.internal.pageSize.getWidth() / 2,
+        doc.internal.pageSize.getHeight() - 6,
+        { align: "center" }
+      );
+    }
+    doc.save(`marks_${batchNo}_${assessmentType}_${tsFile}.pdf`);
+  };
+
+  const hasData = isScorecard ? scorecardData.length > 0 : marksData.length > 0;
+
+  /* ─── Render ──────────────────────────────────────────────────────────── */
   return (
-    <Box sx={{ minHeight:"100vh", background: TOKENS.bg, p:{ xs:2, md:3 }, fontFamily:"'DM Sans', sans-serif" }}>
+    <Box sx={{ minHeight: "100vh", background: TOKENS.bg, p: { xs: 2, md: 4 }, fontFamily: "'DM Sans', sans-serif" }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');`}</style>
 
-      {/* Header */}
-      <Box sx={{ display:"flex", alignItems:"center", gap:1.5, mb:3 }}>
-        <BarChartIcon sx={{ fontSize:28, color: TOKENS.accent }} />
-        <Typography sx={{ fontSize:22, fontWeight:800, color: TOKENS.text, fontFamily:"'DM Sans', sans-serif" }}>
-          Marks Dashboard
-        </Typography>
-        {batchNo && <BatchPill batchNo={batchNo} />}
-      </Box>
+      <Box sx={{ maxWidth: 1700, mx: "auto" }}>
 
-      {/* Controls */}
-      <Box sx={{ ...cardSx, mb:2.5, display:"flex", alignItems:"center", gap:2.5, flexWrap:"wrap" }}>
-
-        {/* Batch */}
-        <Box sx={{ display:"flex", alignItems:"center", gap:1 }}>
-          <GroupIcon sx={{ fontSize:18, color: TOKENS.textSub }} />
-          <FormControl size="small" sx={{ minWidth:210 }}>
-            <InputLabel sx={{ fontFamily:"'DM Sans', sans-serif", fontSize:13 }}>Select Batch</InputLabel>
-            <Select value={batchNo} label="Select Batch"
-              onChange={e => handleBatchChange(e.target.value)}
-              disabled={loadingBatches}
-              sx={{ fontFamily:"'DM Sans', sans-serif", fontSize:13, borderRadius:"12px", background: TOKENS.surfaceAlt }}>
-              {availableBatches.map(b => (
-                <MenuItem key={b} value={b} sx={{ fontFamily:"'DM Sans', sans-serif", fontSize:13 }}>{b}</MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-          {loadingBatches && <CircularProgress size={16} />}
+        {/* ── Page Header ── */}
+        <Box sx={{ mb: 4, display: "flex", alignItems: "flex-end", justifyContent: "space-between", flexWrap: "wrap", gap: 2 }}>
+          <Box>
+            <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: { xs: 24, md: 30 }, fontWeight: 800, color: TOKENS.text, letterSpacing: "-0.03em", mb: 0.5 }}>
+              {roleTitle} — Marks Dashboard
+            </Typography>
+            <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, color: TOKENS.textSub }}>
+              Welcome back, <strong style={{ color: TOKENS.accent }}>{welcomeName}</strong>
+            </Typography>
+          </Box>
+          {hasData && (
+            <Box sx={{ display: "flex", gap: 1.5 }}>
+              <Button
+                variant="outlined"
+                startIcon={<DownloadIcon sx={{ fontSize: 16 }} />}
+                onClick={downloadExcel}
+                sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 12, borderRadius: "10px", textTransform: "none", borderColor: TOKENS.border, color: TOKENS.textSub, "&:hover": { borderColor: TOKENS.accent, color: TOKENS.accent, background: TOKENS.accentLight } }}
+              >
+                Excel
+              </Button>
+              <Button
+                variant="outlined"
+                startIcon={<DownloadIcon sx={{ fontSize: 16 }} />}
+                onClick={downloadPDF}
+                sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 12, borderRadius: "10px", textTransform: "none", borderColor: `${TOKENS.error.fill}44`, color: TOKENS.error.fill, "&:hover": { borderColor: TOKENS.error.fill, background: TOKENS.error.light } }}
+              >
+                PDF
+              </Button>
+            </Box>
+          )}
         </Box>
 
-        {/* Assessment type */}
-        <Box sx={{ display:"flex", alignItems:"center", gap:1 }}>
-          <AssignmentIcon sx={{ fontSize:18, color: TOKENS.textSub }} />
-          <FormControl size="small" sx={{ minWidth:220 }} disabled={!batchNo}>
-            <InputLabel sx={{ fontFamily:"'DM Sans', sans-serif", fontSize:13 }}>Assessment Type</InputLabel>
-            <Select value={assessmentType} label="Assessment Type"
-              onChange={e => { setAssessmentType(e.target.value); setSelectedPeriod(""); setMarksRows([]); setError(""); }}
-              sx={{ fontFamily:"'DM Sans', sans-serif", fontSize:13, borderRadius:"12px", background: TOKENS.surfaceAlt }}>
-              {Object.entries(ASSESSMENT_MAP).map(([key, val]) => (
-                <MenuItem key={key} value={key} sx={{ fontFamily:"'DM Sans', sans-serif", fontSize:13 }}>
-                  {val.label}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-        </Box>
+        {/* ── Filters Card ── */}
+        <Box sx={{ ...cardSx, mb: 3 }}>
+          <SectionHeader
+            icon={<BarChartIcon sx={{ fontSize: 20 }} />}
+            title="Assessment Filters"
+            subtitle="Select batch and assessment type to load marks"
+          />
+          <Box sx={{ p: 3, display: "flex", gap: 2, flexWrap: "wrap", alignItems: "flex-end" }}>
 
-        {/* Period selector — only for non-autoDate types */}
-        {batchNo && !cfg.autoDate && (
-          <Box sx={{ display:"flex", alignItems:"center", gap:1 }}>
-            <CalendarTodayIcon sx={{ fontSize:18, color: TOKENS.textSub }} />
-            <FormControl size="small" sx={{ minWidth:290 }} disabled={loadingPeriods || !periods.length}>
-              <InputLabel sx={{ fontFamily:"'DM Sans', sans-serif", fontSize:13 }}>
-                {loadingPeriods ? "Loading periods…" : periods.length ? "Select Date / Period" : "No periods found"}
-              </InputLabel>
-              <Select value={selectedPeriod} label="Select Date / Period"
-                onChange={e => handlePeriodSelect(e.target.value)}
-                sx={{ fontFamily:"'DM Sans', sans-serif", fontSize:13, borderRadius:"12px", background: TOKENS.surfaceAlt }}>
-                {periods.map(p => {
-                  const planId = p.course_planner_id ?? p.id ?? `${p.date}-${p.topic_name}`;
-                  const weekNo = p.week_no ?? p.module_no ?? "";
-                  const val    = `${planId}::${weekNo}::${p.date}::${p.topic_name}`;
-                  const wLabel = p.week_no ? `Week ${p.week_no}` : p.module_no ? `Mod ${p.module_no}` : "";
-                  return (
-                    <MenuItem key={val} value={val} sx={{ fontFamily:"'DM Sans', sans-serif", fontSize:13 }}>
-                      {wLabel ? <><strong>{wLabel}</strong>&nbsp;—&nbsp;</> : ""}
-                      {p.date} — {p.topic_name}
-                    </MenuItem>
-                  );
-                })}
+            {/* Batch */}
+            <FormControl size="small" sx={{ minWidth: 200 }}>
+              <InputLabel sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Select Batch</InputLabel>
+              <Select
+                value={batchNo}
+                label="Select Batch"
+                onChange={e => { setBatchNo(e.target.value); setMarksData([]); setScorecardData([]); setMessage(""); }}
+                sx={inputSx}
+              >
+                <MenuItem value="" sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TOKENS.textSub }}>— Select Batch —</MenuItem>
+                {batches.map((b, i) => (
+                  <MenuItem key={i} value={b.batch_no} sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>{b.batch_no}</MenuItem>
+                ))}
               </Select>
             </FormControl>
-            {loadingPeriods && <CircularProgress size={16} />}
+
+            {/* Assessment Type */}
+            <FormControl size="small" sx={{ minWidth: 220 }}>
+              <InputLabel sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Assessment Type</InputLabel>
+              <Select
+                value={assessmentType}
+                label="Assessment Type"
+                onChange={e => { setAssessmentType(e.target.value); setMarksData([]); setScorecardData([]); setMessage(""); }}
+                sx={inputSx}
+              >
+                {[
+                  { v: "weekly",       l: "Weekly"          },
+                  { v: "intermediate", l: "Intermediate"     },
+                  { v: "module",       l: "Module"           },
+                  { v: "final",        l: "Final Assessment" },
+                  { v: "scorecard",    l: "Scorecard"        },
+                ].map(item => (
+                  <MenuItem key={item.v} value={item.v} sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>{item.l}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+
+            {/* Fetch Button */}
+            <Button
+              variant="contained"
+              onClick={fetchMarks}
+              disabled={!batchNo || fetchLoading}
+              startIcon={fetchLoading ? <CircularProgress size={14} color="inherit" /> : <TableChartIcon sx={{ fontSize: 16 }} />}
+              sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 13, borderRadius: "10px", textTransform: "none", px: 3, py: 1.1, background: TOKENS.accent, "&:hover": { background: "#2a3fd4" }, "&:disabled": { opacity: 0.5 } }}
+            >
+              {fetchLoading ? "Loading…" : "Fetch Marks"}
+            </Button>
+
+            {/* Batch type pill */}
+            {batchNo && <BatchPill batchNo={batchNo} />}
+
+            {/* Record count */}
+            {hasData && (
+              <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2, py: 0.8, borderRadius: "10px", background: TOKENS.accentLight, border: `1px solid ${TOKENS.accent}33` }}>
+                <PersonIcon sx={{ fontSize: 14, color: TOKENS.accent }} />
+                <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: TOKENS.accent }}>
+                  {isScorecard ? scorecardData.length : marksData.length} {isScorecard ? "learners" : "records"}
+                </Typography>
+              </Box>
+            )}
+          </Box>
+
+          <StatusBanner message={message} />
+          {message && <Box sx={{ pb: 1 }} />}
+        </Box>
+
+        {/* ── PDFT Scorecard ── */}
+        {isScorecard && isPdft && scorecardData.length > 0 && (
+          <PdftScorecardTable data={scorecardData} batchNo={batchNo} />
+        )}
+
+        {/* ── DVFT Scorecard ── */}
+        {isScorecard && isDvft && scorecardData.length > 0 && (
+          <DvftScorecardTable data={scorecardData} batchNo={batchNo} />
+        )}
+
+        {/* ── Scorecard: non-special batch warning ── */}
+        {isScorecard && !isPdft && !isDvft && batchNo && !fetchLoading && (
+          <Box sx={{ ...cardSx, textAlign: "center", color: TOKENS.textSub, py: 5 }}>
+            <Typography sx={{ fontSize: 14, fontWeight: 500 }}>
+              Scorecard is only available for <strong>PDFT</strong> and <strong>DVFT</strong> batches.
+            </Typography>
           </Box>
         )}
+
+        {/* ── Non-Scorecard Table ── */}
+        {!isScorecard && marksData.length > 0 && (() => {
+          const columns = getNonScorecardColumns();
+          return (
+            <Box sx={{ ...cardSx }}>
+              <SectionHeader
+                icon={<TableChartIcon sx={{ fontSize: 20 }} />}
+                title={`${assessmentType.charAt(0).toUpperCase() + assessmentType.slice(1)} Assessment Marks`}
+                subtitle={`Batch ${batchNo} · ${marksData.length} records`}
+                right={
+                  <Chip
+                    label={`${marksData.length} records`}
+                    size="small"
+                    sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 11, background: TOKENS.accentLight, color: TOKENS.accent, border: `1px solid ${TOKENS.accent}33` }}
+                  />
+                }
+              />
+              <TableContainer sx={{ maxHeight: 600 }}>
+                <Table stickyHeader size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell sx={{ ...tableHeadSx, width: 36 }}>#</TableCell>
+                      {columns.map(col => (
+                        <TableCell key={col.key} sx={tableHeadSx}>{col.label}</TableCell>
+                      ))}
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {marksData.map((row, i) => (
+                      <TableRow
+                        key={i}
+                        sx={{ "&:nth-of-type(even)": { background: TOKENS.surfaceAlt }, "&:hover": { background: `${TOKENS.accent}08`, transition: "background 0.15s" } }}
+                      >
+                        <TableCell sx={{ ...tableCellSx, color: TOKENS.textSub, fontFamily: "'DM Mono', monospace", fontSize: 11 }}>{i + 1}</TableCell>
+                        {columns.map(col => {
+                          if (col.key === "percentage") {
+                            const n = parseFloat(row[col.key]);
+                            if (!isNaN(n)) return <PctCell key={col.key} value={n} />;
+                            return <TableCell key={col.key} sx={tableCellSx}>—</TableCell>;
+                          }
+                          const isName  = col.key === "learner_name";
+                          const isEmail = col.key === "learner_email";
+                          const isNum   = ["points","out_off","week_no","module_no"].includes(col.key);
+                          return (
+                            <TableCell key={col.key} sx={{
+                              ...tableCellSx,
+                              fontWeight:  isName ? 600 : 400,
+                              color:       isEmail ? TOKENS.textSub : TOKENS.text,
+                              fontSize:    isEmail ? 12 : 13,
+                              fontFamily:  isNum ? "'DM Mono', monospace" : "'DM Sans', sans-serif",
+                            }}>
+                              {row[col.key] ?? "—"}
+                            </TableCell>
+                          );
+                        })}
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            </Box>
+          );
+        })()}
+
       </Box>
-
-      {/* Tabs */}
-      {batchNo && (
-        <Box sx={{ mb:2 }}>
-          <Tabs value={tab} onChange={(_, v) => setTab(v)}
-            sx={{
-              "& .MuiTab-root": { fontFamily:"'DM Sans', sans-serif", fontSize:13, fontWeight:600, textTransform:"none" },
-              "& .Mui-selected": { color:`${accentColor} !important` },
-              "& .MuiTabs-indicator": { background: accentColor },
-            }}>
-            <Tab label="Assessment View" icon={<AssignmentIcon sx={{ fontSize:15 }} />} iconPosition="start" />
-            {isSpecialBatch && (
-              <Tab label={`${isPdft ? "PDFT" : "DVFT"} Scorecard`}
-                icon={<StarIcon sx={{ fontSize:15 }} />} iconPosition="start" />
-            )}
-          </Tabs>
-        </Box>
-      )}
-
-      {/* Error */}
-      {error && (
-        <Box sx={{ ...cardSx, mb:2, background: TOKENS.error.light, border:`1px solid ${TOKENS.error.fill}40` }}>
-          <Typography sx={{ color: TOKENS.error.text, fontSize:13, fontWeight:600 }}>{error}</Typography>
-        </Box>
-      )}
-
-      {/* ═══ TAB 0 — Assessment View ═══ */}
-      {tab === 0 && (
-        <Box>
-          {!batchNo && (
-            <Box sx={{ ...cardSx, textAlign:"center", color: TOKENS.textSub, py:6 }}>
-              <Typography sx={{ fontSize:14 }}>Select a batch and assessment type to view marks.</Typography>
-            </Box>
-          )}
-
-          {batchNo && !cfg.autoDate && !selectedPeriod && !loadingPeriods && (
-            <Box sx={{ ...cardSx, textAlign:"center", color: TOKENS.textSub, py:5 }}>
-              <Typography sx={{ fontSize:14 }}>
-                {periods.length
-                  ? "Select a date / period above to view marks."
-                  : `No ${cfg.label} periods found for ${batchNo}.`}
-              </Typography>
-            </Box>
-          )}
-
-          {loadingMarks && (
-            <Box sx={{ display:"flex", justifyContent:"center", mt:5 }}>
-              <CircularProgress size={34} sx={{ color: accentColor }} />
-            </Box>
-          )}
-
-          {!loadingMarks && batchNo && (cfg.autoDate || selectedPeriod) && (
-            <Fade in>
-              <Box sx={{ ...cardSx }}>
-                <Box sx={{ mb:2 }}>
-                  <Typography sx={{ fontSize:15, fontWeight:700, color: TOKENS.text, fontFamily:"'DM Sans', sans-serif" }}>
-                    {cfg.label}
-                    {selectedPeriod && (() => {
-                      const parts = selectedPeriod.split("::");
-                      const date  = parts[2];
-                      const topic = parts.slice(3).join("::");
-                      return <span style={{ color: TOKENS.textSub, fontWeight:400, fontSize:13 }}> — {date} · {topic}</span>;
-                    })()}
-                  </Typography>
-                  <Typography sx={{ fontSize:12, color: TOKENS.textSub }}>{batchNo}</Typography>
-                </Box>
-                <AssessmentMarksTable rows={marksRows} assessmentLabel={cfg.label} batchNo={batchNo} />
-              </Box>
-            </Fade>
-          )}
-        </Box>
-      )}
-
-      {/* ═══ TAB 1 — Scorecard ═══ */}
-      {tab === 1 && isSpecialBatch && (
-        <Box>
-          {scorecardError && (
-            <Box sx={{ ...cardSx, mb:2, background: TOKENS.error.light, border:`1px solid ${TOKENS.error.fill}40` }}>
-              <Typography sx={{ color: TOKENS.error.text, fontSize:13, fontWeight:600 }}>{scorecardError}</Typography>
-            </Box>
-          )}
-
-          {loadingScorecard && (
-            <Box sx={{ display:"flex", justifyContent:"center", mt:5 }}>
-              <CircularProgress size={34} sx={{ color: accentColor }} />
-            </Box>
-          )}
-
-          {!loadingScorecard && scorecardRows.length > 0 && (
-            <Fade in>
-              <Box>
-                <WeightageChips batchNo={batchNo} />
-                <Box sx={{ display:"flex", gap:2, flexWrap:"wrap", mb:2.5 }}>
-                  <StatCard label="Total Learners"  value={totalLearners}    color={TOKENS.text} />
-                  <StatCard label="Avg Overall"      value={`${avgOverall}%`} color={accentColor} />
-                  <StatCard label="Top Performers"   value={topPerf}           color={TOKENS.success.fill} sub="≥ 80%" />
-                  <StatCard label="Certified"        value={certified}
-                    color={isPdft ? TOKENS.pdft.fill : TOKENS.dvft.fill}
-                    sub={`${totalLearners ? Math.round((certified/totalLearners)*100) : 0}%`} />
-                  <StatCard label="Placement Ready"  value={placed}            color={TOKENS.success.fill}
-                    sub={`${totalLearners ? Math.round((placed/totalLearners)*100) : 0}%`} />
-                </Box>
-                <Box sx={{ ...cardSx }}>
-                  {isPdft
-                    ? <PdftScorecardTable data={scorecardRows} batchNo={batchNo} />
-                    : <DvftScorecardTable data={scorecardRows} batchNo={batchNo} />}
-                </Box>
-              </Box>
-            </Fade>
-          )}
-
-          {!loadingScorecard && scorecardRows.length === 0 && !scorecardError && (
-            <Box sx={{ ...cardSx, textAlign:"center", color: TOKENS.textSub, py:5 }}>
-              <Typography sx={{ fontSize:14, fontWeight:500 }}>
-                No scorecard data yet for <strong>{batchNo}</strong>. Enter marks in the Mark Sheet first.
-              </Typography>
-            </Box>
-          )}
-        </Box>
-      )}
     </Box>
   );
 }
