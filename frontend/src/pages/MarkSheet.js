@@ -31,7 +31,7 @@ import InfoOutlinedIcon  from "@mui/icons-material/InfoOutlined";
 const API_BASE =
   process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 
-/* ─── Design tokens (matches CourseProgress) ─────────────────────────────── */
+/* ─── Design tokens ─────────────────────────────────────────────────────── */
 const TOKENS = {
   bg:          "#d4e0fd",
   surface:     "#ffffff",
@@ -99,6 +99,7 @@ const ASSESSMENT_MAP = {
 
 const AUTO_OUT_OF_TYPES = ["intermediate", "final", "final_project", "viva"];
 
+/* ─── PDFT Out Of Rules ──────────────────────────────────────────────────── */
 const PDFT_OUT_OF_RULES = [
   { keywords: ["intermediate"],    outOf: 25  },
   { keywords: ["digital design"],  outOf: 30  },
@@ -109,13 +110,54 @@ const PDFT_OUT_OF_RULES = [
   { keywords: ["viva"],            outOf: 25  },
 ];
 
-function getPdftOutOf(topicName, assessmentType) {
+/* ─── DVFT Out Of Rules ──────────────────────────────────────────────────── */
+// For DVFT batches:
+//   Intermediate           → 25
+//   Final Assessment Digital → 25
+//   Final Assessment Verilog → 25
+//   Final Assessment SV    → 30
+//   Final Assessment UVM   → 30
+//   Final Assessment Python → 15
+//   Final Project          → 100
+//   Viva                   → 25
+const DVFT_OUT_OF_RULES = [
+  { keywords: ["intermediate"],    outOf: 25  },
+  { keywords: ["python"],          outOf: 15  },
+  { keywords: ["uvm"],             outOf: 30  },
+  { keywords: ["sv"],              outOf: 30  },
+  { keywords: ["verilog"],         outOf: 25  },
+  { keywords: ["digital"],         outOf: 25  },
+  { keywords: ["final project"],   outOf: 100 },
+  { keywords: ["viva"],            outOf: 25  },
+];
+
+/* ─── Batch type detectors ───────────────────────────────────────────────── */
+function isPdftBatch(batchNo) { return (batchNo || "").toUpperCase().includes("PDFT"); }
+function isDvftBatch(batchNo) {
+  const up = (batchNo || "").toUpperCase();
+  return up.includes("DVFT") || (up.startsWith("DV") && !up.includes("PDFT"));
+}
+
+function getFixedOutOf(topicName, assessmentType, batchNo) {
   if (!AUTO_OUT_OF_TYPES.includes(assessmentType)) return null;
-  if (!topicName && !assessmentType) return null;
+
   const combined = `${topicName || ""} ${ASSESSMENT_MAP[assessmentType]?.label || ""}`.toLowerCase();
-  for (const rule of PDFT_OUT_OF_RULES) {
-    if (rule.keywords.every(kw => combined.includes(kw))) return rule.outOf;
+
+  if (isPdftBatch(batchNo)) {
+    for (const rule of PDFT_OUT_OF_RULES) {
+      if (rule.keywords.every(kw => combined.includes(kw))) return rule.outOf;
+    }
   }
+
+  if (isDvftBatch(batchNo)) {
+    // Final project and viva use date from user input but fixed out-of
+    if (assessmentType === "final_project") return 100;
+    if (assessmentType === "viva")          return 25;
+    for (const rule of DVFT_OUT_OF_RULES) {
+      if (rule.keywords.every(kw => combined.includes(kw))) return rule.outOf;
+    }
+  }
+
   return null;
 }
 
@@ -123,7 +165,6 @@ const todayDate = new Date().toISOString().split("T")[0];
 const parseDate = (str) => { if (!str) return null; const [y,m,d] = str.split("-").map(Number); return new Date(y, m-1, d); };
 function getCurrentUser() { try { return JSON.parse(localStorage.getItem("user") || "{}"); } catch { return {}; } }
 function isAdminOrManager(user) { return user?.role === "Admin" || user?.role === "Manager"; }
-function isPdftBatch(batchNo) { return batchNo?.toUpperCase().includes("PDFT"); }
 
 function deduplicatePeriods(data) {
   const seen = new Map();
@@ -180,6 +221,22 @@ function StatusBanner({ message }) {
   );
 }
 
+/* ─── Batch badge ────────────────────────────────────────────────────────── */
+function BatchBadge({ batchNo }) {
+  if (!batchNo) return null;
+  const isPdft = isPdftBatch(batchNo);
+  const isDvft = isDvftBatch(batchNo);
+  if (!isPdft && !isDvft) return null;
+  const color = isPdft ? "#7c3aed" : "#0891b2";
+  const label = isPdft ? "PDFT" : "DVFT";
+  return (
+    <Box sx={{ display: "inline-flex", alignItems: "center", gap: 0.8, px: 1.8, py: 0.8, borderRadius: "10px", background: `${color}18`, border: `1px solid ${color}33` }}>
+      <Box sx={{ width: 6, height: 6, borderRadius: "50%", background: color }} />
+      <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700, color }}>{label} Fixed Out-Of</Typography>
+    </Box>
+  );
+}
+
 /* ─── Main Component ─────────────────────────────────────────────────────── */
 function MarkSheet() {
   const [batchNo,                 setBatchNo]                 = useState("");
@@ -204,12 +261,24 @@ function MarkSheet() {
   const [loadingMarks,            setLoadingMarks]            = useState(false);
   const [currentDate,             setCurrentDate]             = useState(new Date());
 
-  const currentUser      = getCurrentUser();
-  const canEditOutOf     = isAdminOrManager(currentUser);
-  const isPdft           = isPdftBatch(batchNo);
+  const currentUser  = getCurrentUser();
+  const canEditOutOf = isAdminOrManager(currentUser);
+  const isPdft       = isPdftBatch(batchNo);
+  const isDvft       = isDvftBatch(batchNo);
+  const isFixedOutOfBatch = isPdft || isDvft;
+
   const isAutoDateAssessment = assessmentType === "final_project" || assessmentType === "viva";
-  const isAutoOutOfType  = AUTO_OUT_OF_TYPES.includes(assessmentType);
-  const outOfLocked      = canEditOutOf ? false : isAutoOutOfType ? (!windowOpen || isPdft) : !windowOpen;
+  const isAutoOutOfType      = AUTO_OUT_OF_TYPES.includes(assessmentType);
+
+  // For DVFT: final_project and viva accept user-entered date but fixed out-of
+  const isDvftAutoDateType = isDvft && isAutoDateAssessment;
+
+  // Lock out-of editing if it's a fixed batch type and admin hasn't overridden
+  const outOfLocked = canEditOutOf
+    ? false
+    : isAutoOutOfType
+      ? (!windowOpen || isFixedOutOfBatch)
+      : !windowOpen;
 
   const marksEnteredCount = learners.filter(l => marks[l.id]?.points).length;
 
@@ -240,24 +309,41 @@ function MarkSheet() {
   /* ── Load periods ── */
   useEffect(() => {
     if (!batchNo) return;
+
     if (isAutoDateAssessment) {
-      setSelectedDate(todayDate);
-      setSelectedCoursePlannerId(""); setSelectedWeekNo("");
+      // DVFT: date is entered by user (not auto today), out-of is fixed
+      if (isDvft) {
+        // Don't set selectedDate here — user picks date in a date field
+        setSelectedDate("");
+      } else {
+        setSelectedDate(todayDate);
+      }
+      setSelectedCoursePlannerId("");
+      setSelectedWeekNo("");
       setTopicName(ASSESSMENT_MAP[assessmentType].label);
       setPeriods([]);
-      if (isPdft) { const fixed = getPdftOutOf("", assessmentType); if (fixed !== null) setOutOff(String(fixed)); }
+
+      // Apply fixed out-of
+      const fixed = getFixedOutOf("", assessmentType, batchNo);
+      if (fixed !== null) setOutOff(String(fixed));
       return;
     }
+
     const apiType = ASSESSMENT_MAP[assessmentType].api;
     fetch(`${API_BASE}/apiperiods/${batchNo}/${apiType}`)
       .then(res => res.json())
       .then(data => {
         const unique = deduplicatePeriods(data);
-        unique.sort((a, b) => { const d = new Date(a.date) - new Date(b.date); return d !== 0 ? d : (a.topic_name || "").localeCompare(b.topic_name || ""); });
+        unique.sort((a, b) => {
+          const d = new Date(a.date) - new Date(b.date);
+          return d !== 0 ? d : (a.topic_name || "").localeCompare(b.topic_name || "");
+        });
         setPeriods(unique);
       })
       .catch(() => setPeriods([]));
-    setPeriodValue(""); setSelectedDate(""); setSelectedCoursePlannerId(""); setSelectedWeekNo(""); setTopicName(""); setMarks({}); setOutOff("");
+
+    setPeriodValue(""); setSelectedDate(""); setSelectedCoursePlannerId("");
+    setSelectedWeekNo(""); setTopicName(""); setMarks({}); setOutOff("");
   }, [batchNo, assessmentType]);
 
   /* ── Window Logic ── */
@@ -274,7 +360,7 @@ function MarkSheet() {
     close.setHours(23, 59, 59, 999);
     setWindowOpen(currentDate <= close);
     setWindowCloseDate(close.toLocaleDateString("en-GB"));
-  }, [selectedDate, assessmentType, currentDate]);
+  }, [selectedDate, assessmentType, currentDate, isAutoDateAssessment]);
 
   /* ── Load existing marks ── */
   const loadExistingMarks = useCallback(async (plannerId, date) => {
@@ -287,14 +373,23 @@ function MarkSheet() {
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
         const savedOutOf = data[0]?.out_off;
-        if (savedOutOf) setOutOff(String(savedOutOf));
+        // Only override fixed out-of if admin or non-fixed batch
+        if (savedOutOf && (!isFixedOutOfBatch || canEditOutOf)) setOutOff(String(savedOutOf));
         const marksMap = {};
-        data.forEach(row => { marksMap[row.learner_id] = { points: String(row.points ?? ""), percentage: row.percentage !== null ? String(row.percentage) : "" }; });
+        data.forEach(row => {
+          marksMap[row.learner_id] = {
+            points:     String(row.points ?? ""),
+            percentage: row.percentage !== null ? String(row.percentage) : "",
+          };
+        });
         setMarks(marksMap);
       }
-    } catch (e) { console.error("Failed to load existing marks", e); }
-    finally { setLoadingMarks(false); }
-  }, [batchNo, assessmentType]);
+    } catch (e) {
+      console.error("Failed to load existing marks", e);
+    } finally {
+      setLoadingMarks(false);
+    }
+  }, [batchNo, assessmentType, isFixedOutOfBatch, canEditOutOf]);
 
   /* ── Period selection ── */
   const handlePeriodSelect = (e) => {
@@ -302,15 +397,32 @@ function MarkSheet() {
     setPeriodValue(val);
     const [plannerId, weekPart, datePart, ...topicParts] = val.split("::");
     const topic = topicParts.join("::");
-    setSelectedCoursePlannerId(plannerId || ""); setSelectedWeekNo(weekPart || ""); setSelectedDate(datePart || ""); setTopicName(topic); setMarks({}); setOutOff("");
-    if (isPdft && AUTO_OUT_OF_TYPES.includes(assessmentType)) { const fixed = getPdftOutOf(topic, assessmentType); if (fixed !== null) setOutOff(String(fixed)); }
+    setSelectedCoursePlannerId(plannerId || "");
+    setSelectedWeekNo(weekPart || "");
+    setSelectedDate(datePart || "");
+    setTopicName(topic);
+    setMarks({});
+    setOutOff("");
+
+    // Apply fixed out-of for PDFT or DVFT
+    const fixed = getFixedOutOf(topic, assessmentType, batchNo);
+    if (fixed !== null) setOutOff(String(fixed));
+
     if (plannerId && datePart) loadExistingMarks(plannerId, datePart);
   };
 
   /* ── Marks input ── */
   const handleMarksInput = (id, val) => {
     const points = val.replace(/\D/g, "");
-    setMarks(prev => ({ ...prev, [id]: { points, percentage: outOff && Number(outOff) > 0 ? Math.round((Number(points) / Number(outOff)) * 100) : "" } }));
+    setMarks(prev => ({
+      ...prev,
+      [id]: {
+        points,
+        percentage: outOff && Number(outOff) > 0
+          ? Math.round((Number(points) / Number(outOff)) * 100)
+          : "",
+      },
+    }));
   };
 
   /* ── Out Of change ── */
@@ -320,7 +432,14 @@ function MarkSheet() {
     setMarks(prev => {
       const updated = { ...prev };
       Object.keys(updated).forEach(id => {
-        if (updated[id]?.points) updated[id] = { ...updated[id], percentage: Number(val) > 0 ? Math.round((Number(updated[id].points) / Number(val)) * 100) : "" };
+        if (updated[id]?.points) {
+          updated[id] = {
+            ...updated[id],
+            percentage: Number(val) > 0
+              ? Math.round((Number(updated[id].points) / Number(val)) * 100)
+              : "",
+          };
+        }
       });
       return updated;
     });
@@ -333,35 +452,88 @@ function MarkSheet() {
     try {
       const cfg = ASSESSMENT_MAP[assessmentType];
       const res = await fetch(`${API_BASE}/api/marks/update-out-of`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ batch_no: batchNo, assessment_type: cfg.api, course_planner_id: selectedCoursePlannerId ? Number(selectedCoursePlannerId) : undefined, assessment_date: selectedDate, out_off: Number(outOff) }),
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({
+          batch_no:          batchNo,
+          assessment_type:   cfg.api,
+          course_planner_id: selectedCoursePlannerId ? Number(selectedCoursePlannerId) : undefined,
+          assessment_date:   selectedDate,
+          out_off:           Number(outOff),
+        }),
       });
-      setMessage(res.ok ? "✅ Out Of updated successfully." : `❌ Failed to update Out Of: ${(await res.json().catch(() => ({}))).error || "Unknown error"}`);
-    } catch { setMessage("❌ Network error while updating Out Of."); }
-    finally { setSavingOutOf(false); setTimeout(() => setMessage(""), 4000); }
+      setMessage(res.ok
+        ? "✅ Out Of updated successfully."
+        : `❌ Failed to update Out Of: ${(await res.json().catch(() => ({}))).error || "Unknown error"}`);
+    } catch {
+      setMessage("❌ Network error while updating Out Of.");
+    } finally {
+      setSavingOutOf(false);
+      setTimeout(() => setMessage(""), 4000);
+    }
   };
 
   /* ── Save Marks ── */
   const handleSave = async () => {
     if (!windowOpen) { setMessage("❌ Marks entry window closed. Cannot save."); return; }
     if (!batchNo || !selectedDate || !outOff) { setMessage("❌ Please complete all required fields."); return; }
-    if (!isAutoDateAssessment && !selectedCoursePlannerId) { setMessage("❌ Please select an assessment date from the dropdown."); return; }
+    if (!isAutoDateAssessment && !selectedCoursePlannerId) {
+      setMessage("❌ Please select an assessment date from the dropdown."); return;
+    }
+    // DVFT auto-date types still need a date from the user
+    if (isDvftAutoDateType && !selectedDate) {
+      setMessage("❌ Please enter the assessment date."); return;
+    }
+
     const cfg = ASSESSMENT_MAP[assessmentType];
     const learnersWithMarks = learners.filter(l => marks[l.id]?.points);
     if (learnersWithMarks.length === 0) { setMessage("❌ No marks entered."); return; }
+
     setSaving(true); setMessage("");
     let savedCount = 0, failCount = 0;
     try {
       for (const l of learnersWithMarks) {
-        const payload = { learner_id: l.id, batch_no: batchNo, assessment_date: selectedDate, assessment_name: topicName || cfg.label, out_off: Number(outOff), points: Number(marks[l.id].points), percentage: marks[l.id].percentage || null, course_planner_id: selectedCoursePlannerId ? Number(selectedCoursePlannerId) : undefined };
-        if (!isAutoDateAssessment) { if (assessmentType === "module") payload.module_no = Number(selectedWeekNo); else payload.week_no = Number(selectedWeekNo); }
+        const payload = {
+          learner_id:        l.id,
+          batch_no:          batchNo,
+          assessment_date:   selectedDate,
+          assessment_name:   topicName || cfg.label,
+          out_off:           Number(outOff),
+          points:            Number(marks[l.id].points),
+          percentage:        marks[l.id].percentage || null,
+          course_planner_id: selectedCoursePlannerId ? Number(selectedCoursePlannerId) : undefined,
+        };
+        if (!isAutoDateAssessment) {
+          if (assessmentType === "module") payload.module_no = Number(selectedWeekNo);
+          else payload.week_no = Number(selectedWeekNo);
+        }
         try {
-          const response = await fetch(`${API_BASE}/api/marks/${cfg.api}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-          if (!response.ok) { failCount++; } else { savedCount++; }
-        } catch { failCount++; }
+          const response = await fetch(`${API_BASE}/api/marks/${cfg.api}`, {
+            method:  "POST",
+            headers: { "Content-Type": "application/json" },
+            body:    JSON.stringify(payload),
+          });
+          if (!response.ok) failCount++;
+          else savedCount++;
+        } catch {
+          failCount++;
+        }
       }
-      setMessage(failCount === 0 ? `✅ Marks saved successfully for ${savedCount} learner(s).` : `⚠️ Saved ${savedCount} record(s). ${failCount} failed — check console.`);
-    } finally { setSaving(false); setTimeout(() => setMessage(""), 5000); }
+      setMessage(
+        failCount === 0
+          ? `✅ Marks saved successfully for ${savedCount} learner(s).`
+          : `⚠️ Saved ${savedCount} record(s). ${failCount} failed — check console.`
+      );
+    } finally {
+      setSaving(false);
+      setTimeout(() => setMessage(""), 5000);
+    }
+  };
+
+  /* ── Reset on batch/type change ── */
+  const resetSelections = () => {
+    setPeriodValue(""); setSelectedDate(""); setSelectedCoursePlannerId("");
+    setSelectedWeekNo(""); setTopicName(""); setMarks({}); setOutOff("");
   };
 
   /* ── Loading state ── */
@@ -399,7 +571,10 @@ function MarkSheet() {
             right={
               selectedDate && (
                 <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2, py: 0.8, borderRadius: "10px", background: windowOpen ? TOKENS.success.light : TOKENS.error.light, border: `1px solid ${windowOpen ? TOKENS.success.fill : TOKENS.error.fill}44` }}>
-                  {windowOpen ? <LockOpenIcon sx={{ fontSize: 14, color: TOKENS.success.fill }} /> : <LockIcon sx={{ fontSize: 14, color: TOKENS.error.fill }} />}
+                  {windowOpen
+                    ? <LockOpenIcon sx={{ fontSize: 14, color: TOKENS.success.fill }} />
+                    : <LockIcon     sx={{ fontSize: 14, color: TOKENS.error.fill   }} />
+                  }
                   <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700, color: windowOpen ? TOKENS.success.text : TOKENS.error.text }}>
                     {windowOpen ? `Window open · closes ${windowCloseDate}` : `Window closed ${windowCloseDate}`}
                   </Typography>
@@ -409,17 +584,20 @@ function MarkSheet() {
           />
           <Box sx={{ p: 3 }}>
             <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap", alignItems: "flex-end" }}>
+
               {/* Assessment Type */}
               <FormControl size="small" sx={{ minWidth: 220 }}>
                 <InputLabel sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Assessment Type</InputLabel>
                 <Select
                   value={assessmentType}
                   label="Assessment Type"
-                  onChange={e => { setAssessmentType(e.target.value); setPeriodValue(""); setSelectedDate(""); setSelectedCoursePlannerId(""); setSelectedWeekNo(""); setTopicName(""); setMarks({}); setOutOff(""); }}
+                  onChange={e => { setAssessmentType(e.target.value); resetSelections(); }}
                   sx={inputSx}
                 >
                   {Object.entries(ASSESSMENT_MAP).map(([key, val]) => (
-                    <MenuItem key={key} value={key} sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>{val.label}</MenuItem>
+                    <MenuItem key={key} value={key} sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>
+                      {val.label}
+                    </MenuItem>
                   ))}
                 </Select>
               </FormControl>
@@ -430,7 +608,7 @@ function MarkSheet() {
                 <Select
                   value={batchNo}
                   label="Batch"
-                  onChange={e => { setBatchNo(e.target.value); setPeriodValue(""); setSelectedDate(""); setSelectedCoursePlannerId(""); setSelectedWeekNo(""); setTopicName(""); setMarks({}); setOutOff(""); }}
+                  onChange={e => { setBatchNo(e.target.value); resetSelections(); }}
                   sx={inputSx}
                 >
                   {availableBatches.map(b => (
@@ -439,7 +617,7 @@ function MarkSheet() {
                 </Select>
               </FormControl>
 
-              {/* Period picker */}
+              {/* Period picker — non-auto types */}
               {!isAutoDateAssessment && (
                 <FormControl size="small" sx={{ minWidth: 380 }}>
                   <InputLabel sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Assessment Date / Topic</InputLabel>
@@ -453,12 +631,13 @@ function MarkSheet() {
                     ) : (
                       periods.map(p => {
                         const plannerId = p.course_planner_id ?? p.id ?? `${p.date}-${p.topic_name}`;
-                        const weekNo = p.week_no ?? p.module_no ?? "";
-                        const val = `${plannerId}::${weekNo}::${p.date}::${p.topic_name}`;
+                        const weekNo    = p.week_no ?? p.module_no ?? "";
+                        const val       = `${plannerId}::${weekNo}::${p.date}::${p.topic_name}`;
                         const weekLabel = p.week_no ? `Week ${p.week_no}` : p.module_no ? `Module ${p.module_no}` : "";
                         return (
                           <MenuItem key={`${p.date}-${p.topic_name}`} value={val} sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>
-                            {weekLabel ? <><strong>{weekLabel}</strong>&nbsp;—&nbsp;</> : ""}{p.date} — {p.topic_name}
+                            {weekLabel ? <><strong>{weekLabel}</strong>&nbsp;—&nbsp;</> : ""}
+                            {p.date} — {p.topic_name}
                           </MenuItem>
                         );
                       })
@@ -467,20 +646,46 @@ function MarkSheet() {
                 </FormControl>
               )}
 
-              {/* Auto-date display */}
+              {/* Date input for auto-date types */}
               {isAutoDateAssessment && (
-                <TextField
-                  label="Assessment Date"
-                  value={todayDate}
-                  disabled
-                  size="small"
-                  sx={{ width: 160, "& .MuiInputBase-root": { ...inputSx, fontFamily: "'DM Sans', sans-serif", fontSize: 13 }, "& .MuiInputLabel-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 13 } }}
-                />
+                isDvft ? (
+                  /* DVFT: user picks the actual date */
+                  <TextField
+                    label="Assessment Date"
+                    type="date"
+                    size="small"
+                    value={selectedDate}
+                    onChange={e => setSelectedDate(e.target.value)}
+                    InputLabelProps={{ shrink: true }}
+                    sx={{
+                      width: 180,
+                      "& .MuiInputBase-root": { ...inputSx, fontFamily: "'DM Sans', sans-serif", fontSize: 13 },
+                      "& .MuiInputLabel-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 13 },
+                    }}
+                  />
+                ) : (
+                  /* PDFT / others: locked to today */
+                  <TextField
+                    label="Assessment Date"
+                    value={todayDate}
+                    disabled
+                    size="small"
+                    sx={{
+                      width: 160,
+                      "& .MuiInputBase-root": { ...inputSx, fontFamily: "'DM Sans', sans-serif", fontSize: 13 },
+                      "& .MuiInputLabel-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 13 },
+                    }}
+                  />
+                )
               )}
 
               {/* Out Of */}
               <Box sx={{ display: "flex", alignItems: "flex-end", gap: 1.5 }}>
-                <Tooltip title={isPdft && isAutoOutOfType && !canEditOutOf ? "Out Of is fixed for PDFT batches" : ""}>
+                <Tooltip title={
+                  isFixedOutOfBatch && isAutoOutOfType && !canEditOutOf
+                    ? `Out Of is fixed for ${isPdft ? "PDFT" : "DVFT"} batches`
+                    : ""
+                }>
                   <span>
                     <TextField
                       label="Out Of"
@@ -495,7 +700,7 @@ function MarkSheet() {
                       }}
                       onChange={e => handleOutOfChange(e.target.value)}
                       inputProps={{ inputMode: "numeric" }}
-                      helperText={isPdft && outOff && isAutoOutOfType && !canEditOutOf ? "Fixed" : ""}
+                      helperText={isFixedOutOfBatch && outOff && isAutoOutOfType && !canEditOutOf ? "Fixed" : ""}
                     />
                   </span>
                 </Tooltip>
@@ -516,19 +721,16 @@ function MarkSheet() {
             </Box>
 
             {/* Assessment Info Pills */}
-            {topicName && (
+            {(topicName || isAutoDateAssessment) && (
               <Fade in>
                 <Box sx={{ mt: 2.5, display: "flex", flexWrap: "wrap", gap: 1.5, alignItems: "center" }}>
-                  <StatPill icon={<AssignmentIcon sx={{ fontSize: 14 }} />} label="Assessment" value={topicName} accent />
-                  <StatPill icon={<CalendarTodayIcon sx={{ fontSize: 14 }} />} label="Date" value={selectedDate} />
+                  <StatPill icon={<AssignmentIcon sx={{ fontSize: 14 }} />} label="Assessment" value={topicName || ASSESSMENT_MAP[assessmentType]?.label} accent />
+                  {selectedDate && <StatPill icon={<CalendarTodayIcon sx={{ fontSize: 14 }} />} label="Date" value={selectedDate} />}
                   <StatPill icon={<InfoOutlinedIcon sx={{ fontSize: 14 }} />} label="Out Of" value={outOff || "—"} />
-                  {selectedCoursePlannerId && <StatPill icon={<InfoOutlinedIcon sx={{ fontSize: 14 }} />} label="Planner ID" value={selectedCoursePlannerId} />}
-                  {isPdft && outOff && isAutoOutOfType && (
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 0.8, px: 1.8, py: 0.8, borderRadius: "10px", background: TOKENS.accentLight, border: `1px solid ${TOKENS.accent}33` }}>
-                      <Box sx={{ width: 6, height: 6, borderRadius: "50%", background: TOKENS.accent }} />
-                      <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700, color: TOKENS.accent }}>PDFT Fixed</Typography>
-                    </Box>
+                  {selectedCoursePlannerId && (
+                    <StatPill icon={<InfoOutlinedIcon sx={{ fontSize: 14 }} />} label="Planner ID" value={selectedCoursePlannerId} />
                   )}
+                  <BatchBadge batchNo={batchNo} />
                 </Box>
               </Fade>
             )}
@@ -586,9 +788,13 @@ function MarkSheet() {
                     <TableBody>
                       {learners.map((l, idx) => {
                         const hasMarks = !!marks[l.id]?.points;
-                        const pct = marks[l.id]?.percentage;
-                        const pctNum = Number(pct);
-                        const pctColor = pct === "" || pct === undefined ? TOKENS.textSub : pctNum >= 75 ? TOKENS.success.fill : pctNum >= 50 ? TOKENS.warning.fill : TOKENS.error.fill;
+                        const pct      = marks[l.id]?.percentage;
+                        const pctNum   = Number(pct);
+                        const pctColor =
+                          pct === "" || pct === undefined ? TOKENS.textSub :
+                          pctNum >= 75 ? TOKENS.success.fill :
+                          pctNum >= 50 ? TOKENS.warning.fill :
+                          TOKENS.error.fill;
                         return (
                           <TableRow
                             key={l.id}
@@ -638,7 +844,10 @@ function MarkSheet() {
                   <Button
                     variant="contained"
                     onClick={handleSave}
-                    disabled={saving || !windowOpen || !batchNo || !selectedDate || !outOff || (!isAutoDateAssessment && !selectedCoursePlannerId)}
+                    disabled={
+                      saving || !windowOpen || !batchNo || !selectedDate || !outOff ||
+                      (!isAutoDateAssessment && !selectedCoursePlannerId)
+                    }
                     startIcon={saving ? <CircularProgress size={16} color="inherit" /> : <SaveIcon sx={{ fontSize: 18 }} />}
                     sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 13, borderRadius: "10px", textTransform: "none", px: 3, py: 1.2, background: TOKENS.accent, "&:hover": { background: "#2a3fd4" }, "&:disabled": { opacity: 0.5 } }}
                   >
@@ -648,7 +857,9 @@ function MarkSheet() {
                   {!windowOpen && (
                     <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2, py: 0.8, borderRadius: "8px", background: TOKENS.error.light, border: `1px solid ${TOKENS.error.fill}44` }}>
                       <LockIcon sx={{ fontSize: 14, color: TOKENS.error.fill }} />
-                      <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, color: TOKENS.error.text }}>Window closed — contact admin for extension</Typography>
+                      <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, color: TOKENS.error.text }}>
+                        Window closed — contact admin for extension
+                      </Typography>
                     </Box>
                   )}
                 </Box>
@@ -659,12 +870,16 @@ function MarkSheet() {
               batchNo ? (
                 <Box sx={{ textAlign: "center", py: 6 }}>
                   <GroupIcon sx={{ fontSize: 40, color: TOKENS.border, mb: 1 }} />
-                  <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TOKENS.textSub }}>No learners found for batch {batchNo}.</Typography>
+                  <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TOKENS.textSub }}>
+                    No learners found for batch {batchNo}.
+                  </Typography>
                 </Box>
               ) : (
                 <Box sx={{ textAlign: "center", py: 6 }}>
                   <AssignmentIcon sx={{ fontSize: 40, color: TOKENS.border, mb: 1 }} />
-                  <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TOKENS.textSub }}>Select a batch above to load learners.</Typography>
+                  <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TOKENS.textSub }}>
+                    Select a batch above to load learners.
+                  </Typography>
                 </Box>
               )
             )}
