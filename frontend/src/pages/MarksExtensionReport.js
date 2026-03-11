@@ -148,6 +148,28 @@ export default function MarksExtensionReport({ user, token }) {
     }
   }
 
+  async function approveRequest(id){
+
+    await axios.post(`${API_BASE}/api/marks/approve-extension`,{
+      id,
+      manager_email:user.email
+    });
+
+    loadRequests();
+
+  }
+
+  async function rejectRequest(id){
+
+    await axios.post(`${API_BASE}/api/marks/reject-extension`,{
+      id,
+      manager_email:user.email
+    });
+
+    loadRequests();
+
+  }
+
   /* ════════════════════════════════════════════════════════════════════════ */
   return (
     <Box sx={{ minHeight: "100vh", background: TOKENS.bg, p: { xs: 2, md: 4 }, fontFamily: "'DM Sans', sans-serif" }}>
@@ -310,6 +332,25 @@ export default function MarksExtensionReport({ user, token }) {
                         <TableCell sx={{ ...tableCellSx, fontSize: 12, color: TOKENS.textSub }}>
                           {r.decided_by || "—"}
                         </TableCell>
+                        <TableCell>
+
+                          <Button
+                          size="small"
+                          color="success"
+                          onClick={()=>approveRequest(r.id)}
+                          >
+                          Approve
+                          </Button>
+
+                          <Button
+                          size="small"
+                          color="error"
+                          onClick={()=>rejectRequest(r.id)}
+                          >
+                          Reject
+                          </Button>
+
+                          </TableCell>
                       </TableRow>
                     ))
                   )}

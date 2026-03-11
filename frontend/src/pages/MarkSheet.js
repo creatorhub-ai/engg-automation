@@ -87,6 +87,39 @@ const tableCellSx = {
   borderBottom: `1px solid ${TOKENS.border}`,
 };
 
+const handleRequestExtension = async () => {
+
+  const reason = prompt("Enter reason for extension:");
+
+  if (!reason) return;
+
+  try {
+
+    const user = JSON.parse(localStorage.getItem("user"));
+
+    await fetch(`${API_BASE}/api/marks/request-extension`,{
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body:JSON.stringify({
+        batch_no: batchNo,
+        assessment_type: ASSESSMENT_MAP[assessmentType].api,
+        course_planner_id: selectedCoursePlannerId,
+        week_no: selectedWeekNo,
+        trainer_email: user.email,
+        reason
+      })
+    });
+
+    setMessage("✅ Extension request sent to Manager");
+
+  } catch {
+
+    setMessage("❌ Failed to send extension request");
+
+  }
+};
+
+
 /* ─── Assessment config ──────────────────────────────────────────────────── */
 const ASSESSMENT_MAP = {
   weekly:       { api: "weekly-assessment",      label: "Weekly Assessment",      type: "weekly" },
@@ -361,6 +394,37 @@ function MarkSheet() {
     setWindowOpen(currentDate <= close);
     setWindowCloseDate(close.toLocaleDateString("en-GB"));
   }, [selectedDate, assessmentType, currentDate, isAutoDateAssessment]);
+
+  useEffect(()=>{
+
+    async function checkExtension(){
+
+      const user = JSON.parse(localStorage.getItem("user"));
+
+      const res = await fetch(
+        `${API_BASE}/api/marks/check-extension?batch_no=${batchNo}&assessment_type=${ASSESSMENT_MAP[assessmentType].api}&course_planner_id=${selectedCoursePlannerId}&trainer_email=${user.email}`
+      );
+
+      const data = await res.json();
+
+      if(data.extension){
+
+        setWindowOpen(true);
+
+        setWindowCloseDate(
+          new Date(data.until).toLocaleDateString("en-GB")
+        );
+
+      }
+
+    }
+
+    if(!windowOpen){
+      checkExtension();
+    }
+
+  },[batchNo,assessmentType,selectedCoursePlannerId]);
+
 
   /* ── Load existing marks ── */
   const loadExistingMarks = useCallback(async (plannerId, date) => {
@@ -852,6 +916,19 @@ function MarkSheet() {
                     sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 13, borderRadius: "10px", textTransform: "none", px: 3, py: 1.2, background: TOKENS.accent, "&:hover": { background: "#2a3fd4" }, "&:disabled": { opacity: 0.5 } }}
                   >
                     {saving ? "Saving…" : `Save Marks${marksEnteredCount > 0 ? ` (${marksEnteredCount})` : ""}`}
+                  </Button>
+
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={handleRequestExtension}
+                    sx={{
+                      fontFamily: "'DM Sans'",
+                      fontWeight: 700,
+                      borderRadius: "10px",
+                    }}
+                  >
+                    Request Extension
                   </Button>
 
                   {!windowOpen && (

@@ -1207,24 +1207,30 @@ app.post("/api/marks/extension-request", async (req, res) => {
 
 // 4) GET /api/marks/extension-requests
 app.get("/api/marks/extension-requests", async (req, res) => {
+
+  const { batch_no, status } = req.query;
+
   try {
-    const status = req.query.status || "pending";
 
-    const { data, error } = await supabase
-      .from("marks_entry_extension_requests")
-      .select("*")
-      .eq("status", status)
-      .order("created_at", { ascending: false });
+    let query =
+      `SELECT * FROM marks_extension_requests WHERE batch_no=$1`;
 
-    if (error) {
-      console.error("list extension-requests error:", error);
-      return res.status(500).json({ error: "Failed to fetch requests" });
+    const params = [batch_no];
+
+    if (status) {
+      query += ` AND status=$2`;
+      params.push(status);
     }
 
-    return res.json(data || []);
+    query += ` ORDER BY created_at DESC`;
+
+    const result = await pool.query(query, params);
+
+    res.json(result.rows);
+
   } catch (err) {
-    console.error("list extension-requests error:", err);
-    return res.status(500).json({ error: "Internal server error" });
+    console.error(err);
+    res.status(500).json({ error: "Failed to load requests" });
   }
 });
 
@@ -5523,6 +5529,185 @@ app.get("/api/assessment-dates", async (req, res) => {
     res.json([]); // 👈 ABSOLUTE SAFETY
   }
 });
+
+
+app.post("/api/marks/request-extension", async (req, res) => {
+  const {
+    batch_no,
+    assessment_type,
+    course_planner_id,
+    week_no,
+    trainer_email,
+    reason
+  } = req.body;
+
+  try {
+    const result = await pool.query(
+      `INSERT INTO marks_extension_requests
+      (batch_no, assessment_type, course_planner_id, week_no, trainer_email, reason)
+      VALUES ($1,$2,$3,$4,$5,$6)
+      RETURNING *`,
+      [batch_no, assessment_type, course_planner_id, week_no, trainer_email, reason]
+    );
+
+    const row = result.rows[0];
+
+    // EMAIL MANAGER
+    await sendMail({
+      to: "manager@company.com",
+      subject: "Marks Extension Request",
+      html: `
+        Trainer ${trainer_email} requested marks entry extension.
+
+        Batch: ${batch_no}
+        Assessment: ${assessment_type}
+        Week: ${week_no}
+
+        Reason:
+        ${reason}
+      `
+    });
+
+    res.json({ success: true });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to create request" });
+  }
+});
+
+
+app.post("/api/marks/approve-extension", async (req, res) => {
+
+  const { id, manager_email } = req.body;
+
+  try {
+
+    const reqData = await pool.query(
+      `SELECT * FROM marks_extension_requests WHERE id=$1`,
+      [id]
+    );
+
+    const request = reqData.rows[0];
+
+    if (!request) {
+      return res.status(404).json({ error: "Request not found" });
+    }
+
+    const now = new Date();
+
+    const tomorrow = new Date(now);
+    tomorrow.setDate(now.getDate() + 1);
+
+    tomorrow.setHours(23,59,59,999);
+
+    await pool.query(
+      `UPDATE marks_extension_requests
+       SET status='approved',
+           approved_until=$1,
+           decided_at=NOW(),
+           decided_by=$2
+       WHERE id=$3`,
+      [tomorrow, manager_email, id]
+    );
+
+    // EMAIL TRAINER
+    await sendMail({
+      to: request.trainer_email,
+      subject: "Marks Entry Window Approved",
+      html: `
+      Your marks entry extension has been approved.
+
+      Batch: ${request.batch_no}
+
+      Window open until:
+      ${tomorrow.toLocaleString()}
+      `
+    });
+
+    res.json({ success: true });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Approval failed" });
+  }
+});
+
+app.post("/api/marks/reject-extension", async (req, res) => {
+
+  const { id, manager_email } = req.body;
+
+  try {
+
+    const reqData = await pool.query(
+      `SELECT * FROM marks_extension_requests WHERE id=$1`,
+      [id]
+    );
+
+    const request = reqData.rows[0];
+
+    await pool.query(
+      `UPDATE marks_extension_requests
+       SET status='rejected',
+           decided_at=NOW(),
+           decided_by=$1
+       WHERE id=$2`,
+      [manager_email, id]
+    );
+
+    await sendMail({
+      to: request.trainer_email,
+      subject: "Marks Extension Request Rejected",
+      html: `
+        Your extension request was rejected.
+      `
+    });
+
+    res.json({ success: true });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Reject failed" });
+  }
+});
+
+app.get("/api/marks/check-extension", async (req, res) => {
+
+  const { batch_no, assessment_type, course_planner_id, trainer_email } = req.query;
+
+  try {
+
+    const result = await pool.query(
+      `SELECT approved_until
+       FROM marks_extension_requests
+       WHERE batch_no=$1
+       AND assessment_type=$2
+       AND course_planner_id=$3
+       AND trainer_email=$4
+       AND status='approved'
+       ORDER BY approved_until DESC
+       LIMIT 1`,
+      [batch_no, assessment_type, course_planner_id, trainer_email]
+    );
+
+    if (result.rows.length === 0) {
+      return res.json({ extension: false });
+    }
+
+    const until = result.rows[0].approved_until;
+
+    res.json({
+      extension: new Date() <= new Date(until),
+      until
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Check failed" });
+  }
+});
+
+
 
 
 // Add or update Weekly Assessment Score
