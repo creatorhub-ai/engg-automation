@@ -918,18 +918,15 @@ function MarkSheet() {
                     {saving ? "Saving…" : `Save Marks${marksEnteredCount > 0 ? ` (${marksEnteredCount})` : ""}`}
                   </Button>
 
+                  {!windowOpen && (
                   <Button
                     variant="outlined"
                     size="small"
                     onClick={handleRequestExtension}
-                    sx={{
-                      fontFamily: "'DM Sans'",
-                      fontWeight: 700,
-                      borderRadius: "10px",
-                    }}
                   >
                     Request Extension
                   </Button>
+                  )}
 
                   {!windowOpen && (
                     <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2, py: 0.8, borderRadius: "8px", background: TOKENS.error.light, border: `1px solid ${TOKENS.error.fill}44` }}>

@@ -5711,54 +5711,29 @@ app.get("/api/marks/check-extension", async (req, res) => {
 
 
 // Add or update Weekly Assessment Score
-app.post("/api/marks/weekly-assessment", async (req, res) => {
-  if (!isWindowOpen("weekly-assessment", req.body.assessment_date)) {
-    return res.status(403).json({
-      error: "Marks entry window closed",
-    });
-  }
+// Get Weekly Assessment Marks
+app.get("/api/marks/weekly-assessment", async (req, res) => {
   try {
-    const {
-      learner_id,
-      batch_no,
-      week_no,
-      assessment_date,
-      out_off,
-      points,
-      percentage
-    } = req.body;
 
-    const planner = await getPlannerByBatchAndDate(batch_no, assessment_date);
-    if (!planner) {
-      return res.status(409).json({ error: "Planner not found" });
-    }
+    const { batch_no, course_planner_id, assessment_date } = req.query;
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("weekly_assessment_scores")
-      .upsert(
-        {
-          learner_id,
-          course_planner_id: planner.id,
-          batch_no,
-          week_no,
-          assessment_date,
-          out_off,
-          points,
-          percentage,
-          marked_at: new Date()
-        },
-        {
-          onConflict: "learner_id,course_planner_id,week_no,assessment_date"
-        }
-      );
+      .select("*")
+      .eq("batch_no", batch_no)
+      .eq("course_planner_id", course_planner_id)
+      .eq("assessment_date", assessment_date);
 
     if (error) throw error;
-    res.json({ success: true });
+
+    res.json(data || []);
 
   } catch (err) {
+    console.error("weekly-assessment fetch error:", err);
     res.status(500).json({ error: err.message });
   }
 });
+
 
 //save the intermediate assessment marks
 app.post("/api/marks/intermediate-assessment", async (req, res) => {
