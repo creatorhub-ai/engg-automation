@@ -2,498 +2,330 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
 import {
-  Box,
-  Paper,
-  Typography,
-  FormControl,
-  Select,
-  InputLabel,
-  MenuItem,
-  Grid,
-  Table,
-  TableHead,
-  TableBody,
-  TableRow,
-  TableCell,
-  TableContainer,
-  Chip,
-  CircularProgress,
-  Alert,
-  Button,
+  Box, Typography, FormControl, InputLabel, Select, MenuItem,
+  Table, TableHead, TableBody, TableRow, TableCell, TableContainer,
+  CircularProgress, Button,
 } from "@mui/material";
-import FileDownloadIcon from "@mui/icons-material/FileDownload";
+import {
+  FileDownloadOutlined as DownloadIcon,
+  CalendarViewWeek    as WeekIcon,
+} from "@mui/icons-material";
 
-const API_BASE =
-  process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
+const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
+
+/* ─── Design tokens ──────────────────────────────────────────────────────── */
+const TOKENS = {
+  bg:          "#d4e0fd",
+  surface:     "#ffffff",
+  surfaceAlt:  "#f8f9fc",
+  border:      "#e4e8f0",
+  accent:      "#3d5afe",
+  accentLight: "#e8ecff",
+  text:        "#1a1f36",
+  textSub:     "#6b7280",
+  success:     { fill: "#10b981", light: "#d1fae5", text: "#065f46" },
+  warning:     { fill: "#f59e0b", light: "#fef3c7", text: "#92400e" },
+  error:       { fill: "#ef4444", light: "#fee2e2", text: "#991b1b" },
+};
+
+const cardSx = {
+  background:   TOKENS.surface,
+  border:       `1px solid ${TOKENS.border}`,
+  borderRadius: "16px",
+  boxShadow:    "0 2px 12px rgba(0,0,0,0.06)",
+  overflow:     "hidden",
+};
+
+const labelSx = {
+  fontFamily:    "'DM Sans', sans-serif",
+  fontSize:      11,
+  fontWeight:    700,
+  letterSpacing: "0.08em",
+  textTransform: "uppercase",
+  color:         TOKENS.textSub,
+};
+
+const tableHeadSx = {
+  fontFamily:    "'DM Sans', sans-serif",
+  fontSize:      11,
+  fontWeight:    700,
+  letterSpacing: "0.06em",
+  textTransform: "uppercase",
+  color:         TOKENS.textSub,
+  background:    TOKENS.surfaceAlt,
+  borderBottom:  `2px solid ${TOKENS.border}`,
+  py:            1.4,
+  whiteSpace:    "nowrap",
+};
+
+const tableCellSx = {
+  fontFamily:   "'DM Sans', sans-serif",
+  fontSize:     13,
+  color:        TOKENS.text,
+  borderBottom: `1px solid ${TOKENS.border}`,
+};
+
+const inputSx = {
+  fontFamily: "'DM Sans', sans-serif",
+  fontSize: 13,
+  borderRadius: "10px",
+  "& .MuiOutlinedInput-notchedOutline": { borderColor: TOKENS.border },
+  "&:hover .MuiOutlinedInput-notchedOutline": { borderColor: TOKENS.accent },
+  "&.Mui-focused .MuiOutlinedInput-notchedOutline": { borderColor: TOKENS.accent },
+};
+
+function DiffBadge({ diff }) {
+  const isOnTime  = diff === 0;
+  const isDelayed = diff > 0;
+  const isEarly   = diff < 0;
+  const tok = isOnTime ? TOKENS.success : isDelayed && diff > 2 ? TOKENS.error : isDelayed ? TOKENS.warning : TOKENS.success;
+  return (
+    <Box sx={{ display: "inline-flex", px: 1.2, py: 0.3, borderRadius: "20px", background: `${tok.fill}18`, border: `1px solid ${tok.fill}44` }}>
+      <Typography sx={{ fontFamily: "'DM Mono', monospace", fontSize: 11, fontWeight: 700, color: tok.fill }}>
+        {isDelayed ? `+${diff}` : isEarly ? `${diff}` : "0"}
+      </Typography>
+    </Box>
+  );
+}
+
+function StatusBadge({ status }) {
+  const isComplete   = status === "Completed";
+  const isInProgress = status === "In Progress";
+  const tok = isComplete ? TOKENS.success : isInProgress ? { fill: TOKENS.accent, light: TOKENS.accentLight, text: "#1e3a8a" } : { fill: TOKENS.textSub, light: TOKENS.surfaceAlt, text: TOKENS.textSub };
+  return (
+    <Box sx={{ display: "inline-flex", px: 1.2, py: 0.3, borderRadius: "20px", background: tok.light, border: `1px solid ${tok.fill}44` }}>
+      <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 700, color: tok.text }}>
+        {isComplete ? "Done" : isInProgress ? "In Progress" : "N/A"}
+      </Typography>
+    </Box>
+  );
+}
 
 export default function WeeklyReports({ user, token }) {
-  const [batches, setBatches] = useState([]);
+  const [batches,       setBatches]       = useState([]);
   const [selectedBatch, setSelectedBatch] = useState("");
-  const [weeks, setWeeks] = useState([]);
-  const [selectedWeek, setSelectedWeek] = useState("");
-  const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [downloading, setDownloading] = useState(false);
-  const [error, setError] = useState("");
+  const [weeks,         setWeeks]         = useState([]);
+  const [selectedWeek,  setSelectedWeek]  = useState("");
+  const [rows,          setRows]          = useState([]);
+  const [loading,       setLoading]       = useState(false);
+  const [downloading,   setDownloading]   = useState(false);
+  const [error,         setError]         = useState("");
 
-  // load distinct batches
+  const welcomeName = user?.name || "User";
+
   useEffect(() => {
     async function loadBatches() {
       try {
         const headers = token ? { Authorization: `Bearer ${token}` } : {};
         const res = await axios.get(`${API_BASE}/api/batches`, { headers });
         setBatches(Array.isArray(res.data) ? res.data : []);
-      } catch (err) {
-        console.error("Error loading batches:", err);
-        setError("Error loading batches");
-      }
+      } catch { setError("Error loading batches"); }
     }
     loadBatches();
   }, [token]);
 
-  // when batch changes: load weeks for that batch
   useEffect(() => {
-    if (!selectedBatch) {
-      setWeeks([]);
-      setSelectedWeek("");
-      setRows([]);
-      return;
-    }
-
+    if (!selectedBatch) { setWeeks([]); setSelectedWeek(""); setRows([]); return; }
     async function loadWeeks() {
       try {
         const headers = token ? { Authorization: `Bearer ${token}` } : {};
-        const res = await axios.get(
-          `${API_BASE}/api/weeks/${selectedBatch}`,
-          { headers }
-        );
-        const list = Array.isArray(res.data) ? res.data : [];
-        const sorted = [...list].sort((a, b) => Number(a) - Number(b));
+        const res = await axios.get(`${API_BASE}/api/weeks/${selectedBatch}`, { headers });
+        const sorted = [...(Array.isArray(res.data) ? res.data : [])].sort((a, b) => Number(a) - Number(b));
         setWeeks(sorted);
         setSelectedWeek(sorted[0] || "");
-      } catch (err) {
-        console.error("Error loading weeks:", err);
-        setError("Error loading weeks");
-        setWeeks([]);
-        setSelectedWeek("");
-        setRows([]);
-      }
+      } catch { setError("Error loading weeks"); setWeeks([]); setSelectedWeek(""); setRows([]); }
     }
-
     loadWeeks();
   }, [selectedBatch, token]);
 
-  // when batch or week changes: load weekly date‑change data
   useEffect(() => {
-    if (!selectedBatch || !selectedWeek) {
-      setRows([]);
-      return;
-    }
-
+    if (!selectedBatch || !selectedWeek) { setRows([]); return; }
     async function loadWeeklyReport() {
-      setLoading(true);
-      setError("");
+      setLoading(true); setError("");
       try {
         const headers = token ? { Authorization: `Bearer ${token}` } : {};
-        const res = await axios.get(
-          `${API_BASE}/api/weekly-date-report/${selectedBatch}`,
-          {
-            headers,
-            params: { week_no: selectedWeek },
-          }
-        );
+        const res = await axios.get(`${API_BASE}/api/weekly-date-report/${selectedBatch}`, { headers, params: { week_no: selectedWeek } });
         setRows(Array.isArray(res.data) ? res.data : []);
-      } catch (err) {
-        console.error("Error loading weekly report:", err);
-        setError("Error loading weekly report");
-        setRows([]);
-      } finally {
-        setLoading(false);
-      }
+      } catch { setError("Error loading weekly report"); setRows([]); }
+      finally { setLoading(false); }
     }
-
     loadWeeklyReport();
   }, [selectedBatch, selectedWeek, token]);
 
-  // Generate IST timestamp for filename (backend handles PDF content timestamp)
-  const generateFileTimestamp = () => {
-    const now = new Date();
-    return now.toLocaleString('en-IN', { 
-      timeZone: 'Asia/Kolkata',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false
-    }).replace(/[,]/g, '').replace(/:/g, '-');
-  };
+  const generateFileTimestamp = () =>
+    new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })
+      .replace(/[,]/g, "").replace(/:/g, "-");
 
-  // handle PDF download
   const handleDownloadPDF = async () => {
-    if (!selectedBatch || !selectedWeek) {
-      alert("Please select a batch and week first");
-      return;
-    }
-
+    if (!selectedBatch || !selectedWeek) { alert("Please select a batch and week first"); return; }
     setDownloading(true);
     try {
-      const fileTimestamp = generateFileTimestamp();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const response = await axios.get(
-        `${API_BASE}/api/weekly-date-report/${selectedBatch}/pdf`,
-        {
-          headers,
-          params: { week_no: selectedWeek },
-          responseType: "blob",
-        }
-      );
-
-      // create blob and download with correct timestamp filename
-      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const response = await axios.get(`${API_BASE}/api/weekly-date-report/${selectedBatch}/pdf`, { headers, params: { week_no: selectedWeek }, responseType: "blob" });
+      const url  = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement("a");
       link.href = url;
-      link.setAttribute(
-        "download",
-        `Weekly_Report_${selectedBatch}_Week${selectedWeek}_${fileTimestamp}.pdf`
-      );
+      link.setAttribute("download", `Weekly_Report_${selectedBatch}_Week${selectedWeek}_${generateFileTimestamp()}.pdf`);
       document.body.appendChild(link);
       link.click();
       link.parentNode.removeChild(link);
       window.URL.revokeObjectURL(url);
-    } catch (err) {
-      console.error("Error downloading PDF:", err);
-      alert("Error downloading PDF");
-    } finally {
-      setDownloading(false);
-    }
+    } catch { alert("Error downloading PDF"); }
+    finally { setDownloading(false); }
   };
 
-  const welcomeName = user?.name || "User";
-
   return (
-    <Box sx={{ maxWidth: 1600, mx: "auto", my: 2 }}>
-      <Box
-        sx={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          mb: 2,
-        }}
-      >
-        <Box>
-          <Typography variant="h5" color="primary" gutterBottom>
-            Weekly Reports - CMS
-          </Typography>
-          <Typography variant="subtitle2" color="text.secondary">
-            Hello {welcomeName}, view date change statistics week‑wise for each batch.
-          </Typography>
-        </Box>
-        <Button
-          variant="contained"
-          color="primary"
-          startIcon={<FileDownloadIcon />}
-          onClick={handleDownloadPDF}
-          disabled={!selectedBatch || !selectedWeek || downloading || loading}
-          sx={{ mt: 1 }}
-        >
-          {downloading ? "Downloading..." : "Download PDF"}
-        </Button>
-      </Box>
+    <Box sx={{ minHeight: "100vh", background: TOKENS.bg, p: { xs: 2, md: 4 }, fontFamily: "'DM Sans', sans-serif" }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');`}</style>
+      <Box sx={{ maxWidth: 1600, mx: "auto" }}>
 
-      <Grid container spacing={3} mb={3}>
-        <Grid item xs={12} sm={6} md={4}>
-          <FormControl fullWidth size="small">
-            <InputLabel>Batch</InputLabel>
-            <Select
-              label="Batch"
-              value={selectedBatch}
-              onChange={(e) => setSelectedBatch(e.target.value)}
-            >
-              <MenuItem value="">
-                <em>Select Batch</em>
-              </MenuItem>
-              {batches.map((b) => (
-                <MenuItem key={b.batch_no} value={b.batch_no}>
-                  {b.batch_no} {b.start_date ? `(${b.start_date})` : ""}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-        </Grid>
-
-        <Grid item xs={12} sm={6} md={3}>
-          <FormControl fullWidth size="small" disabled={!weeks.length}>
-            <InputLabel>Week No</InputLabel>
-            <Select
-              label="Week No"
-              value={selectedWeek}
-              onChange={(e) => setSelectedWeek(e.target.value)}
-            >
-              {weeks.length === 0 && (
-                <MenuItem value="">
-                  <em>No weeks</em>
-                </MenuItem>
-              )}
-              {weeks.map((w) => (
-                <MenuItem key={w} value={w}>
-                  Week {w}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-        </Grid>
-      </Grid>
-
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error}
-        </Alert>
-      )}
-
-      {loading && (
-        <Box display="flex" justifyContent="center" my={4}>
-          <CircularProgress />
-        </Box>
-      )}
-
-      {!loading && selectedBatch && selectedWeek && (
-        <Paper elevation={2} sx={{ p: 0, overflow: 'hidden' }}>
-          {/* Full-width header - STRETCHED */}
-          <Box sx={{ 
-            bgcolor: "primary.main", 
-            color: "white", 
-            p: 2.5,
-            width: '100%',
-            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-          }}>
-            <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
-              📋 Week {selectedWeek} – Date Change Details (Batch: {selectedBatch})
+        {/* Header */}
+        <Box sx={{ mb: 4, display: "flex", alignItems: "flex-end", justifyContent: "space-between", flexWrap: "wrap", gap: 2 }}>
+          <Box>
+            <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: { xs: 24, md: 30 }, fontWeight: 800, color: TOKENS.text, letterSpacing: "-0.03em", mb: 0.5 }}>
+              Weekly Reports — CMS
+            </Typography>
+            <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, color: TOKENS.textSub }}>
+              Hello <strong style={{ color: TOKENS.accent }}>{welcomeName}</strong>, view date change stats week-wise per batch
             </Typography>
           </Box>
+          <Button
+            variant="contained"
+            startIcon={downloading ? <CircularProgress size={14} color="inherit" /> : <DownloadIcon sx={{ fontSize: 16 }} />}
+            onClick={handleDownloadPDF}
+            disabled={!selectedBatch || !selectedWeek || downloading || loading}
+            sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 13, textTransform: "none", borderRadius: "10px", background: TOKENS.accent, "&:hover": { background: "#2a3fd4" }, "&:disabled": { opacity: 0.5 } }}
+          >
+            {downloading ? "Downloading…" : "Download PDF"}
+          </Button>
+        </Box>
 
-          <Box sx={{ p: 2 }}>
-            <TableContainer sx={{ maxHeight: 600, width: '100%' }}>
-              <Table size="small" sx={{ 
-                tableLayout: 'fixed', 
-                width: '100%',
-                fontSize: '0.8rem'
-              }}>
+        {/* Filters */}
+        <Box sx={{ ...cardSx, p: 3, mb: 3 }}>
+          <Typography sx={{ ...labelSx, mb: 2 }}>Filter</Typography>
+          <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
+            <FormControl size="small" sx={{ minWidth: 220 }}>
+              <InputLabel sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Batch</InputLabel>
+              <Select value={selectedBatch} label="Batch" onChange={e => setSelectedBatch(e.target.value)} sx={inputSx}>
+                <MenuItem value=""><em>Select Batch</em></MenuItem>
+                {batches.map(b => (
+                  <MenuItem key={b.batch_no} value={b.batch_no} sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>
+                    {b.batch_no}{b.start_date ? ` (${b.start_date})` : ""}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <FormControl size="small" sx={{ minWidth: 160 }} disabled={!weeks.length}>
+              <InputLabel sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Week No</InputLabel>
+              <Select value={selectedWeek} label="Week No" onChange={e => setSelectedWeek(e.target.value)} sx={inputSx}>
+                {weeks.length === 0 && <MenuItem value=""><em>No weeks</em></MenuItem>}
+                {weeks.map(w => (
+                  <MenuItem key={w} value={w} sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Week {w}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </Box>
+          {error && (
+            <Box sx={{ mt: 2, px: 2.5, py: 1.5, borderRadius: "10px", background: TOKENS.error.light, border: `1px solid ${TOKENS.error.fill}44` }}>
+              <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, color: TOKENS.error.text }}>{error}</Typography>
+            </Box>
+          )}
+        </Box>
+
+        {/* Loading */}
+        {loading && (
+          <Box sx={{ ...cardSx, py: 8, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+            <CircularProgress size={32} sx={{ color: TOKENS.accent }} />
+            <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TOKENS.textSub }}>Loading weekly report…</Typography>
+          </Box>
+        )}
+
+        {/* Results table */}
+        {!loading && selectedBatch && selectedWeek && (
+          <Box sx={cardSx}>
+            {/* Card header */}
+            <Box sx={{ px: 3, py: 2.5, background: `linear-gradient(135deg, ${TOKENS.accent}0d 0%, ${TOKENS.accentLight} 100%)`, borderBottom: `1px solid ${TOKENS.border}`, display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap" }}>
+              <WeekIcon sx={{ fontSize: 20, color: TOKENS.accent }} />
+              <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 16, fontWeight: 800, color: TOKENS.text }}>
+                Week {selectedWeek} — Date Changes
+              </Typography>
+              <Box sx={{ px: 1.5, py: 0.4, borderRadius: "20px", background: TOKENS.accentLight, border: `1px solid ${TOKENS.accent}33` }}>
+                <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700, color: TOKENS.accent }}>Batch: {selectedBatch}</Typography>
+              </Box>
+              {rows.length > 0 && (
+                <Box sx={{ ml: "auto", px: 1.5, py: 0.4, borderRadius: "20px", background: TOKENS.surfaceAlt, border: `1px solid ${TOKENS.border}` }}>
+                  <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700, color: TOKENS.textSub }}>{rows.length} records</Typography>
+                </Box>
+              )}
+            </Box>
+
+            <TableContainer sx={{ maxHeight: 600 }}>
+              <Table stickyHeader size="small" sx={{ tableLayout: "fixed", width: "100%" }}>
                 <TableHead>
-                  <TableRow sx={{ bgcolor: "#f5f5f5 !important" }}>
-                    <TableCell sx={{ 
-                      width: '8%', 
-                      fontWeight: 'bold !important',
-                      fontSize: '0.85rem',
-                      p: 0.5,
-                      border: '1px solid #ddd'
-                    }}>Module</TableCell>
-                    <TableCell sx={{ 
-                      width: '14%', 
-                      fontWeight: 'bold !important',
-                      fontSize: '0.85rem',
-                      p: 0.5,
-                      border: '1px solid #ddd'
-                    }}>Topic</TableCell>
-                    <TableCell sx={{ 
-                      width: '11%', 
-                      fontWeight: 'bold !important',
-                      fontSize: '0.85rem',
-                      p: 0.5,
-                      textAlign: 'center',
-                      border: '1px solid #ddd'
-                    }}>Planned</TableCell>
-                    <TableCell sx={{ 
-                      width: '11%', 
-                      fontWeight: 'bold !important',
-                      fontSize: '0.85rem',
-                      p: 0.5,
-                      textAlign: 'center',
-                      border: '1px solid #ddd'
-                    }}>Actual</TableCell>
-                    <TableCell sx={{ 
-                      width: '10%', 
-                      fontWeight: 'bold !important',
-                      fontSize: '0.85rem',
-                      p: 0.5,
-                      textAlign: 'center',
-                      border: '1px solid #ddd'
-                    }}>Diff</TableCell>
-                    <TableCell sx={{ 
-                      width: '10%', 
-                      fontWeight: 'bold !important',
-                      fontSize: '0.85rem',
-                      p: 0.5,
-                      textAlign: 'center',
-                      border: '1px solid #ddd'
-                    }}>Status</TableCell>
-                    <TableCell sx={{ 
-                      width: '12%', 
-                      fontWeight: 'bold !important',
-                      fontSize: '0.85rem',
-                      p: 0.5,
-                      textAlign: 'center',
-                      border: '1px solid #ddd'
-                    }}>By</TableCell>
-                    <TableCell sx={{ 
-                      width: '14%', 
-                      fontWeight: 'bold !important',
-                      fontSize: '0.85rem',
-                      p: 0.5,
-                      textAlign: 'center',
-                      border: '1px solid #ddd'
-                    }}>Date</TableCell>
+                  <TableRow>
+                    <TableCell sx={{ ...tableHeadSx, width: "10%" }}>Module</TableCell>
+                    <TableCell sx={{ ...tableHeadSx, width: "18%" }}>Topic</TableCell>
+                    <TableCell align="center" sx={{ ...tableHeadSx, width: "12%" }}>Planned</TableCell>
+                    <TableCell align="center" sx={{ ...tableHeadSx, width: "12%" }}>Actual</TableCell>
+                    <TableCell align="center" sx={{ ...tableHeadSx, width: "10%" }}>Diff</TableCell>
+                    <TableCell align="center" sx={{ ...tableHeadSx, width: "12%" }}>Status</TableCell>
+                    <TableCell align="center" sx={{ ...tableHeadSx, width: "14%" }}>Changed By</TableCell>
+                    <TableCell align="center" sx={{ ...tableHeadSx, width: "12%" }}>Date</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {rows.length === 0 && (
+                  {rows.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={8} align="center" sx={{ py: 3 }}>
-                        <Typography variant="body2" color="text.secondary">
+                      <TableCell colSpan={8} align="center" sx={{ py: 6 }}>
+                        <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TOKENS.textSub }}>
                           No date changes recorded for this batch and week.
                         </Typography>
                       </TableCell>
                     </TableRow>
+                  ) : (
+                    rows.map((row, idx) => (
+                      <TableRow key={row.id || idx} sx={{ "&:nth-of-type(even)": { background: TOKENS.surfaceAlt }, "&:hover": { background: `${TOKENS.accent}06` } }}>
+                        <TableCell sx={{ ...tableCellSx, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {row.module_name || "N/A"}
+                        </TableCell>
+                        <TableCell sx={{ ...tableCellSx, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {row.topic_name}
+                        </TableCell>
+                        <TableCell align="center" sx={{ ...tableCellSx, fontFamily: "'DM Mono', monospace", fontSize: 12, color: TOKENS.textSub }}>
+                          {new Date(row.planned_date).toLocaleDateString("en-IN")}
+                        </TableCell>
+                        <TableCell align="center" sx={{ ...tableCellSx, fontFamily: "'DM Mono', monospace", fontSize: 12, color: TOKENS.textSub }}>
+                          {new Date(row.actual_date).toLocaleDateString("en-IN")}
+                        </TableCell>
+                        <TableCell align="center" sx={tableCellSx}>
+                          <DiffBadge diff={row.date_difference} />
+                        </TableCell>
+                        <TableCell align="center" sx={tableCellSx}>
+                          <StatusBadge status={row.topic_status} />
+                        </TableCell>
+                        <TableCell align="center" sx={{ ...tableCellSx, fontSize: 12, color: TOKENS.textSub, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {row.changed_by ? row.changed_by.split("@")[0] : "N/A"}
+                        </TableCell>
+                        <TableCell align="center" sx={{ ...tableCellSx, fontFamily: "'DM Mono', monospace", fontSize: 11, color: TOKENS.textSub }}>
+                          {row.changed_at ? new Date(row.changed_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" }).split(",")[0] : "—"}
+                        </TableCell>
+                      </TableRow>
+                    ))
                   )}
-
-                  {rows.map((row, index) => (
-                    <TableRow key={row.id || index} hover>
-                      <TableCell sx={{ 
-                        fontSize: '0.8rem',
-                        p: 0.5,
-                        border: '1px solid #eee',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap'
-                      }}>
-                        {row.module_name || "N/A"}
-                      </TableCell>
-                      <TableCell sx={{ 
-                        fontSize: '0.8rem',
-                        p: 0.5,
-                        border: '1px solid #eee',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap'
-                      }}>
-                        {row.topic_name}
-                      </TableCell>
-                      <TableCell sx={{ 
-                        fontSize: '0.8rem',
-                        p: 0.5,
-                        textAlign: 'center',
-                        border: '1px solid #eee'
-                      }}>
-                        {new Date(row.planned_date).toLocaleDateString("en-IN")}
-                      </TableCell>
-                      <TableCell sx={{ 
-                        fontSize: '0.8rem',
-                        p: 0.5,
-                        textAlign: 'center',
-                        border: '1px solid #eee'
-                      }}>
-                        {new Date(row.actual_date).toLocaleDateString("en-IN")}
-                      </TableCell>
-                      <TableCell sx={{ 
-                        p: 0.25,
-                        textAlign: 'center',
-                        border: '1px solid #eee'
-                      }}>
-                        <Chip
-                          label={
-                            row.date_difference > 0
-                              ? `+${row.date_difference}`
-                              : row.date_difference < 0
-                              ? `${row.date_difference}`
-                              : "0"
-                          }
-                          size="small"
-                          color={
-                            row.date_difference > 2
-                              ? "error"
-                              : row.date_difference > 0
-                              ? "warning"
-                              : row.date_difference < 0
-                              ? "success"
-                              : "default"
-                          }
-                          sx={{ 
-                            fontSize: '0.7rem',
-                            height: 22,
-                            fontWeight: "bold"
-                          }}
-                        />
-                      </TableCell>
-                      <TableCell sx={{ 
-                        p: 0.25,
-                        textAlign: 'center',
-                        border: '1px solid #eee'
-                      }}>
-                        <Chip
-                          label={
-                            row.topic_status === "Completed"
-                              ? "Done"
-                              : row.topic_status === "In Progress"
-                              ? "Prog"
-                              : "N/A"
-                          }
-                          size="small"
-                          variant="outlined"
-                          color={
-                            row.topic_status === "Completed"
-                              ? "success"
-                              : row.topic_status === "In Progress"
-                              ? "primary"
-                              : "default"
-                          }
-                          sx={{ 
-                            fontSize: '0.7rem',
-                            height: 22 
-                          }}
-                        />
-                      </TableCell>
-                      <TableCell sx={{ 
-                        fontSize: '0.8rem',
-                        p: 0.5,
-                        textAlign: 'center',
-                        border: '1px solid #eee',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap'
-                      }}>
-                        {row.changed_by ? row.changed_by.split('@')[0] : "N/A"}
-                      </TableCell>
-                      <TableCell sx={{ 
-                        fontSize: '0.75rem',
-                        p: 0.5,
-                        textAlign: 'center',
-                        border: '1px solid #eee',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap'
-                      }}>
-                        {row.changed_at ? new Date(row.changed_at).toLocaleString("en-IN", {
-                          dateStyle: "short",
-                          timeStyle: "short",
-                        }).split(',')[0] : "-"}
-                      </TableCell>
-                    </TableRow>
-                  ))}
                 </TableBody>
               </Table>
             </TableContainer>
           </Box>
-        </Paper>
-      )}
+        )}
 
-      {!loading && (!selectedBatch || !selectedWeek) && (
-        <Box mt={3}>
-          <Typography variant="body2" color="text.secondary">
-            Please select a batch and week to view weekly date‑change details.
-          </Typography>
-        </Box>
-      )}
+        {!loading && (!selectedBatch || !selectedWeek) && (
+          <Box sx={{ ...cardSx, py: 10, textAlign: "center" }}>
+            <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 15, fontWeight: 600, color: TOKENS.textSub }}>
+              Select a batch and week to view date-change details
+            </Typography>
+          </Box>
+        )}
+      </Box>
     </Box>
   );
 }

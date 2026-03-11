@@ -1,43 +1,113 @@
 // src/components/MarksExtensionReport.js
 import React, { useEffect, useState } from "react";
 import {
-  Box,
-  Paper,
-  Typography,
-  FormControl,
-  Select,
-  MenuItem,
-  InputLabel,
-  Table,
-  TableHead,
-  TableBody,
-  TableRow,
-  TableCell,
-  TableContainer,
-  Chip,
-  Alert,
+  Box, Typography, FormControl, InputLabel, Select, MenuItem,
+  Table, TableHead, TableBody, TableRow, TableCell, TableContainer,
   CircularProgress,
 } from "@mui/material";
+import { AssignmentLate as ExtIcon } from "@mui/icons-material";
 import axios from "axios";
 
-const API_BASE =
-  process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
+const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 
 const ASSESSMENT_LABELS = {
-  "weekly-assessment": "Weekly Assessment",
-  "intermediate-assessment": "Intermediate Assessment",
-  "module-level-assessment": "Module Level Assessment",
-  "weekly-quiz": "Weekly Quiz",
+  "weekly-assessment":        "Weekly Assessment",
+  "intermediate-assessment":  "Intermediate Assessment",
+  "module-level-assessment":  "Module Level Assessment",
+  "weekly-quiz":              "Weekly Quiz",
 };
 
-export default function MarksExtensionReport({ user, token }) {
-  const [batches, setBatches] = useState([]);
-  const [selectedBatch, setSelectedBatch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+/* ─── Design tokens (matches CourseProgress) ────────────────────────────── */
+const TOKENS = {
+  bg:          "#d4e0fd",
+  surface:     "#ffffff",
+  surfaceAlt:  "#f8f9fc",
+  border:      "#e4e8f0",
+  accent:      "#3d5afe",
+  accentLight: "#e8ecff",
+  text:        "#1a1f36",
+  textSub:     "#6b7280",
+  success:     { fill: "#10b981", light: "#d1fae5", text: "#065f46" },
+  warning:     { fill: "#f59e0b", light: "#fef3c7", text: "#92400e" },
+  error:       { fill: "#ef4444", light: "#fee2e2", text: "#991b1b" },
+};
 
+const cardSx = {
+  background:   TOKENS.surface,
+  border:       `1px solid ${TOKENS.border}`,
+  borderRadius: "16px",
+  boxShadow:    "0 2px 12px rgba(0,0,0,0.06)",
+  overflow:     "hidden",
+};
+
+const labelSx = {
+  fontFamily:    "'DM Sans', sans-serif",
+  fontSize:      11,
+  fontWeight:    700,
+  letterSpacing: "0.08em",
+  textTransform: "uppercase",
+  color:         TOKENS.textSub,
+};
+
+const tableHeadSx = {
+  fontFamily:    "'DM Sans', sans-serif",
+  fontSize:      11,
+  fontWeight:    700,
+  letterSpacing: "0.06em",
+  textTransform: "uppercase",
+  color:         TOKENS.textSub,
+  background:    TOKENS.surfaceAlt,
+  borderBottom:  `2px solid ${TOKENS.border}`,
+  py:            1.4,
+  whiteSpace:    "nowrap",
+};
+
+const tableCellSx = {
+  fontFamily:   "'DM Sans', sans-serif",
+  fontSize:     13,
+  color:        TOKENS.text,
+  borderBottom: `1px solid ${TOKENS.border}`,
+  py:           1.4,
+};
+
+const inputSx = {
+  fontFamily: "'DM Sans', sans-serif",
+  fontSize: 13,
+  borderRadius: "10px",
+  "& .MuiOutlinedInput-notchedOutline": { borderColor: TOKENS.border },
+  "&:hover .MuiOutlinedInput-notchedOutline": { borderColor: TOKENS.accent },
+  "&.Mui-focused .MuiOutlinedInput-notchedOutline": { borderColor: TOKENS.accent },
+};
+
+/* ─── Status badge ───────────────────────────────────────────────────────── */
+function StatusBadge({ status }) {
+  const map = {
+    approved: { bg: TOKENS.success.light, color: TOKENS.success.text, border: TOKENS.success.fill },
+    pending:  { bg: TOKENS.warning.light, color: TOKENS.warning.text, border: TOKENS.warning.fill },
+    rejected: { bg: TOKENS.error.light,   color: TOKENS.error.text,   border: TOKENS.error.fill   },
+  };
+  const s = map[status] || { bg: TOKENS.surfaceAlt, color: TOKENS.textSub, border: TOKENS.border };
+  return (
+    <Box sx={{ display: "inline-flex", px: 1.2, py: 0.3, borderRadius: "20px", background: s.bg, border: `1px solid ${s.border}44` }}>
+      <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 700, color: s.color, textTransform: "capitalize" }}>
+        {status}
+      </Typography>
+    </Box>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  Main component
+ * ═══════════════════════════════════════════════════════════════════════════ */
+export default function MarksExtensionReport({ user, token }) {
+  const [batches,       setBatches]       = useState([]);
+  const [selectedBatch, setSelectedBatch] = useState("");
+  const [statusFilter,  setStatusFilter]  = useState("all");
+  const [rows,          setRows]          = useState([]);
+  const [loading,       setLoading]       = useState(false);
+  const [error,         setError]         = useState("");
+
+  /* ── Load batches ── */
   useEffect(() => {
     async function loadBatches() {
       try {
@@ -51,12 +121,10 @@ export default function MarksExtensionReport({ user, token }) {
     loadBatches();
   }, [token]);
 
+  /* ── Load requests when batch / filter changes ── */
   useEffect(() => {
-    if (selectedBatch) {
-      loadRequests();
-    } else {
-      setRows([]);
-    }
+    if (selectedBatch) loadRequests();
+    else setRows([]);
   }, [selectedBatch, statusFilter]);
 
   async function loadRequests() {
@@ -64,16 +132,13 @@ export default function MarksExtensionReport({ user, token }) {
     setError("");
     try {
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const res = await axios.get(
-        `${API_BASE}/api/marks/extension-requests`,
-        {
-          params: {
-            batch_no: selectedBatch,
-            status: statusFilter === "all" ? undefined : statusFilter,
-          },
-          headers,
-        }
-      );
+      const res = await axios.get(`${API_BASE}/api/marks/extension-requests`, {
+        params: {
+          batch_no: selectedBatch,
+          status:   statusFilter === "all" ? undefined : statusFilter,
+        },
+        headers,
+      });
       setRows(Array.isArray(res.data) ? res.data : []);
     } catch (err) {
       console.error("Error loading extension requests:", err);
@@ -83,155 +148,186 @@ export default function MarksExtensionReport({ user, token }) {
     }
   }
 
+  /* ════════════════════════════════════════════════════════════════════════ */
   return (
-    <Paper elevation={3} sx={{ p: 3, borderRadius: 3 }}>
-      <Typography variant="h5" color="primary" gutterBottom>
-        Marks Extension Requests Report
-      </Typography>
+    <Box sx={{ minHeight: "100vh", background: TOKENS.bg, p: { xs: 2, md: 4 }, fontFamily: "'DM Sans', sans-serif" }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');`}</style>
+      <Box sx={{ maxWidth: 1400, mx: "auto" }}>
 
-      <Box sx={{ display: "flex", gap: 2, mb: 3, flexWrap: "wrap" }}>
-        <FormControl sx={{ minWidth: 220 }}>
-          <InputLabel>Batch No</InputLabel>
-          <Select
-            value={selectedBatch}
-            label="Batch No"
-            onChange={(e) => setSelectedBatch(e.target.value)}
-          >
-            <MenuItem value="">
-              <em></em>
-            </MenuItem>
-            {batches.map((b) => (
-              <MenuItem key={b.batch_no} value={b.batch_no}>
-                {b.batch_no} {b.start_date ? `(${b.start_date})` : ""}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-
-        <FormControl sx={{ minWidth: 180 }}>
-          <InputLabel>Status</InputLabel>
-          <Select
-            value={statusFilter}
-            label="Status"
-            onChange={(e) => setStatusFilter(e.target.value)}
-          >
-            <MenuItem value="all">All</MenuItem>
-            <MenuItem value="pending">Pending</MenuItem>
-            <MenuItem value="approved">Approved</MenuItem>
-            <MenuItem value="rejected">Rejected</MenuItem>
-          </Select>
-        </FormControl>
-      </Box>
-
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error}
-        </Alert>
-      )}
-
-      {loading && (
-        <Box display="flex" justifyContent="center" my={3}>
-          <CircularProgress />
-        </Box>
-      )}
-
-      {!loading && selectedBatch && (
-        <TableContainer component={Paper} elevation={1}>
-          <Table size="small">
-            <TableHead>
-              <TableRow sx={{ bgcolor: "#f5f5f5" }}>
-                <TableCell>
-                  <strong>Batch</strong>
-                </TableCell>
-                <TableCell>
-                  <strong>Assessment</strong>
-                </TableCell>
-                <TableCell>
-                  <strong>Week No</strong>
-                </TableCell>
-                <TableCell>
-                  <strong>Trainer</strong>
-                </TableCell>
-                <TableCell>
-                  <strong>Reason</strong>
-                </TableCell>
-                <TableCell align="center">
-                  <strong>Status</strong>
-                </TableCell>
-                <TableCell align="center">
-                  <strong>Requested At</strong>
-                </TableCell>
-                <TableCell align="center">
-                  <strong>Decided At</strong>
-                </TableCell>
-                <TableCell>
-                  <strong>Decided By</strong>
-                </TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {rows.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={9} align="center" sx={{ py: 3 }}>
-                    <Typography variant="body2" color="text.secondary">
-                      No extension requests for this batch and filter.
-                    </Typography>
-                  </TableCell>
-                </TableRow>
-              )}
-              {rows.map((r) => (
-                <TableRow key={r.id}>
-                  <TableCell>{r.batch_no}</TableCell>
-                  <TableCell>
-                    {ASSESSMENT_LABELS[r.assessment_type] || r.assessment_type}
-                  </TableCell>
-                  <TableCell>{r.week_no ?? "-"}</TableCell>
-                  <TableCell>{r.trainer_email}</TableCell>
-                  <TableCell>{r.reason || "-"}</TableCell>
-                  <TableCell align="center">
-                    <Chip
-                      label={r.status}
-                      size="small"
-                      color={
-                        r.status === "approved"
-                          ? "success"
-                          : r.status === "pending"
-                          ? "warning"
-                          : "error"
-                      }
-                    />
-                  </TableCell>
-                  <TableCell align="center">
-                    {r.created_at
-                      ? new Date(r.created_at).toLocaleString("en-IN", {
-                          dateStyle: "short",
-                          timeStyle: "short",
-                        })
-                      : "-"}
-                  </TableCell>
-                  <TableCell align="center">
-                    {r.decided_at
-                      ? new Date(r.decided_at).toLocaleString("en-IN", {
-                          dateStyle: "short",
-                          timeStyle: "short",
-                        })
-                      : "-"}
-                  </TableCell>
-                  <TableCell>{r.decided_by || "-"}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      )}
-
-      {!selectedBatch && !loading && (
-        <Box textAlign="center" py={4}>
-          <Typography variant="body1" color="text.secondary">
-            Select a batch to view extension request history.
+        {/* ── Page header ── */}
+        <Box sx={{ mb: 4 }}>
+          <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: { xs: 24, md: 30 }, fontWeight: 800, color: TOKENS.text, letterSpacing: "-0.03em", mb: 0.5 }}>
+            Marks Extension Requests
+          </Typography>
+          <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, color: TOKENS.textSub }}>
+            View and track extension requests by batch
           </Typography>
         </Box>
-      )}
-    </Paper>
+
+        {/* ── Filters ── */}
+        <Box sx={{ ...cardSx, p: 3, mb: 3 }}>
+          <Typography sx={{ ...labelSx, mb: 2 }}>Filter</Typography>
+          <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
+            <FormControl size="small" sx={{ minWidth: 240 }}>
+              <InputLabel sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Batch No</InputLabel>
+              <Select
+                value={selectedBatch}
+                label="Batch No"
+                onChange={e => setSelectedBatch(e.target.value)}
+                sx={inputSx}
+              >
+                <MenuItem value=""><em></em></MenuItem>
+                {batches.map(b => (
+                  <MenuItem key={b.batch_no} value={b.batch_no} sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>
+                    {b.batch_no}{b.start_date ? ` (${b.start_date})` : ""}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+
+            <FormControl size="small" sx={{ minWidth: 160 }}>
+              <InputLabel sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Status</InputLabel>
+              <Select
+                value={statusFilter}
+                label="Status"
+                onChange={e => setStatusFilter(e.target.value)}
+                sx={inputSx}
+              >
+                {["all", "pending", "approved", "rejected"].map(s => (
+                  <MenuItem key={s} value={s} sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, textTransform: "capitalize" }}>
+                    {s.charAt(0).toUpperCase() + s.slice(1)}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </Box>
+
+          {error && (
+            <Box sx={{ mt: 2, px: 2.5, py: 1.5, borderRadius: "10px", background: TOKENS.error.light, border: `1px solid ${TOKENS.error.fill}44` }}>
+              <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, color: TOKENS.error.text }}>
+                {error}
+              </Typography>
+            </Box>
+          )}
+        </Box>
+
+        {/* ── Loading ── */}
+        {loading && (
+          <Box sx={{ ...cardSx, py: 8, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+            <CircularProgress size={32} sx={{ color: TOKENS.accent }} />
+            <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TOKENS.textSub }}>
+              Loading extension requests…
+            </Typography>
+          </Box>
+        )}
+
+        {/* ── Table ── */}
+        {!loading && selectedBatch && (
+          <Box sx={cardSx}>
+            {/* Card header */}
+            <Box sx={{
+              px: 3, py: 2.5,
+              background: `linear-gradient(135deg, ${TOKENS.accent}0d 0%, ${TOKENS.accentLight} 100%)`,
+              borderBottom: `1px solid ${TOKENS.border}`,
+              display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap",
+            }}>
+              <ExtIcon sx={{ fontSize: 20, color: TOKENS.accent }} />
+              <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 16, fontWeight: 800, color: TOKENS.text }}>
+                Extension Requests
+              </Typography>
+              <Box sx={{ px: 1.5, py: 0.4, borderRadius: "20px", background: TOKENS.accentLight, border: `1px solid ${TOKENS.accent}33` }}>
+                <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700, color: TOKENS.accent }}>
+                  {selectedBatch}
+                </Typography>
+              </Box>
+              {rows.length > 0 && (
+                <Box sx={{ ml: "auto", px: 1.5, py: 0.4, borderRadius: "20px", background: TOKENS.surfaceAlt, border: `1px solid ${TOKENS.border}` }}>
+                  <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700, color: TOKENS.textSub }}>
+                    {rows.length} records
+                  </Typography>
+                </Box>
+              )}
+            </Box>
+
+            <TableContainer sx={{ maxHeight: 520 }}>
+              <Table stickyHeader size="small">
+                <TableHead>
+                  <TableRow>
+                    {[
+                      "Batch", "Assessment", "Week No", "Trainer",
+                      "Reason", "Status", "Requested At", "Decided At", "Decided By",
+                    ].map(h => (
+                      <TableCell key={h} sx={tableHeadSx}>{h}</TableCell>
+                    ))}
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {rows.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={9} align="center" sx={{ py: 7 }}>
+                        <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TOKENS.textSub }}>
+                          No extension requests for this batch and filter.
+                        </Typography>
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    rows.map(r => (
+                      <TableRow
+                        key={r.id}
+                        sx={{
+                          "&:nth-of-type(even)": { background: TOKENS.surfaceAlt },
+                          "&:hover": { background: `${TOKENS.accent}06` },
+                        }}
+                      >
+                        <TableCell sx={{ ...tableCellSx, fontFamily: "'DM Mono', monospace", fontSize: 12, color: TOKENS.textSub }}>
+                          {r.batch_no}
+                        </TableCell>
+                        <TableCell sx={tableCellSx}>
+                          {ASSESSMENT_LABELS[r.assessment_type] || r.assessment_type}
+                        </TableCell>
+                        <TableCell align="center" sx={{ ...tableCellSx, fontFamily: "'DM Mono', monospace", fontSize: 12 }}>
+                          {r.week_no ?? "—"}
+                        </TableCell>
+                        <TableCell sx={{ ...tableCellSx, fontSize: 12, color: TOKENS.textSub }}>
+                          {r.trainer_email}
+                        </TableCell>
+                        <TableCell sx={{ ...tableCellSx, maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {r.reason || "—"}
+                        </TableCell>
+                        <TableCell sx={tableCellSx}>
+                          <StatusBadge status={r.status} />
+                        </TableCell>
+                        <TableCell sx={{ ...tableCellSx, fontFamily: "'DM Mono', monospace", fontSize: 11, color: TOKENS.textSub }}>
+                          {r.created_at
+                            ? new Date(r.created_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })
+                            : "—"}
+                        </TableCell>
+                        <TableCell sx={{ ...tableCellSx, fontFamily: "'DM Mono', monospace", fontSize: 11, color: TOKENS.textSub }}>
+                          {r.decided_at
+                            ? new Date(r.decided_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })
+                            : "—"}
+                        </TableCell>
+                        <TableCell sx={{ ...tableCellSx, fontSize: 12, color: TOKENS.textSub }}>
+                          {r.decided_by || "—"}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </Box>
+        )}
+
+        {/* ── Empty state ── */}
+        {!selectedBatch && !loading && (
+          <Box sx={{ ...cardSx, py: 10, textAlign: "center" }}>
+            <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 15, fontWeight: 600, color: TOKENS.textSub }}>
+              Select a batch to view extension request history
+            </Typography>
+          </Box>
+        )}
+      </Box>
+    </Box>
   );
 }
