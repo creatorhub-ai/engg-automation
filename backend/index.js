@@ -886,23 +886,6 @@ async function getDistinctTrainersForBatch(batchNo) {
   }
 }
 
-// example helper
-export async function getDistinctTrainersForBatch(batchNo) {
-  const { data, error } = await supabase
-    .from("course_planner_data")
-    .select("trainer_email")
-    .eq("batch_no", batchNo)
-    .neq("trainer_email", null);
-
-  if (error) {
-    console.error("Error fetching trainers for batch", batchNo, error);
-    return [];
-  }
-
-  const emails = [...new Set(data.map((row) => row.trainer_email))];
-  return emails;
-}
-
 /* ---------------- HEALTH CHECK ---------------- */
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok", message: "Backend is running" });
