@@ -27,6 +27,7 @@ import CalendarTodayIcon from "@mui/icons-material/CalendarToday";
 import CheckCircleIcon   from "@mui/icons-material/CheckCircle";
 import ErrorIcon         from "@mui/icons-material/Error";
 import InfoOutlinedIcon  from "@mui/icons-material/InfoOutlined";
+import axios from 'axios';
 
 const API_BASE =
   process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
@@ -87,35 +88,24 @@ const tableCellSx = {
   borderBottom: `1px solid ${TOKENS.border}`,
 };
 
+// Request handler - show only if window closed and no pending request
 const handleRequestExtension = async () => {
-
-  const reason = prompt("Enter reason for extension:");
-
-  if (!reason) return;
-
+  if (requesting || !reason.trim()) return; // Add a reason textarea/input
+  setRequesting(true);
   try {
-
-    const user = JSON.parse(localStorage.getItem("user"));
-
-    await fetch(`${API_BASE}/api/marks/request-extension`,{
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      body:JSON.stringify({
-        batch_no: batchNo,
-        assessment_type: ASSESSMENT_MAP[assessmentType].api,
-        course_planner_id: selectedCoursePlannerId,
-        week_no: selectedWeekNo,
-        trainer_email: user.email,
-        reason
-      })
-    });
-
-    setMessage("✅ Extension request sent to Manager");
-
-  } catch {
-
-    setMessage("❌ Failed to send extension request");
-
+    await axios.post(`${APIBASE}/api/marks/extension-request`, {
+      batchno: batchNo,
+      assessmenttype: assessmentType,
+      weekno: weekNo,
+      traineremail: user.email, // Logged-in trainer
+      reason: reason.trim()
+    }, { headers: { Authorization: `Bearer ${token}` } });
+    setHasPendingRequest(true);
+    // Show success toast: "Request sent to manager"
+  } catch (err) {
+    // Show error toast
+  } finally {
+    setRequesting(false);
   }
 };
 
@@ -293,6 +283,8 @@ function MarkSheet() {
   const [savingOutOf,             setSavingOutOf]             = useState(false);
   const [loadingMarks,            setLoadingMarks]            = useState(false);
   const [currentDate,             setCurrentDate]             = useState(new Date());
+  const [requesting, setRequesting] = useState(false);
+  const [hasPendingRequest, setHasPendingRequest] = useState(false);
 
   const currentUser  = getCurrentUser();
   const canEditOutOf = isAdminOrManager(currentUser);
@@ -424,6 +416,19 @@ function MarkSheet() {
     }
 
   },[batchNo,assessmentType,selectedCoursePlannerId]);
+
+  // Load window status with pending check (call on mount or batch change)
+  useEffect(() => {
+    if (batchNo && assessmentType) {
+      axios.get(`${APIBASE}/api/marks/window-status`, {
+        params: { batchno: batchNo, assessmenttype: assessmentType, weekno: weekNo },
+        headers: { Authorization: `Bearer ${token}` }
+      }).then(res => {
+        setWindowOpen(res.data.isopen);
+        setHasPendingRequest(res.data.haspendingrequest);
+      });
+    }
+  }, [batchNo, assessmentType, weekNo]);
 
 
   /* ── Load existing marks ── */
@@ -918,21 +923,35 @@ function MarkSheet() {
                     {saving ? "Saving…" : `Save Marks${marksEnteredCount > 0 ? ` (${marksEnteredCount})` : ""}`}
                   </Button>
 
-                  {!windowOpen && (
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    onClick={handleRequestExtension}
-                  >
-                    Request Extension
-                  </Button>
+                  {!windowOpen && !hasPendingRequest && (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 2 }}>
+                      <Button
+                        variant="contained"
+                        onClick={handleRequestExtension}
+                        disabled={requesting}
+                        sx={{ background: '#FF9800', '&:hover': { background: '#F57C00' } }}
+                      >
+                        {requesting ? 'Requesting...' : 'Request 24hr Extension'}
+                      </Button>
+                      <TextField
+                        multiline
+                        rows={2}
+                        placeholder="Reason for extension (optional)"
+                        value={reason}
+                        onChange={(e) => setReason(e.target.value)}
+                        sx={{ width: '100%' }}
+                      />
+                    </Box>
+                  )}
+                  {!windowOpen && hasPendingRequest && (
+                    <Alert severity="info">Extension request pending manager approval.</Alert>
                   )}
 
                   {!windowOpen && (
                     <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2, py: 0.8, borderRadius: "8px", background: TOKENS.error.light, border: `1px solid ${TOKENS.error.fill}44` }}>
                       <LockIcon sx={{ fontSize: 14, color: TOKENS.error.fill }} />
                       <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, color: TOKENS.error.text }}>
-                        Window closed — contact admin for extension
+                        Window closed - contact manager for extension
                       </Typography>
                     </Box>
                   )}

@@ -635,6 +635,257 @@ async function checkLicenseAvailability(supabase, domain, students) {
   else return { available: false, missing: students - availableCount };
 }
 
+// MARKS EXTENSION REQUESTS - COMPLETE IMPLEMENTATION
+async function handleExtensionRequest(req, res) {
+  try {
+    const { batchno, assessmenttype, weekno, traineremail, reason } = req.body;
+    
+    if (!batchno || !assessmenttype || !weekno) {
+      return res.status(400).json({ error: 'batchno, assessmenttype, weekno are required' });
+    }
+
+    // Check if portal is still open (no need to request)
+    const status = await getWindowStatusWithPending(batchno, assessmenttype, weekno);
+    if (status.isopen) {
+      return res.json({ success: false, error: 'Portal is already open for this assessment' });
+    }
+
+    // Prevent duplicate pending requests
+    const existing = await pool.query(
+      `SELECT id FROM marksextensionrequests 
+       WHERE batchno=? AND assessmenttype=? AND weekno=? AND status='pending' 
+       LIMIT 1`,
+      [batchno, assessmenttype, weekno]
+    );
+    
+    if (existing.length > 0) {
+      return res.json({ 
+        success: false, 
+        error: 'There is already a pending extension request for this assessment' 
+      });
+    }
+
+    // Insert new request
+    const [result] = await pool.query(
+      `INSERT INTO marksextensionrequests 
+       (batchno, assessmenttype, weekno, traineremail, reason, status, createdat) 
+       VALUES (?, ?, ?, ?, ?, 'pending', NOW())`,
+      [batchno, assessmenttype, weekno, traineremail || req.user?.email || null, reason || null]
+    );
+
+    // Get distinct trainer emails for batch to notify managers
+    const notifyEmails = await getDistinctTrainersForBatch(batchno);
+    
+    // Send email to managers
+    const subject = `Extension request for batch ${batchno}`;
+    const htmlBody = `
+      <p>An extension request has been made.</p>
+      <ul>
+        <li><strong>Batch:</strong> ${batchno}</li>
+        <li><strong>Assessment Type:</strong> ${assessmenttype}</li>
+        <li><strong>Week No:</strong> ${weekno}</li>
+        <li><strong>Trainer:</strong> ${traineremail || 'N/A'}</li>
+        <li><strong>Reason:</strong> ${reason || 'N/A'}</li>
+      </ul>
+      <p>Please review the request and approve or reject it in the <a href="${FRONTENDURL}/marks-extension-report">Marks Extension Report</a>.</p>
+    `;
+
+    // Send emails asynchronously
+    notifyEmails.forEach(email => {
+      sendRawEmail(email, subject, '', htmlBody).catch(e => {
+        console.error('Failed to send mail to', email, e);
+      });
+    });
+
+    res.json({ success: true, requestid: result.insertId });
+  } catch (err) {
+    console.error('extension-request error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+async function getExtensionRequests(req, res) {
+  try {
+    const { batchno, status } = req.query;
+    let query = 'SELECT * FROM marksextensionrequests WHERE 1=1';
+    const params = [];
+
+    if (batchno) {
+      query += ' AND batchno=?';
+      params.push(batchno);
+    }
+    if (status && status !== 'all') {
+      query += ' AND status=?';
+      params.push(status);
+    }
+    
+    query += ' ORDER BY createdat DESC';
+    
+    const [rows] = await pool.query(query, params);
+    res.json(rows);
+  } catch (err) {
+    console.error('getExtensionRequests error:', err);
+    res.status(500).json({ error: 'Failed to load requests' });
+  }
+}
+
+async function approveExtension(req, res) {
+  try {
+    const id = Number(req.params.id);
+    const managerEmail = req.user?.email;
+
+    // Fetch request details
+    const [reqRow] = await pool.query(
+      'SELECT * FROM marksextensionrequests WHERE id=? AND status="pending"',
+      [id]
+    );
+
+    if (!reqRow.length) {
+      return res.status(404).json({ error: 'Request not found or already decided' });
+    }
+
+    const nowPlus24 = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    nowPlus24.setHours(23, 59, 59, 999); // Next day 11:59:59 PM IST
+
+    // Update request status
+    await pool.query(
+      `UPDATE marksextensionrequests 
+       SET status='approved', decidedat=NOW(), decidedby=?, approveduntil=?
+       WHERE id=?`,
+      [managerEmail, nowPlus24.toISOString().slice(0, 19).replace('T', ' '), id]
+    );
+
+    // Send approval email to trainer
+    const trainerEmail = reqRow[0].traineremail;
+    if (trainerEmail) {
+      const subject = `✅ Extension approved for batch ${reqRow[0].batchno}`;
+      const htmlBody = `
+        <p>Your extension request has been <strong>approved</strong>!</p>
+        <p>Marks entry window is now open until <strong>${nowPlus24.toLocaleString('en-IN', { 
+          dateStyle: 'medium', timeStyle: 'short' 
+        })}</strong></p>
+        <p>Thank you!</p>
+      `;
+      sendRawEmail(trainerEmail, subject, '', htmlBody).catch(console.error);
+    }
+
+    res.json({ success: true, message: 'Extension approved successfully' });
+  } catch (err) {
+    console.error('approveExtension error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+async function rejectExtension(req, res) {
+  try {
+    const id = Number(req.params.id);
+    const managerEmail = req.user?.email;
+
+    const [reqRow] = await pool.query(
+      'SELECT * FROM marksextensionrequests WHERE id=? AND status="pending"',
+      [id]
+    );
+
+    if (!reqRow.length) {
+      return res.status(404).json({ error: 'Request not found or already decided' });
+    }
+
+    // Update request status
+    await pool.query(
+      `UPDATE marksextensionrequests 
+       SET status='rejected', decidedat=NOW(), decidedby=?
+       WHERE id=?`,
+      [managerEmail, id]
+    );
+
+    // Notify trainer
+    const trainerEmail = reqRow[0].traineremail;
+    if (trainerEmail) {
+      const subject = `❌ Extension request rejected for batch ${reqRow[0].batchno}`;
+      sendRawEmail(trainerEmail, subject, 
+        'Your extension request has been rejected.',
+        '<p>Your extension request has been rejected by the manager.</p>'
+      ).catch(console.error);
+    }
+
+    res.json({ success: true, message: 'Request rejected' });
+  } catch (err) {
+    console.error('rejectExtension error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+// UPDATED Window Status with Extension Check
+async function getWindowStatusWithPending(batchNo, assessmentType, weekNo) {
+  try {
+    // 1. Normal window logic (your existing logic)
+    const daysWindowMap = {
+      'weekly-assessment': 4,
+      'intermediate-assessment': 5,
+      'module-level-assessment': 6,
+      'weekly-quiz': 7
+    };
+    const daysWindow = daysWindowMap[assessmentType] || 7;
+
+    // Assuming assessmentDate comes from somewhere - modify as needed
+    // For now, using current date logic
+    const now = new Date();
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    
+    // 2. Check approved extension FIRST (overrides normal window)
+    const [extRes] = await pool.query(
+      `SELECT approveduntil FROM marksextensionrequests 
+       WHERE batchno=? AND assessmenttype=? AND (weekno=? OR weekno IS NULL) 
+       AND status='approved' ORDER BY approveduntil DESC LIMIT 1`,
+      [batchNo, assessmentType, weekNo]
+    );
+    
+    const extendedUntil = extRes[0]?.approveduntil;
+    let trulyOpen = false;
+    
+    if (extendedUntil && new Date() < new Date(extendedUntil)) {
+      trulyOpen = true; // Extension active
+    } else {
+      // Fall back to normal window logic
+      trulyOpen = false; // Implement your existing date validation here
+    }
+
+    // 3. Check for pending requests
+    const [pendingRes] = await pool.query(
+      `SELECT id FROM marksextensionrequests 
+       WHERE batchno=? AND assessmenttype=? AND (weekno=? OR weekno IS NULL) 
+       AND status='pending' AND traineremail=? LIMIT 1`,
+      [batchNo, assessmentType, weekNo, req?.user?.email]
+    );
+    
+    const hasPendingRequest = pendingRes.length > 0;
+
+    return { 
+      isopen: trulyOpen, 
+      haspendingrequest: hasPendingRequest,
+      extendeduntil: extendedUntil 
+    };
+  } catch (err) {
+    console.error('window-status error:', err);
+    return { isopen: false, haspendingrequest: false };
+  }
+}
+
+// HELPER - Get distinct trainer emails for batch notification
+async function getDistinctTrainersForBatch(batchNo) {
+  try {
+    const [rows] = await pool.query(
+      `SELECT DISTINCT TRIM(REGEXP_REPLACE(traineremail, 'mailto:', '')) as traineremail 
+       FROM courseplannerdata WHERE batchno=? AND traineremail IS NOT NULL`,
+      [batchNo]
+    );
+    return rows.map(row => row.traineremail).filter(Boolean);
+  } catch (err) {
+    console.error('getDistinctTrainersForBatch error:', err);
+    return [];
+  }
+}
+
 // example helper
 export async function getDistinctTrainersForBatch(batchNo) {
   const { data, error } = await supabase

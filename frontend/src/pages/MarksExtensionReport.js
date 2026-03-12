@@ -3,7 +3,7 @@ import React, { useEffect, useState } from "react";
 import {
   Box, Typography, FormControl, InputLabel, Select, MenuItem,
   Table, TableHead, TableBody, TableRow, TableCell, TableContainer,
-  CircularProgress,
+  CircularProgress, Alert, Button,
 } from "@mui/material";
 import { AssignmentLate as ExtIcon } from "@mui/icons-material";
 import axios from "axios";
@@ -100,12 +100,13 @@ function StatusBadge({ status }) {
  *  Main component
  * ═══════════════════════════════════════════════════════════════════════════ */
 export default function MarksExtensionReport({ user, token }) {
-  const [batches,       setBatches]       = useState([]);
-  const [selectedBatch, setSelectedBatch] = useState("");
-  const [statusFilter,  setStatusFilter]  = useState("all");
-  const [rows,          setRows]          = useState([]);
-  const [loading,       setLoading]       = useState(false);
-  const [error,         setError]         = useState("");
+  const [batches,         setBatches]        = useState([]);
+  const [selectedBatch,   setSelectedBatch]  = useState("");
+  const [statusFilter,    setStatusFilter]   = useState("all");
+  const [rows,            setRows]           = useState([]);
+  const [loading,         setLoading]        = useState(false);
+  const [error,           setError]          = useState("");
+  const [actionLoading,   setActionLoading]  = useState({}); // Track approve/reject loading per row
 
   /* ── Load batches ── */
   useEffect(() => {
@@ -134,8 +135,8 @@ export default function MarksExtensionReport({ user, token }) {
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
       const res = await axios.get(`${API_BASE}/api/marks/extension-requests`, {
         params: {
-          batch_no: selectedBatch,
-          status:   statusFilter === "all" ? undefined : statusFilter,
+          batchno: selectedBatch,  // Fixed: was batch_no
+          status:  statusFilter === "all" ? undefined : statusFilter,
         },
         headers,
       });
@@ -148,26 +149,62 @@ export default function MarksExtensionReport({ user, token }) {
     }
   }
 
-  async function approveRequest(id){
+  // APPROVE REQUEST - Fixed API endpoint and proper error handling
+  async function approveRequest(id) {
+    if (!token || !user?.email) {
+      setError("Please login as manager to approve requests");
+      return;
+    }
 
-    await axios.post(`${API_BASE}/api/marks/approve-extension`,{
-      id,
-      manager_email:user.email
-    });
+    setActionLoading(prev => ({ ...prev, [id]: 'approve' }));
 
-    loadRequests();
-
+    try {
+      await axios.post(`${API_BASE}/api/marks/extension-request/${id}/approve`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      // Refresh table data
+      await loadRequests();
+      
+      // Show success message
+      setError("✅ Extension approved successfully!");
+      setTimeout(() => setError(""), 3000);
+      
+    } catch (err) {
+      console.error("Approve error:", err);
+      setError(`❌ Failed to approve: ${err.response?.data?.error || err.message}`);
+    } finally {
+      setActionLoading(prev => ({ ...prev, [id]: false }));
+    }
   }
 
-  async function rejectRequest(id){
+  // REJECT REQUEST - Fixed API endpoint and proper error handling
+  async function rejectRequest(id) {
+    if (!token || !user?.email) {
+      setError("Please login as manager to reject requests");
+      return;
+    }
 
-    await axios.post(`${API_BASE}/api/marks/reject-extension`,{
-      id,
-      manager_email:user.email
-    });
+    setActionLoading(prev => ({ ...prev, [id]: 'reject' }));
 
-    loadRequests();
-
+    try {
+      await axios.post(`${API_BASE}/api/marks/extension-request/${id}/reject`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      // Refresh table data
+      await loadRequests();
+      
+      // Show success message
+      setError("✅ Request rejected successfully!");
+      setTimeout(() => setError(""), 3000);
+      
+    } catch (err) {
+      console.error("Reject error:", err);
+      setError(`❌ Failed to reject: ${err.response?.data?.error || err.message}`);
+    } finally {
+      setActionLoading(prev => ({ ...prev, [id]: false }));
+    }
   }
 
   /* ════════════════════════════════════════════════════════════════════════ */
@@ -225,8 +262,17 @@ export default function MarksExtensionReport({ user, token }) {
           </Box>
 
           {error && (
-            <Box sx={{ mt: 2, px: 2.5, py: 1.5, borderRadius: "10px", background: TOKENS.error.light, border: `1px solid ${TOKENS.error.fill}44` }}>
-              <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, color: TOKENS.error.text }}>
+            <Box sx={{ 
+              mt: 2, px: 2.5, py: 1.5, borderRadius: "10px", 
+              background: error.includes('✅') ? TOKENS.success.light : TOKENS.error.light,
+              border: `1px solid ${error.includes('✅') ? TOKENS.success.fill : TOKENS.error.fill}44`
+            }}>
+              <Typography sx={{ 
+                fontFamily: "'DM Sans', sans-serif", 
+                fontSize: 12, 
+                fontWeight: 600, 
+                color: error.includes('✅') ? TOKENS.success.text : TOKENS.error.text
+              }}>
                 {error}
               </Typography>
             </Box>
@@ -277,7 +323,7 @@ export default function MarksExtensionReport({ user, token }) {
                   <TableRow>
                     {[
                       "Batch", "Assessment", "Week No", "Trainer",
-                      "Reason", "Status", "Requested At", "Decided At", "Decided By",
+                      "Reason", "Status", "Requested At", "Decided At", "Decided By", "Actions"
                     ].map(h => (
                       <TableCell key={h} sx={tableHeadSx}>{h}</TableCell>
                     ))}
@@ -286,7 +332,7 @@ export default function MarksExtensionReport({ user, token }) {
                 <TableBody>
                   {rows.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={9} align="center" sx={{ py: 7 }}>
+                      <TableCell colSpan={10} align="center" sx={{ py: 7 }}>
                         <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TOKENS.textSub }}>
                           No extension requests for this batch and filter.
                         </Typography>
@@ -302,16 +348,16 @@ export default function MarksExtensionReport({ user, token }) {
                         }}
                       >
                         <TableCell sx={{ ...tableCellSx, fontFamily: "'DM Mono', monospace", fontSize: 12, color: TOKENS.textSub }}>
-                          {r.batch_no}
+                          {r.batchno || r.batch_no || "—"}
                         </TableCell>
                         <TableCell sx={tableCellSx}>
-                          {ASSESSMENT_LABELS[r.assessment_type] || r.assessment_type}
+                          {ASSESSMENT_LABELS[r.assessmenttype || r.assessment_type] || (r.assessmenttype || r.assessment_type)}
                         </TableCell>
                         <TableCell align="center" sx={{ ...tableCellSx, fontFamily: "'DM Mono', monospace", fontSize: 12 }}>
-                          {r.week_no ?? "—"}
+                          {r.weekno ?? r.week_no ?? "—"}
                         </TableCell>
                         <TableCell sx={{ ...tableCellSx, fontSize: 12, color: TOKENS.textSub }}>
-                          {r.trainer_email}
+                          {r.traineremail || r.trainer_email || "—"}
                         </TableCell>
                         <TableCell sx={{ ...tableCellSx, maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {r.reason || "—"}
@@ -320,37 +366,61 @@ export default function MarksExtensionReport({ user, token }) {
                           <StatusBadge status={r.status} />
                         </TableCell>
                         <TableCell sx={{ ...tableCellSx, fontFamily: "'DM Mono', monospace", fontSize: 11, color: TOKENS.textSub }}>
-                          {r.created_at
-                            ? new Date(r.created_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })
+                          {r.createdat || r.created_at
+                            ? new Date(r.createdat || r.created_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })
                             : "—"}
                         </TableCell>
                         <TableCell sx={{ ...tableCellSx, fontFamily: "'DM Mono', monospace", fontSize: 11, color: TOKENS.textSub }}>
-                          {r.decided_at
-                            ? new Date(r.decided_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })
+                          {r.decidedat || r.decided_at
+                            ? new Date(r.decidedat || r.decided_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })
                             : "—"}
                         </TableCell>
                         <TableCell sx={{ ...tableCellSx, fontSize: 12, color: TOKENS.textSub }}>
-                          {r.decided_by || "—"}
+                          {r.decidedby || r.decided_by || "—"}
                         </TableCell>
-                        <TableCell>
-
-                          <Button
-                          size="small"
-                          color="success"
-                          onClick={()=>approveRequest(r.id)}
-                          >
-                          Approve
-                          </Button>
-
-                          <Button
-                          size="small"
-                          color="error"
-                          onClick={()=>rejectRequest(r.id)}
-                          >
-                          Reject
-                          </Button>
-
-                          </TableCell>
+                        <TableCell sx={{ ...tableCellSx, whiteSpace: "nowrap" }}>
+                          {/* Show buttons ONLY for pending requests */}
+                          {r.status === 'pending' ? (
+                            <>
+                              <Button
+                                size="small"
+                                variant="contained"
+                                color="success"
+                                onClick={() => approveRequest(r.id)}
+                                disabled={actionLoading[r.id] === 'approve'}
+                                sx={{ 
+                                  minWidth: 80, mr: 0.5,
+                                  background: TOKENS.success.fill,
+                                  '&:hover': { background: `${TOKENS.success.fill}E0` }
+                                }}
+                              >
+                                {actionLoading[r.id] === 'approve' ? 'Approving...' : 'Approve'}
+                              </Button>
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                color="error"
+                                onClick={() => rejectRequest(r.id)}
+                                disabled={actionLoading[r.id] === 'reject'}
+                                sx={{ 
+                                  minWidth: 70,
+                                  borderColor: TOKENS.error.fill,
+                                  color: TOKENS.error.fill,
+                                  '&:hover': { 
+                                    borderColor: `${TOKENS.error.fill}E0`,
+                                    backgroundColor: `${TOKENS.error.fill}08`
+                                  }
+                                }}
+                              >
+                                {actionLoading[r.id] === 'reject' ? 'Rejecting...' : 'Reject'}
+                              </Button>
+                            </>
+                          ) : (
+                            <Typography variant="caption" color="textSecondary">
+                              {r.status === 'approved' ? '✅ Approved' : '❌ Rejected'}
+                            </Typography>
+                          )}
+                        </TableCell>
                       </TableRow>
                     ))
                   )}
