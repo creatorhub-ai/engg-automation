@@ -124,7 +124,6 @@ function resolveIntermediateTopic(topicName, assessmentName) {
 }
 
 /* ─── Safe number parse ──────────────────────────────────────────────────── */
-// Backend returns all percentages as strings ("12.34"), so parse them safely
 function n(val) {
   const v = parseFloat(val);
   return isNaN(v) ? null : v;
@@ -252,8 +251,6 @@ function BatchPill({ batchNo }) {
 }
 
 /* ─── PDFT Scorecard Table ───────────────────────────────────────────────── */
-// Backend returns: { name, email, intermediate, theory, breakdown:{digital,cmos,tcl,physical}, project, viva, overall, grade, certification, placement }
-// All values are strings like "72.50" — parseFloat() them before display.
 function PdftScorecardTable({ data, batchNo }) {
   return (
     <Box sx={{ ...cardSx }}>
@@ -339,7 +336,8 @@ function PdftScorecardTable({ data, batchNo }) {
         </Box>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <SchoolIcon sx={{ fontSize: 14, color: TOKENS.textSub }} />
-          <Typography sx={{ ...labelSx, fontSize: 10 }}>Placement: Project ≥ 70% AND Viva ≥ 70% AND Overall ≥ 80%</Typography>
+          {/* ✅ FIXED: Project threshold corrected from 70% → 60% */}
+          <Typography sx={{ ...labelSx, fontSize: 10 }}>Placement: Project ≥ 60% AND Viva ≥ 70% AND Overall ≥ 80%</Typography>
         </Box>
         <Typography sx={{ ...labelSx, fontSize: 10 }}>
           Weightage: Intermediate 10% · Digital+CMOS+TCL 20% · Physical 30% · Project 30% · Viva 10%
@@ -350,7 +348,6 @@ function PdftScorecardTable({ data, batchNo }) {
 }
 
 /* ─── DVFT Scorecard Table ───────────────────────────────────────────────── */
-// Backend returns: { name, email, intermediate, dvGroup1, dvGroup2, breakdown:{digital,verilog,sv,uvm,python}, project, viva, overall, grade, certification, placement }
 function DvftScorecardTable({ data, batchNo }) {
   return (
     <Box sx={{ ...cardSx }}>
@@ -440,7 +437,8 @@ function DvftScorecardTable({ data, batchNo }) {
         </Box>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <SchoolIcon sx={{ fontSize: 14, color: TOKENS.textSub }} />
-          <Typography sx={{ ...labelSx, fontSize: 10 }}>Placement: Project ≥ 70% AND Viva ≥ 70% AND Overall ≥ 80%</Typography>
+          {/* ✅ FIXED: Project threshold corrected from 70% → 60% */}
+          <Typography sx={{ ...labelSx, fontSize: 10 }}>Placement: Project ≥ 60% AND Viva ≥ 70% AND Overall ≥ 80%</Typography>
         </Box>
         <Typography sx={{ ...labelSx, fontSize: 10 }}>
           Weightage: Intermediate 10% · Digital+Verilog 20% · SV+UVM+Python 30% · Project 30% · Viva 10%
@@ -489,15 +487,12 @@ export default function MarksDashboard({ user }) {
           return;
         }
 
-        // PDFT → /api/scorecard/:batchNo   (existing endpoint, returns { data: [...] })
-        // DVFT → /api/scorecard-dvft/:batchNo  (new endpoint, same shape)
         const endpoint = isDvft
           ? `${API_BASE}/api/scorecard-dvft/${batchNo}`
           : `${API_BASE}/api/scorecard/${batchNo}`;
 
         const res = await axios.get(endpoint);
 
-        // Backend wraps in { data: [...] }
         const rows = Array.isArray(res.data?.data) ? res.data.data
                    : Array.isArray(res.data)       ? res.data
                    : [];
@@ -507,7 +502,6 @@ export default function MarksDashboard({ user }) {
           return;
         }
 
-        // The backend already computed all percentages — use directly, no recalculation
         setScorecardData(rows);
         setMessage(`✅ Loaded scorecard for ${rows.length} learner${rows.length !== 1 ? "s" : ""}`);
 
