@@ -4035,11 +4035,11 @@ app.get("/api/scorecard/:batchNo", async (req, res) => {
 
       // ── Placement Eligibility ─────────────────────────────────
       // Condition:
-      //   Project >= 70%  AND
+      //   Project >= 60%  AND
       //   Viva >= 70%     AND
       //   Overall >= 80%
       const placement =
-        projectOutOf100 >= 70 &&
+        projectOutOf100 >= 60 &&
         vivaOutOf100 >= 70 &&
         overall >= 80
           ? "YES"
@@ -4236,7 +4236,7 @@ app.get("/api/scorecard-dvft/:batchNo", async (req, res) => {
         projectPct>=70 && overall>=70 ? "YES":"NO"
 
       const placement =
-        projectPct>=70 && vivaPct>=70 && overall>=80 ? "YES":"NO"
+        projectPct>=60 && vivaPct>=70 && overall>=80 ? "YES":"NO"
 
       results.push({
         name:learner.name,
