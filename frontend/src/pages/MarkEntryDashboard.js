@@ -20,10 +20,18 @@ const ALL_TAB_ITEMS = [
   { value: "marks-dashboard", emoji: "📊", label: "Marks Dashboard" },
 ];
 
-export default function MarkEntryDashboard({ user, token }) {
-  const isTrainer = user?.role === "Trainers";
+/* ─── Helper: case-insensitive trainer role check ────────────────────────── */
+// Matches "trainer", "trainers", "Trainer", "Trainers", etc.
+function isTrainerRole(role) {
+  if (!role) return false;
+  const r = role.toString().toLowerCase().trim();
+  return r === "trainer" || r === "trainers";
+}
 
-  // Trainers only see Mark Entry, so filter the tab list accordingly
+export default function MarkEntryDashboard({ user, token }) {
+  const isTrainer = isTrainerRole(user?.role);
+
+  // Trainers only see Mark Entry — filter the tab list accordingly
   const TAB_ITEMS = isTrainer
     ? ALL_TAB_ITEMS.filter((t) => t.value === "mark-entry")
     : ALL_TAB_ITEMS;
@@ -76,7 +84,7 @@ export default function MarkEntryDashboard({ user, token }) {
           </Typography>
         </Box>
 
-        {/* Tabs — only rendered if there is more than one tab to show */}
+        {/* Tabs — only rendered when there is more than one tab to show */}
         {TAB_ITEMS.length > 1 && (
           <Tabs
             value={activeTab}
