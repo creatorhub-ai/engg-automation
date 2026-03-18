@@ -5393,6 +5393,7 @@ app.get('/apiperiods/:batchNo/:assessmentType', async (req, res) => {
   }
 });
 
+// ── POST /api/trainer-leaves  (CREATE) ──────────────────────────────────
 app.post("/api/trainer-leaves", async (req, res) => {
   const {
     trainer_email,
@@ -5403,68 +5404,156 @@ app.post("/api/trainer-leaves", async (req, res) => {
     reason,
     batch_nos,
   } = req.body;
-
+ 
   if (!trainer_email || !start_date || !end_date) {
     return res.status(400).json({ error: "Missing required fields" });
   }
-
+ 
   try {
-    // 1️⃣ Fetch DISTINCT module names from course_planner_data
-    const moduleResult = await pool.query(
-      `
-      SELECT DISTINCT module_name
-      FROM course_planner_data
-      WHERE trainer_email = $1
-        AND date BETWEEN $2 AND $3
-        AND module_name IS NOT NULL
-      `,
-      [trainer_email, start_date, end_date]
-    );
-
-    // 2️⃣ Convert to comma-separated string
-    const moduleNames = moduleResult.rows
-      .map((r) => r.module_name)
-      .filter(Boolean);
-
-    const moduleNameStr = moduleNames.join(", ");
-
-    // 3️⃣ Insert leave record
-    await pool.query(
-      `
-      INSERT INTO trainer_unavailability
-      (
+    // 1️⃣ Fetch DISTINCT module names from course_planner_data via Supabase
+    let moduleNameStr = "";
+    try {
+      const { data: moduleRows, error: moduleErr } = await supabase
+        .from("course_planner_data")
+        .select("module_name")
+        .eq("trainer_email", trainer_email)
+        .gte("date", start_date)
+        .lte("date", end_date)
+        .not("module_name", "is", null);
+ 
+      if (!moduleErr && moduleRows && moduleRows.length > 0) {
+        const uniqueModules = [...new Set(moduleRows.map((r) => r.module_name).filter(Boolean))];
+        moduleNameStr = uniqueModules.join(", ");
+      }
+    } catch (modErr) {
+      // Non-fatal: continue without module_name
+      console.warn("Could not fetch module names (non-fatal):", modErr.message);
+    }
+ 
+    // 2️⃣ Insert leave record via Supabase (same client used everywhere else)
+    const { data, error } = await supabase
+      .from("trainer_unavailability")
+      .insert({
         trainer_email,
-        trainer_name,
-        domain,
+        trainer_name:  trainer_name  || null,
+        domain:        domain        || null,
         start_date,
         end_date,
-        reason,
-        batch_nos,
-        module_name
-      )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-      `,
-      [
-        trainer_email,
-        trainer_name,
-        domain,
-        start_date,
-        end_date,
-        reason,
-        batch_nos,
-        moduleNameStr,
-      ]
-    );
-
+        reason:        reason        || null,
+        batch_nos:     batch_nos     || null,
+        module_name:   moduleNameStr || null,
+        status:        "pending",
+      })
+      .select("id, module_name")
+      .single();
+ 
+    if (error) {
+      console.error("Error inserting trainer leave:", error);
+      return res.status(500).json({ error: error.message || "Failed to apply leave" });
+    }
+ 
     res.json({
       success: true,
-      module_name: moduleNameStr,
+      id:          data.id,
+      module_name: data.module_name,
     });
   } catch (err) {
     console.error("Error applying leave:", err);
     res.status(500).json({ error: "Failed to apply leave" });
   }
 });
+
+// ── PUT /api/trainer-leaves/:id  (EDIT dates / reason) ──────────────────
+app.put("/api/trainer-leaves/:id", async (req, res) => {
+  const { id } = req.params;
+  const { start_date, end_date, reason } = req.body;
+ 
+  if (!id) return res.status(400).json({ error: "Missing id" });
+  if (!start_date || !end_date) return res.status(400).json({ error: "start_date and end_date are required" });
+  if (new Date(start_date) > new Date(end_date))
+    return res.status(400).json({ error: "end_date must be after start_date" });
+ 
+  try {
+    // Only allow editing pending records
+    const { data: existing, error: fetchErr } = await supabase
+      .from("trainer_unavailability")
+      .select("id, status")
+      .eq("id", Number(id))
+      .maybeSingle();
+ 
+    if (fetchErr || !existing) {
+      return res.status(404).json({ error: "Leave record not found" });
+    }
+ 
+    if (["assigned", "approved"].includes((existing.status || "").toLowerCase())) {
+      return res.status(403).json({ error: "Cannot edit a leave that has already been processed" });
+    }
+ 
+    const { data, error } = await supabase
+      .from("trainer_unavailability")
+      .update({
+        start_date,
+        end_date,
+        reason:     reason || null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", Number(id))
+      .select("id, start_date, end_date, reason, status")
+      .single();
+ 
+    if (error) {
+      console.error("Error updating trainer leave:", error);
+      return res.status(500).json({ error: error.message || "Failed to update leave" });
+    }
+ 
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error("PUT /api/trainer-leaves/:id error:", err);
+    res.status(500).json({ error: "Failed to update leave" });
+  }
+});
+
+
+// ── DELETE /api/trainer-leaves/:id  (CANCEL / DELETE) ───────────────────
+app.delete("/api/trainer-leaves/:id", async (req, res) => {
+  const { id } = req.params;
+ 
+  if (!id) return res.status(400).json({ error: "Missing id" });
+ 
+  try {
+    // Prevent deletion of already-processed records
+    const { data: existing, error: fetchErr } = await supabase
+      .from("trainer_unavailability")
+      .select("id, status")
+      .eq("id", Number(id))
+      .maybeSingle();
+ 
+    if (fetchErr || !existing) {
+      return res.status(404).json({ error: "Leave record not found" });
+    }
+ 
+    if (["assigned", "approved"].includes((existing.status || "").toLowerCase())) {
+      return res.status(403).json({ error: "Cannot delete a leave that has already been processed" });
+    }
+ 
+    const { error } = await supabase
+      .from("trainer_unavailability")
+      .delete()
+      .eq("id", Number(id));
+ 
+    if (error) {
+      console.error("Error deleting trainer leave:", error);
+      return res.status(500).json({ error: error.message || "Failed to delete leave" });
+    }
+ 
+    res.json({ success: true });
+  } catch (err) {
+    console.error("DELETE /api/trainer-leaves/:id error:", err);
+    res.status(500).json({ error: "Failed to delete leave" });
+  }
+});
+
+
 
 //get the topics from course planner table
 app.get("/api/topic", async (req, res) => {
