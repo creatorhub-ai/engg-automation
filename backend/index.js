@@ -624,6 +624,40 @@ async function findAvailableClassroom(supabase, students, start_date, end_date, 
   return null; // no classroom available
 }
 
+// ── Helper: resolve the current user's role from the DB ──────────────────────
+// Assumes your auth middleware attaches req.user = { id, email } after verifying
+// the session / JWT.  Adjust the lookup key (id vs email) to match your setup.
+async function getUserRole(req) {
+  // Try by id first, fall back to email
+  const userId = req.user?.id;
+  const email  = req.user?.email;
+ 
+  if (!userId && !email) return null;
+ 
+  const { data, error } = await supabase
+    .from("internal_users")
+    .select("role, is_active")
+    .eq(userId ? "id" : "email", userId || email)
+    .single();
+ 
+  if (error || !data || !data.is_active) return null;
+  return data.role; // e.g. "Admin" | "Manager" | "Trainer" | …
+}
+
+// ── Middleware: require Admin or Manager ──────────────────────────────────────
+async function requireAdminOrManager(req, res, next) {
+  try {
+    const role = await getUserRole(req);
+    if (role === "Admin" || role === "Manager") return next();
+    return res.status(403).json({ error: "Permission denied — Admin or Manager role required." });
+  } catch (err) {
+    console.error("Role check error:", err);
+    return res.status(500).json({ error: "Failed to verify permissions." });
+  }
+}
+
+
+
 // Check license availability for domain and students count
 async function checkLicenseAvailability(supabase, domain, students) {
   let { data: licenses, error } = await supabase.from('licenses').select('count').eq('domain', domain);
@@ -696,6 +730,22 @@ app.get('/api/session-attendance-report', async (req, res) => {
     res.json([]); // Always return array
   }
 });
+
+// ── GET /api/me — return the current user's role to the frontend ──────────────
+// The frontend's useCurrentUserRole hook calls this on mount to get a
+// server-verified role instead of trusting localStorage alone.
+app.get("/api/me", async (req, res) => {
+  try {
+    const role = await getUserRole(req);
+    if (!role) return res.status(401).json({ error: "Unauthenticated or inactive user." });
+    res.json({ role });
+  } catch (err) {
+    console.error("GET /api/me error:", err);
+    res.status(500).json({ error: "Failed to fetch user info." });
+  }
+});
+
+
 
 // Add this route to your Express app
 app.get('/api/modules-by-date', async (req, res) => {
@@ -6021,46 +6071,52 @@ app.get('/api/marks/:category', async (req, res) => {
 });
 
 //update the out of marks in the marks sheet page
-app.post("/api/marks/update-out-of", async (req, res) => {
-  const { batch_no, assessment_type, course_planner_id, assessment_date, out_off } = req.body;
-
-  if (!batch_no || !assessment_type || !assessment_date || out_off == null)
-    return res.status(400).json({ error: "batch_no, assessment_type, assessment_date, out_off are required" });
-
-  const table = ASSESSMENT_TABLE_MAP[assessment_type];
-  if (!table) return res.status(400).json({ error: "Invalid assessment type" });
-
-  try {
-    let query;
-    let values;
-
-    if (course_planner_id) {
-      query = `
-        UPDATE ${table}
-        SET out_off = $1
-        WHERE batch_no = $2
-          AND course_planner_id = $3
-          AND assessment_date = $4
-      `;
-      values = [Number(out_off), batch_no, Number(course_planner_id), assessment_date];
-    } else {
-      // Auto-date assessments
-      query = `
-        UPDATE ${table}
-        SET out_off = $1
-        WHERE batch_no = $2
-          AND assessment_date = $3
-      `;
-      values = [Number(out_off), batch_no, assessment_date];
+app.post(
+  "/api/marks/update-out-of",
+  requireAdminOrManager,          // <── role guard applied here
+  async (req, res) => {
+    const { batch_no, assessment_type, course_planner_id, assessment_date, out_off } = req.body;
+ 
+    if (!batch_no || !assessment_type || !assessment_date || out_off == null) {
+      return res.status(400).json({
+        error: "batch_no, assessment_type, assessment_date, out_off are required",
+      });
     }
-
-    const result = await pool.query(query, values);
-    return res.json({ updated: result.rowCount });
-  } catch (err) {
-    console.error("Update out_off error:", err);
-    return res.status(500).json({ error: err.message });
+ 
+    const table = ASSESSMENT_TABLE_MAP[assessment_type];
+    if (!table) return res.status(400).json({ error: "Invalid assessment type" });
+ 
+    try {
+      let query, values;
+ 
+      if (course_planner_id) {
+        query = `
+          UPDATE ${table}
+          SET out_off = $1
+          WHERE batch_no = $2
+            AND course_planner_id = $3
+            AND assessment_date = $4
+        `;
+        values = [Number(out_off), batch_no, Number(course_planner_id), assessment_date];
+      } else {
+        // Auto-date assessments (final_project, viva)
+        query = `
+          UPDATE ${table}
+          SET out_off = $1
+          WHERE batch_no = $2
+            AND assessment_date = $3
+        `;
+        values = [Number(out_off), batch_no, assessment_date];
+      }
+ 
+      const result = await pool.query(query, values);
+      return res.json({ updated: result.rowCount });
+    } catch (err) {
+      console.error("Update out_off error:", err);
+      return res.status(500).json({ error: err.message });
+    }
   }
-});
+);
 
 // ✅ FIXED: Main announcement endpoint - NO SYNTAX ERRORS
 app.post('/api/announcement/send-direct', async (req, res) => {

@@ -111,15 +111,6 @@ const PDFT_OUT_OF_RULES = [
 ];
 
 /* ─── DVFT Out Of Rules ──────────────────────────────────────────────────── */
-// For DVFT batches:
-//   Intermediate           → 25
-//   Final Assessment Digital → 25
-//   Final Assessment Verilog → 25
-//   Final Assessment SV    → 30
-//   Final Assessment UVM   → 30
-//   Final Assessment Python → 15
-//   Final Project          → 100
-//   Viva                   → 25
 const DVFT_OUT_OF_RULES = [
   { keywords: ["intermediate"],    outOf: 25  },
   { keywords: ["python"],          outOf: 15  },
@@ -150,7 +141,6 @@ function getFixedOutOf(topicName, assessmentType, batchNo) {
   }
 
   if (isDvftBatch(batchNo)) {
-    // Final project and viva use date from user input but fixed out-of
     if (assessmentType === "final_project") return 100;
     if (assessmentType === "viva")          return 25;
     for (const rule of DVFT_OUT_OF_RULES) {
@@ -163,8 +153,45 @@ function getFixedOutOf(topicName, assessmentType, batchNo) {
 
 const todayDate = new Date().toISOString().split("T")[0];
 const parseDate = (str) => { if (!str) return null; const [y,m,d] = str.split("-").map(Number); return new Date(y, m-1, d); };
-function getCurrentUser() { try { return JSON.parse(localStorage.getItem("user") || "{}"); } catch { return {}; } }
-function isAdminOrManager(user) { return user?.role === "Admin" || user?.role === "Manager"; }
+
+/**
+ * Gets the current user from localStorage.
+ * The stored object is expected to have at minimum: { id, email, role }
+ * Role is re-validated against the server via useCurrentUserRole hook below.
+ */
+function getCurrentUser() {
+  try { return JSON.parse(localStorage.getItem("user") || "{}"); }
+  catch { return {}; }
+}
+
+/**
+ * Server-side role check hook.
+ * Fetches the authenticated user's role from /api/me and returns
+ * { role, loading, isAdminOrManager }. Falls back to localStorage
+ * role while loading.
+ */
+function useCurrentUserRole() {
+  const localUser = getCurrentUser();
+  const [role, setRole]       = useState(localUser?.role || "");
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/me`, { credentials: "include" })
+      .then(res => res.ok ? res.json() : Promise.reject())
+      .then(data => {
+        if (data?.role) setRole(data.role);
+      })
+      .catch(() => {
+        // Keep the localStorage role as fallback
+        setRole(localUser?.role || "");
+      })
+      .finally(() => setLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const isAdminOrManager = role === "Admin" || role === "Manager";
+  return { role, loading, isAdminOrManager };
+}
 
 function deduplicatePeriods(data) {
   const seen = new Map();
@@ -237,8 +264,20 @@ function BatchBadge({ batchNo }) {
   );
 }
 
+/* ─── OutOf Override Badge ───────────────────────────────────────────────── */
+function OutOfOverrideBadge() {
+  return (
+    <Box sx={{ display: "inline-flex", alignItems: "center", gap: 0.8, px: 1.8, py: 0.8, borderRadius: "10px", background: "#fef3c7", border: "1px solid #f59e0b55" }}>
+      <LockOpenIcon sx={{ fontSize: 12, color: "#d97706" }} />
+      <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700, color: "#92400e" }}>Admin Override</Typography>
+    </Box>
+  );
+}
+
 /* ─── Main Component ─────────────────────────────────────────────────────── */
 function MarkSheet() {
+  const { isAdminOrManager, loading: roleLoading } = useCurrentUserRole();
+
   const [batchNo,                 setBatchNo]                 = useState("");
   const [assessmentType,          setAssessmentType]          = useState("weekly");
   const [availableBatches,        setAvailableBatches]        = useState([]);
@@ -261,20 +300,23 @@ function MarkSheet() {
   const [loadingMarks,            setLoadingMarks]            = useState(false);
   const [currentDate,             setCurrentDate]             = useState(new Date());
 
-  const currentUser  = getCurrentUser();
-  const canEditOutOf = isAdminOrManager(currentUser);
-  const isPdft       = isPdftBatch(batchNo);
-  const isDvft       = isDvftBatch(batchNo);
+  const isPdft = isPdftBatch(batchNo);
+  const isDvft = isDvftBatch(batchNo);
   const isFixedOutOfBatch = isPdft || isDvft;
 
   const isAutoDateAssessment = assessmentType === "final_project" || assessmentType === "viva";
   const isAutoOutOfType      = AUTO_OUT_OF_TYPES.includes(assessmentType);
 
-  // For DVFT: final_project and viva accept user-entered date but fixed out-of
   const isDvftAutoDateType = isDvft && isAutoDateAssessment;
 
-  // Lock out-of editing if it's a fixed batch type and admin hasn't overridden
-  const outOfLocked = canEditOutOf
+  /**
+   * Out-of locking logic:
+   *  - Admin / Manager: ALWAYS editable regardless of batch type or window state.
+   *  - Everyone else:
+   *      • Fixed-batch (PDFT/DVFT) + auto-out-of type → always locked.
+   *      • Otherwise → locked when the marks-entry window is closed.
+   */
+  const outOfLocked = isAdminOrManager
     ? false
     : isAutoOutOfType
       ? (!windowOpen || isFixedOutOfBatch)
@@ -311,9 +353,7 @@ function MarkSheet() {
     if (!batchNo) return;
 
     if (isAutoDateAssessment) {
-      // DVFT: date is entered by user (not auto today), out-of is fixed
       if (isDvft) {
-        // Don't set selectedDate here — user picks date in a date field
         setSelectedDate("");
       } else {
         setSelectedDate(todayDate);
@@ -323,7 +363,6 @@ function MarkSheet() {
       setTopicName(ASSESSMENT_MAP[assessmentType].label);
       setPeriods([]);
 
-      // Apply fixed out-of
       const fixed = getFixedOutOf("", assessmentType, batchNo);
       if (fixed !== null) setOutOff(String(fixed));
       return;
@@ -373,8 +412,8 @@ function MarkSheet() {
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
         const savedOutOf = data[0]?.out_off;
-        // Only override fixed out-of if admin or non-fixed batch
-        if (savedOutOf && (!isFixedOutOfBatch || canEditOutOf)) setOutOff(String(savedOutOf));
+        // Admin/Manager can always see & override; others respect fixed-batch rules
+        if (savedOutOf && (!isFixedOutOfBatch || isAdminOrManager)) setOutOff(String(savedOutOf));
         const marksMap = {};
         data.forEach(row => {
           marksMap[row.learner_id] = {
@@ -389,7 +428,7 @@ function MarkSheet() {
     } finally {
       setLoadingMarks(false);
     }
-  }, [batchNo, assessmentType, isFixedOutOfBatch, canEditOutOf]);
+  }, [batchNo, assessmentType, isFixedOutOfBatch, isAdminOrManager]);
 
   /* ── Period selection ── */
   const handlePeriodSelect = (e) => {
@@ -404,7 +443,6 @@ function MarkSheet() {
     setMarks({});
     setOutOff("");
 
-    // Apply fixed out-of for PDFT or DVFT
     const fixed = getFixedOutOf(topic, assessmentType, batchNo);
     if (fixed !== null) setOutOff(String(fixed));
 
@@ -454,6 +492,7 @@ function MarkSheet() {
       const res = await fetch(`${API_BASE}/api/marks/update-out-of`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",                          // send session cookie for server-side auth
         body:    JSON.stringify({
           batch_no:          batchNo,
           assessment_type:   cfg.api,
@@ -462,9 +501,13 @@ function MarkSheet() {
           out_off:           Number(outOff),
         }),
       });
-      setMessage(res.ok
-        ? "✅ Out Of updated successfully."
-        : `❌ Failed to update Out Of: ${(await res.json().catch(() => ({}))).error || "Unknown error"}`);
+      if (res.status === 403) {
+        setMessage("❌ Permission denied — only Admin or Manager can update Out Of.");
+      } else {
+        setMessage(res.ok
+          ? "✅ Out Of updated successfully."
+          : `❌ Failed to update Out Of: ${(await res.json().catch(() => ({}))).error || "Unknown error"}`);
+      }
     } catch {
       setMessage("❌ Network error while updating Out Of.");
     } finally {
@@ -480,7 +523,6 @@ function MarkSheet() {
     if (!isAutoDateAssessment && !selectedCoursePlannerId) {
       setMessage("❌ Please select an assessment date from the dropdown."); return;
     }
-    // DVFT auto-date types still need a date from the user
     if (isDvftAutoDateType && !selectedDate) {
       setMessage("❌ Please enter the assessment date."); return;
     }
@@ -511,6 +553,7 @@ function MarkSheet() {
           const response = await fetch(`${API_BASE}/api/marks/${cfg.api}`, {
             method:  "POST",
             headers: { "Content-Type": "application/json" },
+            credentials: "include",
             body:    JSON.stringify(payload),
           });
           if (!response.ok) failCount++;
@@ -537,11 +580,13 @@ function MarkSheet() {
   };
 
   /* ── Loading state ── */
-  if (loadingBatches) return (
+  if (loadingBatches || roleLoading) return (
     <Box sx={{ minHeight: "100vh", background: TOKENS.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
       <Box sx={{ textAlign: "center" }}>
         <CircularProgress sx={{ color: TOKENS.accent }} />
-        <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TOKENS.textSub, mt: 2 }}>Loading batches…</Typography>
+        <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TOKENS.textSub, mt: 2 }}>
+          {roleLoading ? "Verifying permissions…" : "Loading batches…"}
+        </Typography>
       </Box>
     </Box>
   );
@@ -649,7 +694,6 @@ function MarkSheet() {
               {/* Date input for auto-date types */}
               {isAutoDateAssessment && (
                 isDvft ? (
-                  /* DVFT: user picks the actual date */
                   <TextField
                     label="Assessment Date"
                     type="date"
@@ -664,7 +708,6 @@ function MarkSheet() {
                     }}
                   />
                 ) : (
-                  /* PDFT / others: locked to today */
                   <TextField
                     label="Assessment Date"
                     value={todayDate}
@@ -681,11 +724,17 @@ function MarkSheet() {
 
               {/* Out Of */}
               <Box sx={{ display: "flex", alignItems: "flex-end", gap: 1.5 }}>
-                <Tooltip title={
-                  isFixedOutOfBatch && isAutoOutOfType && !canEditOutOf
-                    ? `Out Of is fixed for ${isPdft ? "PDFT" : "DVFT"} batches`
-                    : ""
-                }>
+                <Tooltip
+                  title={
+                    outOfLocked
+                      ? isFixedOutOfBatch && isAutoOutOfType
+                        ? `Out Of is fixed for ${isPdft ? "PDFT" : "DVFT"} batches. Contact Admin or Manager to override.`
+                        : "Marks entry window is closed."
+                      : isAdminOrManager && isFixedOutOfBatch && isAutoOutOfType
+                        ? "Admin/Manager override — fixed Out Of is editable for you."
+                        : ""
+                  }
+                >
                   <span>
                     <TextField
                       label="Out Of"
@@ -694,25 +743,49 @@ function MarkSheet() {
                       size="small"
                       sx={{
                         width: 110,
-                        "& .MuiInputBase-root": { ...inputSx, fontFamily: "'DM Sans', sans-serif", fontSize: 13 },
+                        "& .MuiInputBase-root": {
+                          ...inputSx,
+                          fontFamily: "'DM Sans', sans-serif",
+                          fontSize: 13,
+                          // Amber tint when admin is overriding a fixed value
+                          background: isAdminOrManager && isFixedOutOfBatch && isAutoOutOfType
+                            ? "#fef3c7"
+                            : "transparent",
+                        },
                         "& .MuiInputLabel-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 13 },
                         "& .MuiFormHelperText-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 10 },
                       }}
                       onChange={e => handleOutOfChange(e.target.value)}
                       inputProps={{ inputMode: "numeric" }}
-                      helperText={isFixedOutOfBatch && outOff && isAutoOutOfType && !canEditOutOf ? "Fixed" : ""}
+                      helperText={
+                        isFixedOutOfBatch && outOff && isAutoOutOfType
+                          ? isAdminOrManager ? "Override" : "Fixed"
+                          : ""
+                      }
                     />
                   </span>
                 </Tooltip>
 
-                {canEditOutOf && selectedDate && (
+                {/* Save Out Of — only rendered for Admin / Manager */}
+                {isAdminOrManager && selectedDate && (
                   <Button
                     variant="outlined"
                     size="small"
                     onClick={handleSaveOutOf}
                     disabled={savingOutOf || !outOff}
                     startIcon={savingOutOf ? <CircularProgress size={12} color="inherit" /> : <SaveIcon sx={{ fontSize: 14 }} />}
-                    sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 12, borderRadius: "10px", textTransform: "none", borderColor: TOKENS.border, color: TOKENS.textSub, whiteSpace: "nowrap", height: 40, "&:hover": { borderColor: TOKENS.accent, color: TOKENS.accent, background: TOKENS.accentLight } }}
+                    sx={{
+                      fontFamily: "'DM Sans', sans-serif",
+                      fontWeight: 700,
+                      fontSize: 12,
+                      borderRadius: "10px",
+                      textTransform: "none",
+                      borderColor: TOKENS.border,
+                      color: TOKENS.textSub,
+                      whiteSpace: "nowrap",
+                      height: 40,
+                      "&:hover": { borderColor: TOKENS.accent, color: TOKENS.accent, background: TOKENS.accentLight },
+                    }}
                   >
                     {savingOutOf ? "Saving…" : "Save Out Of"}
                   </Button>
@@ -731,6 +804,10 @@ function MarkSheet() {
                     <StatPill icon={<InfoOutlinedIcon sx={{ fontSize: 14 }} />} label="Planner ID" value={selectedCoursePlannerId} />
                   )}
                   <BatchBadge batchNo={batchNo} />
+                  {/* Show override badge when admin is editing a fixed-batch out-of */}
+                  {isAdminOrManager && isFixedOutOfBatch && isAutoOutOfType && (
+                    <OutOfOverrideBadge />
+                  )}
                 </Box>
               </Fade>
             )}
