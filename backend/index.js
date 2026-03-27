@@ -22,7 +22,6 @@ import { scheduleInternalEmail } from "./emailScheduler.js";
 import { processAttendanceFile } from "./attendanceMailer.js";
 import bcrypt from "bcrypt";
 import bodyParser from "body-parser";
-import { authenticateUser } from "./middleware/auth.js";
 import PDFDocument from "pdfkit";
 import stream from "stream";
 import PDFTable from "pdfkit-table";
