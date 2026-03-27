@@ -77,13 +77,6 @@ const authenticate = (req, res, next) => {
 };
 
 
-const authenticateUser = (req, res, next) => {
-  if (!req.user) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-  next();
-};
-
 // =====================================================
 // ✅ FIXED CORS — ONLY THIS IS ENOUGH (Render Friendly)
 // =====================================================
