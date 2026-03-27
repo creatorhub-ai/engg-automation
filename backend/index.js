@@ -22,6 +22,7 @@ import { scheduleInternalEmail } from "./emailScheduler.js";
 import { processAttendanceFile } from "./attendanceMailer.js";
 import bcrypt from "bcrypt";
 import bodyParser from "body-parser";
+import { authenticateUser } from "./middleware/auth.js";
 import PDFDocument from "pdfkit";
 import stream from "stream";
 import PDFTable from "pdfkit-table";
@@ -76,6 +77,13 @@ const authenticate = (req, res, next) => {
 };
 
 
+const authenticateUser = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  next();
+};
+
 // =====================================================
 // ✅ FIXED CORS — ONLY THIS IS ENOUGH (Render Friendly)
 // =====================================================
@@ -85,26 +93,23 @@ const ALLOWED_ORIGINS = [
 ];
 
 app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  if (ALLOWED_ORIGINS.includes(origin)) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-  }
-
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  res.setHeader("Vary", "Origin");
-
-  if (req.method === "OPTIONS") return res.sendStatus(200);
+  res.header("Access-Control-Allow-Credentials", "true");
   next();
 });
 
 app.use(cors({
   origin: [
-    "https://engg-automation-r1ke.onrender.com",
-    "http://localhost:3000"
+    "https://engg-automation-r1ke.onrender.com", // frontend URL
   ],
-  methods: ["GET", "POST", "PUT", "DELETE"],
-  allowedHeaders: ["Content-Type", "Authorization"]
+  credentials: true, // ⭐ VERY IMPORTANT
+}));
+
+// Also handle preflight
+app.options("*", cors({
+  origin: [
+    "https://engg-automation-r1ke.onrender.com",
+  ],
+  credentials: true,
 }));
 
 // =====================================================
