@@ -628,20 +628,16 @@ async function findAvailableClassroom(supabase, students, start_date, end_date, 
 // Assumes your auth middleware attaches req.user = { id, email } after verifying
 // the session / JWT.  Adjust the lookup key (id vs email) to match your setup.
 async function getUserRole(req) {
-  // Try by id first, fall back to email
   const userId = req.user?.id;
   const email  = req.user?.email;
- 
   if (!userId && !email) return null;
- 
   const { data, error } = await supabase
     .from("internal_users")
     .select("role, is_active")
     .eq(userId ? "id" : "email", userId || email)
     .single();
- 
   if (error || !data || !data.is_active) return null;
-  return data.role; // e.g. "Admin" | "Manager" | "Trainer" | …
+  return data.role;
 }
 
 // ── Middleware: require Admin or Manager ──────────────────────────────────────
@@ -1255,28 +1251,283 @@ app.post("/api/marks/extension-request", async (req, res) => {
   }
 });
 
-// 4) GET /api/marks/extension-requests
-app.get("/api/marks/extension-requests", async (req, res) => {
+app.post("/api/marks/request-extension", async (req, res) => {
+  const {
+    batch_no, assessment_type, assessment_date,
+    course_planner_id, week_no, assessment_name,
+    trainer_email, reason,
+  } = req.body;
+ 
+  if (!batch_no || !assessment_type || !assessment_date || !trainer_email) {
+    return res.status(400).json({
+      error: "batch_no, assessment_type, assessment_date, trainer_email are required",
+    });
+  }
+ 
   try {
-    const status = req.query.status || "pending";
-
-    const { data, error } = await supabase
-      .from("marks_entry_extension_requests")
-      .select("*")
-      .eq("status", status)
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      console.error("list extension-requests error:", error);
-      return res.status(500).json({ error: "Failed to fetch requests" });
+    // Check for an existing pending or approved request for this trainer+assessment
+    const existing = await pool.query(
+      `SELECT id, status
+       FROM marks_extension_requests
+       WHERE batch_no = $1
+         AND assessment_type = $2
+         AND assessment_date = $3
+         AND trainer_email   = $4
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [batch_no, assessment_type, assessment_date, trainer_email]
+    );
+ 
+    if (existing.rows.length > 0) {
+      const { status } = existing.rows[0];
+      if (status === "pending") {
+        return res.status(409).json({ error: "A pending extension request already exists for this assessment." });
+      }
+      if (status === "approved") {
+        return res.status(409).json({ error: "An extension is already approved for this assessment." });
+      }
+      // status === "rejected" → fall through and create a new request
     }
-
-    return res.json(data || []);
+ 
+    const result = await pool.query(
+      `INSERT INTO marks_extension_requests
+         (batch_no, assessment_type, assessment_name, assessment_date,
+          course_planner_id, week_no, trainer_email, reason, status, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', now())
+       RETURNING id`,
+      [
+        batch_no,
+        assessment_type,
+        assessment_name || null,
+        assessment_date,
+        course_planner_id || null,
+        week_no           || null,
+        trainer_email,
+        reason            || null,
+      ]
+    );
+ 
+    return res.status(201).json({ id: result.rows[0].id, status: "pending" });
   } catch (err) {
-    console.error("list extension-requests error:", err);
-    return res.status(500).json({ error: "Internal server error" });
+    console.error("POST /api/marks/request-extension error:", err);
+    return res.status(500).json({ error: err.message });
   }
 });
+
+
+// Called by MarkSheet.js whenever the selected assessment changes.
+// Returns the most recent extension request for the logged-in trainer + this
+// assessment window, including extended_until so the frontend can compare it
+// to the current time and decide if the extension window is still live.
+app.get("/api/marks/extension-status", async (req, res) => {
+  const { batch_no, assessment_type, assessment_date } = req.query;
+ 
+  // trainer_email comes from the authenticated session
+  const trainerEmail = req.user?.email;
+ 
+  if (!batch_no || !assessment_type || !assessment_date) {
+    return res.status(400).json({ error: "batch_no, assessment_type, assessment_date are required" });
+  }
+ 
+  try {
+    const result = await pool.query(
+      `SELECT id, status, extended_until, rejection_reason, decided_at, decided_by
+       FROM marks_extension_requests
+       WHERE batch_no        = $1
+         AND assessment_type = $2
+         AND assessment_date = $3
+         AND trainer_email   = $4
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [batch_no, assessment_type, assessment_date, trainerEmail]
+    );
+ 
+    if (result.rows.length === 0) {
+      return res.json({ status: null, extended_until: null });
+    }
+ 
+    const row = result.rows[0];
+    return res.json({
+      id:               row.id,
+      status:           row.status,
+      extended_until:   row.extended_until,   // ISO string or null
+      rejection_reason: row.rejection_reason,
+      decided_at:       row.decided_at,
+      decided_by:       row.decided_by,
+    });
+  } catch (err) {
+    console.error("GET /api/marks/extension-status error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+
+app.post("/api/marks/approve-extension", authenticateUser, async (req, res) => {
+  if (!["Admin", "Manager"].includes(req.user.role)) {
+    return res.status(403).json({ error: "Unauthorized" });
+  }
+
+  const { request_id, status } = req.body;
+
+  await db.query(
+    `UPDATE marks_extension_requests
+     SET status=$1, decided_at=NOW(), decided_by=$2
+     WHERE id=$3`,
+    [status, req.user.email, request_id]
+  );
+
+  res.json({ success: true });
+});
+
+app.get("/api/marks/check-extension", authenticateUser, async (req, res) => {
+  const { batch_no, assessment_type, assessment_date } = req.query;
+
+  const result = await db.query(
+    `SELECT * FROM marks_extension_requests
+     WHERE batch_no=$1
+     AND assessment_type=$2
+     AND assessment_date=$3
+     AND status='approved'
+     ORDER BY decided_at DESC
+     LIMIT 1`,
+    [batch_no, assessment_type, assessment_date]
+  );
+
+  if (result.rows.length === 0) {
+    return res.json({ approved: false });
+  }
+
+  const decidedAt = new Date(result.rows[0].decided_at);
+
+  // 🔥 EXTENSION RULE: Next day 11:59 PM
+  const validTill = new Date(decidedAt);
+  validTill.setDate(validTill.getDate() + 1);
+  validTill.setHours(23, 59, 59, 999);
+
+  res.json({
+    approved: true,
+    valid_till: validTill,
+  });
+});
+
+
+
+// 4) GET /api/marks/extension-requests
+app.get("/api/marks/extension-requests", async (req, res) => {
+  const { batch_no, status } = req.query;
+  const callerEmail    = req.user?.email;
+  const callerRole     = await getUserRole(req).catch(() => null);
+  const isPrivileged   = callerRole === "Admin" || callerRole === "Manager";
+ 
+  try {
+    const conditions = [];
+    const values     = [];
+    let   idx        = 1;
+ 
+    if (batch_no) { conditions.push(`batch_no = $${idx++}`); values.push(batch_no); }
+    if (status)   { conditions.push(`status = $${idx++}`);   values.push(status);   }
+ 
+    // Non-privileged users only see their own requests
+    if (!isPrivileged && callerEmail) {
+      conditions.push(`trainer_email = $${idx++}`);
+      values.push(callerEmail);
+    }
+ 
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+ 
+    const result = await pool.query(
+      `SELECT id, batch_no, assessment_type, assessment_name, assessment_date,
+              course_planner_id, week_no, trainer_email, reason,
+              status, rejection_reason, decided_by, decided_at,
+              extended_until, created_at
+       FROM marks_extension_requests
+       ${where}
+       ORDER BY
+         CASE status WHEN 'pending' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END,
+         created_at DESC`,
+      values
+    );
+ 
+    return res.json(result.rows);
+  } catch (err) {
+    console.error("GET /api/marks/extension-requests error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+
+app.post("/api/marks/decide-extension", requireAdminOrManager, async (req, res) => {
+  const { id, action, decided_by, rejection_reason } = req.body;
+ 
+  if (!id || !["approve", "reject"].includes(action)) {
+    return res.status(400).json({ error: "id and action ('approve'|'reject') are required" });
+  }
+ 
+  try {
+    // Verify the request is still pending
+    const check = await pool.query(
+      `SELECT id, status FROM marks_extension_requests WHERE id = $1`,
+      [id]
+    );
+    if (check.rows.length === 0) return res.status(404).json({ error: "Request not found" });
+    if (check.rows[0].status !== "pending") {
+      return res.status(409).json({ error: `Request is already ${check.rows[0].status}` });
+    }
+ 
+    let extended_until = null;
+ 
+    if (action === "approve") {
+      // ── Calculate "next calendar day at 23:59:59 IST" in UTC ────────────
+      // IST = UTC + 5h 30m
+      // 1. Get current time shifted to IST
+      const nowUtcMs  = Date.now();
+      const istOffMs  = 5.5 * 60 * 60 * 1000;          // +5:30 in ms
+      const nowIst    = new Date(nowUtcMs + istOffMs);  // pretend this is local IST
+ 
+      // 2. Advance to tomorrow in IST
+      const tomorrowIst = new Date(nowIst);
+      tomorrowIst.setUTCDate(tomorrowIst.getUTCDate() + 1);
+ 
+      // 3. Set to 23:59:59.999 IST, then convert back to UTC
+      //    23:59:59 IST = 23:59:59 - 5:30 = 18:29:59 UTC
+      const extUTC = new Date(Date.UTC(
+        tomorrowIst.getUTCFullYear(),
+        tomorrowIst.getUTCMonth(),
+        tomorrowIst.getUTCDate(),
+        18, 29, 59, 999    // 23:59:59.999 IST → 18:29:59.999 UTC
+      ));
+ 
+      extended_until = extUTC.toISOString();
+    }
+ 
+    await pool.query(
+      `UPDATE marks_extension_requests
+       SET status           = $1,
+           decided_by       = $2,
+           decided_at       = now(),
+           extended_until   = $3,
+           rejection_reason = $4
+       WHERE id = $5`,
+      [
+        action === "approve" ? "approved" : "rejected",
+        decided_by || null,
+        extended_until,
+        action === "reject" ? (rejection_reason || null) : null,
+        id,
+      ]
+    );
+ 
+    return res.json({
+      id,
+      status:         action === "approve" ? "approved" : "rejected",
+      extended_until, // null for rejections
+    });
+  } catch (err) {
+    console.error("POST /api/marks/decide-extension error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 
 // 5) POST /api/marks/extension-requests/:id/approve
 app.post("/api/marks/extension-requests/:id/approve", async (req, res) => {
@@ -6071,52 +6322,34 @@ app.get('/api/marks/:category', async (req, res) => {
 });
 
 //update the out of marks in the marks sheet page
-app.post(
-  "/api/marks/update-out-of",
-  requireAdminOrManager,          // <── role guard applied here
-  async (req, res) => {
-    const { batch_no, assessment_type, course_planner_id, assessment_date, out_off } = req.body;
+app.post("/api/marks/update-out-of", requireAdminOrManager, async (req, res) => {
+  const { batch_no, assessment_type, course_planner_id, assessment_date, out_off } = req.body;
  
-    if (!batch_no || !assessment_type || !assessment_date || out_off == null) {
-      return res.status(400).json({
-        error: "batch_no, assessment_type, assessment_date, out_off are required",
-      });
-    }
- 
-    const table = ASSESSMENT_TABLE_MAP[assessment_type];
-    if (!table) return res.status(400).json({ error: "Invalid assessment type" });
- 
-    try {
-      let query, values;
- 
-      if (course_planner_id) {
-        query = `
-          UPDATE ${table}
-          SET out_off = $1
-          WHERE batch_no = $2
-            AND course_planner_id = $3
-            AND assessment_date = $4
-        `;
-        values = [Number(out_off), batch_no, Number(course_planner_id), assessment_date];
-      } else {
-        // Auto-date assessments (final_project, viva)
-        query = `
-          UPDATE ${table}
-          SET out_off = $1
-          WHERE batch_no = $2
-            AND assessment_date = $3
-        `;
-        values = [Number(out_off), batch_no, assessment_date];
-      }
- 
-      const result = await pool.query(query, values);
-      return res.json({ updated: result.rowCount });
-    } catch (err) {
-      console.error("Update out_off error:", err);
-      return res.status(500).json({ error: err.message });
-    }
+  if (!batch_no || !assessment_type || !assessment_date || out_off == null) {
+    return res.status(400).json({
+      error: "batch_no, assessment_type, assessment_date, out_off are required",
+    });
   }
-);
+ 
+  const table = ASSESSMENT_TABLE_MAP[assessment_type];
+  if (!table) return res.status(400).json({ error: "Invalid assessment type" });
+ 
+  try {
+    let query, values;
+    if (course_planner_id) {
+      query  = `UPDATE ${table} SET out_off = $1 WHERE batch_no = $2 AND course_planner_id = $3 AND assessment_date = $4`;
+      values = [Number(out_off), batch_no, Number(course_planner_id), assessment_date];
+    } else {
+      query  = `UPDATE ${table} SET out_off = $1 WHERE batch_no = $2 AND assessment_date = $3`;
+      values = [Number(out_off), batch_no, assessment_date];
+    }
+    const result = await pool.query(query, values);
+    return res.json({ updated: result.rowCount });
+  } catch (err) {
+    console.error("Update out_off error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
 
 // ✅ FIXED: Main announcement endpoint - NO SYNTAX ERRORS
 app.post('/api/announcement/send-direct', async (req, res) => {

@@ -17,16 +17,23 @@ import {
   Tooltip,
   Fade,
   Chip,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from "@mui/material";
-import SaveIcon          from "@mui/icons-material/Save";
-import LockIcon          from "@mui/icons-material/Lock";
-import LockOpenIcon      from "@mui/icons-material/LockOpen";
-import AssignmentIcon    from "@mui/icons-material/Assignment";
-import GroupIcon         from "@mui/icons-material/Group";
-import CalendarTodayIcon from "@mui/icons-material/CalendarToday";
-import CheckCircleIcon   from "@mui/icons-material/CheckCircle";
-import ErrorIcon         from "@mui/icons-material/Error";
-import InfoOutlinedIcon  from "@mui/icons-material/InfoOutlined";
+import SaveIcon           from "@mui/icons-material/Save";
+import LockIcon           from "@mui/icons-material/Lock";
+import LockOpenIcon       from "@mui/icons-material/LockOpen";
+import AssignmentIcon     from "@mui/icons-material/Assignment";
+import GroupIcon          from "@mui/icons-material/Group";
+import CalendarTodayIcon  from "@mui/icons-material/CalendarToday";
+import CheckCircleIcon    from "@mui/icons-material/CheckCircle";
+import ErrorIcon          from "@mui/icons-material/Error";
+import InfoOutlinedIcon   from "@mui/icons-material/InfoOutlined";
+import AccessTimeIcon     from "@mui/icons-material/AccessTime";
+import SendIcon           from "@mui/icons-material/Send";
+import HourglassEmptyIcon from "@mui/icons-material/HourglassEmpty";
 
 const API_BASE =
   process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
@@ -44,6 +51,7 @@ const TOKENS = {
   success:     { fill: "#10b981", light: "#d1fae5", text: "#065f46" },
   warning:     { fill: "#f59e0b", light: "#fef3c7", text: "#92400e" },
   error:       { fill: "#ef4444", light: "#fee2e2", text: "#991b1b" },
+  purple:      { fill: "#7c3aed", light: "#ede9fe", text: "#4c1d95" },
 };
 
 const cardSx = {
@@ -89,12 +97,12 @@ const tableCellSx = {
 
 /* ─── Assessment config ──────────────────────────────────────────────────── */
 const ASSESSMENT_MAP = {
-  weekly:       { api: "weekly-assessment",      label: "Weekly Assessment",      type: "weekly" },
-  intermediate: { api: "intermediate-assessment", label: "Intermediate Assessment", type: "mid"    },
-  module:       { api: "module-level-assessment", label: "Module Level Assessment", type: "mid"    },
-  final:        { api: "final-assessment",        label: "Final Assessment",        type: "final"  },
-  final_project:{ api: "final-project",           label: "Final Project",           autoDate: true },
-  viva:         { api: "viva",                    label: "Viva",                    autoDate: true },
+  weekly:        { api: "weekly-assessment",      label: "Weekly Assessment",      type: "weekly" },
+  intermediate:  { api: "intermediate-assessment", label: "Intermediate Assessment", type: "mid"   },
+  module:        { api: "module-level-assessment", label: "Module Level Assessment", type: "mid"   },
+  final:         { api: "final-assessment",        label: "Final Assessment",        type: "final" },
+  final_project: { api: "final-project",           label: "Final Project",           autoDate: true },
+  viva:          { api: "viva",                    label: "Viva",                    autoDate: true },
 };
 
 const AUTO_OUT_OF_TYPES = ["intermediate", "final", "final_project", "viva"];
@@ -131,66 +139,48 @@ function isDvftBatch(batchNo) {
 
 function getFixedOutOf(topicName, assessmentType, batchNo) {
   if (!AUTO_OUT_OF_TYPES.includes(assessmentType)) return null;
-
   const combined = `${topicName || ""} ${ASSESSMENT_MAP[assessmentType]?.label || ""}`.toLowerCase();
-
   if (isPdftBatch(batchNo)) {
-    for (const rule of PDFT_OUT_OF_RULES) {
+    for (const rule of PDFT_OUT_OF_RULES)
       if (rule.keywords.every(kw => combined.includes(kw))) return rule.outOf;
-    }
   }
-
   if (isDvftBatch(batchNo)) {
     if (assessmentType === "final_project") return 100;
     if (assessmentType === "viva")          return 25;
-    for (const rule of DVFT_OUT_OF_RULES) {
+    for (const rule of DVFT_OUT_OF_RULES)
       if (rule.keywords.every(kw => combined.includes(kw))) return rule.outOf;
-    }
   }
-
   return null;
 }
 
 const todayDate = new Date().toISOString().split("T")[0];
-const parseDate = (str) => { if (!str) return null; const [y,m,d] = str.split("-").map(Number); return new Date(y, m-1, d); };
+const parseDate = (str) => {
+  if (!str) return null;
+  const [y, m, d] = str.split("-").map(Number);
+  return new Date(y, m - 1, d);
+};
 
-/**
- * Gets the current user from localStorage.
- * The stored object is expected to have at minimum: { id, email, role }
- * Role is re-validated against the server via useCurrentUserRole hook below.
- */
 function getCurrentUser() {
   try { return JSON.parse(localStorage.getItem("user") || "{}"); }
   catch { return {}; }
 }
 
-/**
- * Server-side role check hook.
- * Fetches the authenticated user's role from /api/me and returns
- * { role, loading, isAdminOrManager }. Falls back to localStorage
- * role while loading.
- */
+/* ─── Server-side role hook ──────────────────────────────────────────────── */
 function useCurrentUserRole() {
   const localUser = getCurrentUser();
-  const [role, setRole]       = useState(localUser?.role || "");
+  const [role,    setRole]    = useState(localUser?.role || "");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetch(`${API_BASE}/api/me`, { credentials: "include" })
-      .then(res => res.ok ? res.json() : Promise.reject())
-      .then(data => {
-        if (data?.role) setRole(data.role);
-      })
-      .catch(() => {
-        // Keep the localStorage role as fallback
-        setRole(localUser?.role || "");
-      })
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(d => { if (d?.role) setRole(d.role); })
+      .catch(() => setRole(localUser?.role || ""))
       .finally(() => setLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const isAdminOrManager = role === "Admin" || role === "Manager";
-  return { role, loading, isAdminOrManager };
+  return { role, loading, isAdminOrManager: role === "Admin" || role === "Manager" };
 }
 
 function deduplicatePeriods(data) {
@@ -237,7 +227,7 @@ function StatusBanner({ message }) {
   const isSuccess = message.startsWith("✅");
   const isWarning = message.startsWith("⚠️");
   const colors = isSuccess ? TOKENS.success : isWarning ? TOKENS.warning : TOKENS.error;
-  const Icon = isSuccess ? CheckCircleIcon : isWarning ? InfoOutlinedIcon : ErrorIcon;
+  const Icon   = isSuccess ? CheckCircleIcon : isWarning ? InfoOutlinedIcon : ErrorIcon;
   return (
     <Fade in>
       <Box sx={{ mt: 2.5, px: 2.5, py: 1.5, borderRadius: "10px", background: colors.light, border: `1px solid ${colors.fill}44`, display: "flex", alignItems: "center", gap: 1.5 }}>
@@ -251,11 +241,10 @@ function StatusBanner({ message }) {
 /* ─── Batch badge ────────────────────────────────────────────────────────── */
 function BatchBadge({ batchNo }) {
   if (!batchNo) return null;
-  const isPdft = isPdftBatch(batchNo);
-  const isDvft = isDvftBatch(batchNo);
-  if (!isPdft && !isDvft) return null;
-  const color = isPdft ? "#7c3aed" : "#0891b2";
-  const label = isPdft ? "PDFT" : "DVFT";
+  const p = isPdftBatch(batchNo), d = isDvftBatch(batchNo);
+  if (!p && !d) return null;
+  const color = p ? "#7c3aed" : "#0891b2";
+  const label = p ? "PDFT" : "DVFT";
   return (
     <Box sx={{ display: "inline-flex", alignItems: "center", gap: 0.8, px: 1.8, py: 0.8, borderRadius: "10px", background: `${color}18`, border: `1px solid ${color}33` }}>
       <Box sx={{ width: 6, height: 6, borderRadius: "50%", background: color }} />
@@ -271,6 +260,92 @@ function OutOfOverrideBadge() {
       <LockOpenIcon sx={{ fontSize: 12, color: "#d97706" }} />
       <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700, color: "#92400e" }}>Admin Override</Typography>
     </Box>
+  );
+}
+
+/* ─── Extension Request Dialog ───────────────────────────────────────────── */
+function ExtensionRequestDialog({ open, onClose, onSubmit, submitting, context }) {
+  const [reason, setReason] = useState("");
+
+  const handleClose  = () => { setReason(""); onClose(); };
+  const handleSubmit = () => { if (reason.trim()) onSubmit(reason.trim()); };
+
+  return (
+    <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth
+      PaperProps={{ sx: { borderRadius: "20px", fontFamily: "'DM Sans', sans-serif", boxShadow: "0 24px 60px rgba(0,0,0,0.15)" } }}
+    >
+      <DialogTitle sx={{ pt: 3, px: 3, pb: 1 }}>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+          <Box sx={{ width: 40, height: 40, borderRadius: "12px", background: TOKENS.purple.light, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <AccessTimeIcon sx={{ fontSize: 20, color: TOKENS.purple.fill }} />
+          </Box>
+          <Box>
+            <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 17, fontWeight: 800, color: TOKENS.text, letterSpacing: "-0.02em" }}>
+              Request Marks Extension
+            </Typography>
+            <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: TOKENS.textSub, mt: 0.3 }}>
+              Your request will be sent to the Manager for approval
+            </Typography>
+          </Box>
+        </Box>
+      </DialogTitle>
+
+      <DialogContent sx={{ px: 3, pt: 2 }}>
+        {/* Context chips */}
+        <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1, mb: 2.5, p: 2, borderRadius: "12px", background: TOKENS.surfaceAlt, border: `1px solid ${TOKENS.border}` }}>
+          {context?.batchNo && (
+            <Chip size="small" label={`Batch: ${context.batchNo}`}
+              sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 700, background: TOKENS.accentLight, color: TOKENS.accent }} />
+          )}
+          {context?.assessmentLabel && (
+            <Chip size="small" label={context.assessmentLabel}
+              sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 700, border: `1px solid ${TOKENS.border}` }} />
+          )}
+          {context?.topicName && context.topicName !== context.assessmentLabel && (
+            <Chip size="small" label={context.topicName}
+              sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 700, border: `1px solid ${TOKENS.border}` }} />
+          )}
+          {context?.selectedDate && (
+            <Chip size="small" label={context.selectedDate}
+              sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, color: TOKENS.textSub }} />
+          )}
+        </Box>
+
+        {/* Info note */}
+        <Box sx={{ mb: 2.5, p: 2, borderRadius: "10px", background: TOKENS.purple.light, border: `1px solid ${TOKENS.purple.fill}33`, display: "flex", gap: 1.5 }}>
+          <InfoOutlinedIcon sx={{ fontSize: 16, color: TOKENS.purple.fill, mt: 0.2, flexShrink: 0 }} />
+          <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: TOKENS.purple.text, lineHeight: 1.7 }}>
+            Once the Manager <strong>approves</strong> your request, the marks entry window will reopen for <strong>24 hours</strong> — until <strong>11:59 PM of the next day</strong>. After that it will close automatically.
+          </Typography>
+        </Box>
+
+        <TextField
+          label="Reason for extension *"
+          multiline rows={3} fullWidth
+          value={reason}
+          onChange={e => setReason(e.target.value)}
+          placeholder="Explain why you need an extension for this assessment…"
+          sx={{
+            "& .MuiInputBase-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 13, borderRadius: "10px" },
+            "& .MuiInputLabel-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 13 },
+            "& .MuiOutlinedInput-notchedOutline": { borderColor: TOKENS.border },
+          }}
+        />
+      </DialogContent>
+
+      <DialogActions sx={{ px: 3, pb: 3, gap: 1.5 }}>
+        <Button onClick={handleClose} disabled={submitting}
+          sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 13, textTransform: "none", borderRadius: "10px", color: TOKENS.textSub, px: 2.5 }}>
+          Cancel
+        </Button>
+        <Button variant="contained" onClick={handleSubmit}
+          disabled={submitting || !reason.trim()}
+          startIcon={submitting ? <CircularProgress size={14} color="inherit" /> : <SendIcon sx={{ fontSize: 15 }} />}
+          sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 13, textTransform: "none", borderRadius: "10px", px: 3, background: TOKENS.purple.fill, "&:hover": { background: "#6d28d9" }, "&:disabled": { opacity: 0.5 } }}>
+          {submitting ? "Sending…" : "Send Request"}
+        </Button>
+      </DialogActions>
+    </Dialog>
   );
 }
 
@@ -300,31 +375,39 @@ function MarkSheet() {
   const [loadingMarks,            setLoadingMarks]            = useState(false);
   const [currentDate,             setCurrentDate]             = useState(new Date());
 
-  const isPdft = isPdftBatch(batchNo);
-  const isDvft = isDvftBatch(batchNo);
-  const isFixedOutOfBatch = isPdft || isDvft;
+  /* ── Extension state ── */
+  const [extDialogOpen,     setExtDialogOpen]     = useState(false);
+  const [submittingExt,     setSubmittingExt]     = useState(false);
+  const [extStatus,         setExtStatus]         = useState(null);
+  // extStatus: null | { status: "pending"|"approved"|"rejected", extended_until: string|null }
+  const [loadingExtStatus,  setLoadingExtStatus]  = useState(false);
 
+  const isPdft            = isPdftBatch(batchNo);
+  const isDvft            = isDvftBatch(batchNo);
+  const isFixedOutOfBatch = isPdft || isDvft;
   const isAutoDateAssessment = assessmentType === "final_project" || assessmentType === "viva";
   const isAutoOutOfType      = AUTO_OUT_OF_TYPES.includes(assessmentType);
+  const isDvftAutoDateType   = isDvft && isAutoDateAssessment;
 
-  const isDvftAutoDateType = isDvft && isAutoDateAssessment;
+  /* ── Extension window active? ── */
+  // The extension window is live when: status=approved AND extended_until is in the future
+  const extWindowActive =
+    extStatus?.status === "approved" &&
+    extStatus?.extended_until &&
+    new Date(extStatus.extended_until) >= currentDate;
 
-  /**
-   * Out-of locking logic:
-   *  - Admin / Manager: ALWAYS editable regardless of batch type or window state.
-   *  - Everyone else:
-   *      • Fixed-batch (PDFT/DVFT) + auto-out-of type → always locked.
-   *      • Otherwise → locked when the marks-entry window is closed.
-   */
+  /* ── Combined effective window ── */
+  const effectiveWindowOpen = windowOpen || extWindowActive;
+
   const outOfLocked = isAdminOrManager
     ? false
     : isAutoOutOfType
-      ? (!windowOpen || isFixedOutOfBatch)
-      : !windowOpen;
+      ? (!effectiveWindowOpen || isFixedOutOfBatch)
+      : !effectiveWindowOpen;
 
   const marksEnteredCount = learners.filter(l => marks[l.id]?.points).length;
 
-  /* ── Clock ── */
+  /* ── Clock — ticks every second so extWindowActive re-evaluates in real time ── */
   useEffect(() => {
     const i = setInterval(() => setCurrentDate(new Date()), 1000);
     return () => clearInterval(i);
@@ -333,7 +416,7 @@ function MarkSheet() {
   /* ── Load batches ── */
   useEffect(() => {
     fetch(`${API_BASE}/api/batches`)
-      .then(res => res.json())
+      .then(r => r.json())
       .then(data => setAvailableBatches(Array.isArray(data) ? [...new Set(data.map(b => typeof b === "string" ? b : b.batch_no))] : []))
       .finally(() => setLoadingBatches(false));
   }, []);
@@ -343,34 +426,49 @@ function MarkSheet() {
     if (!batchNo) return setLearners([]);
     setLoadingLearners(true);
     fetch(`${API_BASE}/apigetlearners?batchno=${batchNo}`)
-      .then(res => res.json())
+      .then(r => r.json())
       .then(data => setLearners(Array.isArray(data) ? data : []))
       .finally(() => setLoadingLearners(false));
   }, [batchNo]);
 
+  /* ── Load extension status for current assessment ── */
+  const loadExtStatus = useCallback(async () => {
+    // Extension not relevant for auto-date types (final_project/viva always open)
+    if (!batchNo || !selectedDate || isAutoDateAssessment) {
+      setExtStatus(null);
+      return;
+    }
+    setLoadingExtStatus(true);
+    try {
+      const cfg    = ASSESSMENT_MAP[assessmentType];
+      const params = new URLSearchParams({ batch_no: batchNo, assessment_type: cfg.api, assessment_date: selectedDate });
+      if (selectedCoursePlannerId) params.set("course_planner_id", selectedCoursePlannerId);
+      const res = await fetch(`${API_BASE}/api/marks/extension-status?${params}`, { credentials: "include" });
+      setExtStatus(res.ok ? await res.json() : null);
+    } catch {
+      setExtStatus(null);
+    } finally {
+      setLoadingExtStatus(false);
+    }
+  }, [batchNo, assessmentType, selectedDate, selectedCoursePlannerId, isAutoDateAssessment]);
+
+  useEffect(() => { loadExtStatus(); }, [loadExtStatus]);
+
   /* ── Load periods ── */
   useEffect(() => {
     if (!batchNo) return;
-
     if (isAutoDateAssessment) {
-      if (isDvft) {
-        setSelectedDate("");
-      } else {
-        setSelectedDate(todayDate);
-      }
-      setSelectedCoursePlannerId("");
-      setSelectedWeekNo("");
+      setSelectedDate(isDvft ? "" : todayDate);
+      setSelectedCoursePlannerId(""); setSelectedWeekNo("");
       setTopicName(ASSESSMENT_MAP[assessmentType].label);
-      setPeriods([]);
-
+      setPeriods([]); setExtStatus(null);
       const fixed = getFixedOutOf("", assessmentType, batchNo);
       if (fixed !== null) setOutOff(String(fixed));
       return;
     }
-
     const apiType = ASSESSMENT_MAP[assessmentType].api;
     fetch(`${API_BASE}/apiperiods/${batchNo}/${apiType}`)
-      .then(res => res.json())
+      .then(r => r.json())
       .then(data => {
         const unique = deduplicatePeriods(data);
         unique.sort((a, b) => {
@@ -382,7 +480,7 @@ function MarkSheet() {
       .catch(() => setPeriods([]));
 
     setPeriodValue(""); setSelectedDate(""); setSelectedCoursePlannerId("");
-    setSelectedWeekNo(""); setTopicName(""); setMarks({}); setOutOff("");
+    setSelectedWeekNo(""); setTopicName(""); setMarks({}); setOutOff(""); setExtStatus(null);
   }, [batchNo, assessmentType]);
 
   /* ── Window Logic ── */
@@ -393,9 +491,9 @@ function MarkSheet() {
     if (!assessmentDate) return;
     let close = new Date(assessmentDate);
     const type = ASSESSMENT_MAP[assessmentType]?.type;
-    if (type === "weekly") close.setDate(close.getDate() + 3);
-    else if (type === "mid") close.setDate(close.getDate() + 5);
-    else if (type === "final") close.setDate(close.getDate() + 7);
+    if (type === "weekly")      close.setDate(close.getDate() + 3);
+    else if (type === "mid")    close.setDate(close.getDate() + 5);
+    else if (type === "final")  close.setDate(close.getDate() + 7);
     close.setHours(23, 59, 59, 999);
     setWindowOpen(currentDate <= close);
     setWindowCloseDate(close.toLocaleDateString("en-GB"));
@@ -412,7 +510,6 @@ function MarkSheet() {
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
         const savedOutOf = data[0]?.out_off;
-        // Admin/Manager can always see & override; others respect fixed-batch rules
         if (savedOutOf && (!isFixedOutOfBatch || isAdminOrManager)) setOutOff(String(savedOutOf));
         const marksMap = {};
         data.forEach(row => {
@@ -423,11 +520,8 @@ function MarkSheet() {
         });
         setMarks(marksMap);
       }
-    } catch (e) {
-      console.error("Failed to load existing marks", e);
-    } finally {
-      setLoadingMarks(false);
-    }
+    } catch (e) { console.error("Failed to load existing marks", e); }
+    finally     { setLoadingMarks(false); }
   }, [batchNo, assessmentType, isFixedOutOfBatch, isAdminOrManager]);
 
   /* ── Period selection ── */
@@ -440,12 +534,9 @@ function MarkSheet() {
     setSelectedWeekNo(weekPart || "");
     setSelectedDate(datePart || "");
     setTopicName(topic);
-    setMarks({});
-    setOutOff("");
-
+    setMarks({}); setOutOff(""); setExtStatus(null);
     const fixed = getFixedOutOf(topic, assessmentType, batchNo);
     if (fixed !== null) setOutOff(String(fixed));
-
     if (plannerId && datePart) loadExistingMarks(plannerId, datePart);
   };
 
@@ -471,12 +562,7 @@ function MarkSheet() {
       const updated = { ...prev };
       Object.keys(updated).forEach(id => {
         if (updated[id]?.points) {
-          updated[id] = {
-            ...updated[id],
-            percentage: Number(val) > 0
-              ? Math.round((Number(updated[id].points) / Number(val)) * 100)
-              : "",
-          };
+          updated[id] = { ...updated[id], percentage: Number(val) > 0 ? Math.round((Number(updated[id].points) / Number(val)) * 100) : "" };
         }
       });
       return updated;
@@ -490,10 +576,8 @@ function MarkSheet() {
     try {
       const cfg = ASSESSMENT_MAP[assessmentType];
       const res = await fetch(`${API_BASE}/api/marks/update-out-of`, {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",                          // send session cookie for server-side auth
-        body:    JSON.stringify({
+        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({
           batch_no:          batchNo,
           assessment_type:   cfg.api,
           course_planner_id: selectedCoursePlannerId ? Number(selectedCoursePlannerId) : undefined,
@@ -501,24 +585,49 @@ function MarkSheet() {
           out_off:           Number(outOff),
         }),
       });
-      if (res.status === 403) {
-        setMessage("❌ Permission denied — only Admin or Manager can update Out Of.");
-      } else {
-        setMessage(res.ok
+      setMessage(res.status === 403
+        ? "❌ Permission denied — only Admin or Manager can update Out Of."
+        : res.ok
           ? "✅ Out Of updated successfully."
           : `❌ Failed to update Out Of: ${(await res.json().catch(() => ({}))).error || "Unknown error"}`);
+    } catch { setMessage("❌ Network error while updating Out Of."); }
+    finally   { setSavingOutOf(false); setTimeout(() => setMessage(""), 4000); }
+  };
+
+  /* ── Submit Extension Request ── */
+  const handleSubmitExtension = async (reason) => {
+    setSubmittingExt(true);
+    try {
+      const cfg         = ASSESSMENT_MAP[assessmentType];
+      const currentUser = getCurrentUser();
+      const res = await fetch(`${API_BASE}/api/marks/request-extension`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({
+          batch_no:          batchNo,
+          assessment_type:   cfg.api,
+          assessment_date:   selectedDate,
+          course_planner_id: selectedCoursePlannerId ? Number(selectedCoursePlannerId) : undefined,
+          week_no:           selectedWeekNo ? Number(selectedWeekNo) : undefined,
+          assessment_name:   topicName || cfg.label,
+          trainer_email:     currentUser?.email || "",
+          reason,
+        }),
+      });
+      if (res.ok) {
+        setExtDialogOpen(false);
+        setMessage("✅ Extension request sent to Manager successfully.");
+        await loadExtStatus();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setMessage(`❌ Failed to send request: ${err.error || "Unknown error"}`);
       }
-    } catch {
-      setMessage("❌ Network error while updating Out Of.");
-    } finally {
-      setSavingOutOf(false);
-      setTimeout(() => setMessage(""), 4000);
-    }
+    } catch { setMessage("❌ Network error while sending extension request."); }
+    finally   { setSubmittingExt(false); setTimeout(() => setMessage(""), 5000); }
   };
 
   /* ── Save Marks ── */
   const handleSave = async () => {
-    if (!windowOpen) { setMessage("❌ Marks entry window closed. Cannot save."); return; }
+    if (!effectiveWindowOpen) { setMessage("❌ Marks entry window closed. Cannot save."); return; }
     if (!batchNo || !selectedDate || !outOff) { setMessage("❌ Please complete all required fields."); return; }
     if (!isAutoDateAssessment && !selectedCoursePlannerId) {
       setMessage("❌ Please select an assessment date from the dropdown."); return;
@@ -547,37 +656,57 @@ function MarkSheet() {
         };
         if (!isAutoDateAssessment) {
           if (assessmentType === "module") payload.module_no = Number(selectedWeekNo);
-          else payload.week_no = Number(selectedWeekNo);
+          else                             payload.week_no   = Number(selectedWeekNo);
         }
         try {
           const response = await fetch(`${API_BASE}/api/marks/${cfg.api}`, {
-            method:  "POST",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body:    JSON.stringify(payload),
+            method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+            body: JSON.stringify(payload),
           });
-          if (!response.ok) failCount++;
-          else savedCount++;
-        } catch {
-          failCount++;
-        }
+          if (!response.ok) failCount++; else savedCount++;
+        } catch { failCount++; }
       }
-      setMessage(
-        failCount === 0
-          ? `✅ Marks saved successfully for ${savedCount} learner(s).`
-          : `⚠️ Saved ${savedCount} record(s). ${failCount} failed — check console.`
-      );
-    } finally {
-      setSaving(false);
-      setTimeout(() => setMessage(""), 5000);
-    }
+      setMessage(failCount === 0
+        ? `✅ Marks saved successfully for ${savedCount} learner(s).`
+        : `⚠️ Saved ${savedCount} record(s). ${failCount} failed — check console.`);
+    } finally { setSaving(false); setTimeout(() => setMessage(""), 5000); }
   };
 
-  /* ── Reset on batch/type change ── */
+  /* ── Reset ── */
   const resetSelections = () => {
     setPeriodValue(""); setSelectedDate(""); setSelectedCoursePlannerId("");
-    setSelectedWeekNo(""); setTopicName(""); setMarks({}); setOutOff("");
+    setSelectedWeekNo(""); setTopicName(""); setMarks({}); setOutOff(""); setExtStatus(null);
   };
+
+  /* ── Extension button helpers ── */
+  // Only show to non-admin trainers AFTER the normal window has closed and an assessment is selected
+  const showExtButton = !isAutoDateAssessment && !!selectedDate && !windowOpen && !isAdminOrManager;
+
+  const extBtnDisabled = loadingExtStatus ||
+    extStatus?.status === "pending" ||
+    extStatus?.status === "approved";
+
+  const extBtnLabel = () => {
+    if (loadingExtStatus)               return "Checking…";
+    if (extStatus?.status === "pending")  return "Request Pending";
+    if (extStatus?.status === "approved") return "Extension Granted";
+    if (extStatus?.status === "rejected") return "Re-request Extension";
+    return "Request Extension";
+  };
+
+  const extBtnIcon = () => {
+    if (loadingExtStatus)               return <CircularProgress size={13} color="inherit" />;
+    if (extStatus?.status === "pending")  return <HourglassEmptyIcon sx={{ fontSize: 15 }} />;
+    if (extStatus?.status === "approved") return <CheckCircleIcon sx={{ fontSize: 15 }} />;
+    return <AccessTimeIcon sx={{ fontSize: 15 }} />;
+  };
+
+  const extBtnBg = () => {
+    if (extStatus?.status === "pending")  return { bg: TOKENS.warning.fill, hover: "#d97706" };
+    if (extStatus?.status === "approved") return { bg: TOKENS.success.fill, hover: "#059669" };
+    return { bg: TOKENS.purple.fill, hover: "#6d28d9" };
+  };
+  const { bg: extBg, hover: extHover } = extBtnBg();
 
   /* ── Loading state ── */
   if (loadingBatches || roleLoading) return (
@@ -597,6 +726,7 @@ function MarkSheet() {
       <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');`}</style>
 
       <Box sx={{ maxWidth: 1200, mx: "auto" }}>
+
         {/* ── Page Header ── */}
         <Box sx={{ mb: 4 }}>
           <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: { xs: 24, md: 30 }, fontWeight: 800, color: TOKENS.text, letterSpacing: "-0.03em", mb: 0.5 }}>
@@ -615,34 +745,48 @@ function MarkSheet() {
             subtitle="Select batch, type and assessment period"
             right={
               selectedDate && (
-                <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2, py: 0.8, borderRadius: "10px", background: windowOpen ? TOKENS.success.light : TOKENS.error.light, border: `1px solid ${windowOpen ? TOKENS.success.fill : TOKENS.error.fill}44` }}>
-                  {windowOpen
-                    ? <LockOpenIcon sx={{ fontSize: 14, color: TOKENS.success.fill }} />
-                    : <LockIcon     sx={{ fontSize: 14, color: TOKENS.error.fill   }} />
-                  }
-                  <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700, color: windowOpen ? TOKENS.success.text : TOKENS.error.text }}>
-                    {windowOpen ? `Window open · closes ${windowCloseDate}` : `Window closed ${windowCloseDate}`}
-                  </Typography>
+                <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
+                  {/* Extension active banner */}
+                  {extWindowActive && (
+                    <Fade in>
+                      <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2, py: 0.8, borderRadius: "10px", background: TOKENS.purple.light, border: `1px solid ${TOKENS.purple.fill}44` }}>
+                        <CheckCircleIcon sx={{ fontSize: 14, color: TOKENS.purple.fill }} />
+                        <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700, color: TOKENS.purple.text }}>
+                          Extension active · closes {new Date(extStatus.extended_until).toLocaleDateString("en-GB")} 11:59 PM
+                        </Typography>
+                      </Box>
+                    </Fade>
+                  )}
+                  {/* Window status badge */}
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2, py: 0.8, borderRadius: "10px", background: effectiveWindowOpen ? TOKENS.success.light : TOKENS.error.light, border: `1px solid ${effectiveWindowOpen ? TOKENS.success.fill : TOKENS.error.fill}44` }}>
+                    {effectiveWindowOpen
+                      ? <LockOpenIcon sx={{ fontSize: 14, color: TOKENS.success.fill }} />
+                      : <LockIcon     sx={{ fontSize: 14, color: TOKENS.error.fill   }} />
+                    }
+                    <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700, color: effectiveWindowOpen ? TOKENS.success.text : TOKENS.error.text }}>
+                      {extWindowActive
+                        ? "Extended window open"
+                        : effectiveWindowOpen
+                          ? `Window open · closes ${windowCloseDate}`
+                          : `Window closed ${windowCloseDate}`
+                      }
+                    </Typography>
+                  </Box>
                 </Box>
               )
             }
           />
+
           <Box sx={{ p: 3 }}>
             <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap", alignItems: "flex-end" }}>
 
               {/* Assessment Type */}
               <FormControl size="small" sx={{ minWidth: 220 }}>
                 <InputLabel sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Assessment Type</InputLabel>
-                <Select
-                  value={assessmentType}
-                  label="Assessment Type"
-                  onChange={e => { setAssessmentType(e.target.value); resetSelections(); }}
-                  sx={inputSx}
-                >
+                <Select value={assessmentType} label="Assessment Type"
+                  onChange={e => { setAssessmentType(e.target.value); resetSelections(); }} sx={inputSx}>
                   {Object.entries(ASSESSMENT_MAP).map(([key, val]) => (
-                    <MenuItem key={key} value={key} sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>
-                      {val.label}
-                    </MenuItem>
+                    <MenuItem key={key} value={key} sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>{val.label}</MenuItem>
                   ))}
                 </Select>
               </FormControl>
@@ -650,12 +794,8 @@ function MarkSheet() {
               {/* Batch */}
               <FormControl size="small" sx={{ minWidth: 160 }}>
                 <InputLabel sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Batch</InputLabel>
-                <Select
-                  value={batchNo}
-                  label="Batch"
-                  onChange={e => { setBatchNo(e.target.value); resetSelections(); }}
-                  sx={inputSx}
-                >
+                <Select value={batchNo} label="Batch"
+                  onChange={e => { setBatchNo(e.target.value); resetSelections(); }} sx={inputSx}>
                   {availableBatches.map(b => (
                     <MenuItem key={b} value={b} sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>{b}</MenuItem>
                   ))}
@@ -681,8 +821,7 @@ function MarkSheet() {
                         const weekLabel = p.week_no ? `Week ${p.week_no}` : p.module_no ? `Module ${p.module_no}` : "";
                         return (
                           <MenuItem key={`${p.date}-${p.topic_name}`} value={val} sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>
-                            {weekLabel ? <><strong>{weekLabel}</strong>&nbsp;—&nbsp;</> : ""}
-                            {p.date} — {p.topic_name}
+                            {weekLabel ? <><strong>{weekLabel}</strong>&nbsp;—&nbsp;</> : ""}{p.date} — {p.topic_name}
                           </MenuItem>
                         );
                       })
@@ -694,101 +833,79 @@ function MarkSheet() {
               {/* Date input for auto-date types */}
               {isAutoDateAssessment && (
                 isDvft ? (
-                  <TextField
-                    label="Assessment Date"
-                    type="date"
-                    size="small"
-                    value={selectedDate}
-                    onChange={e => setSelectedDate(e.target.value)}
-                    InputLabelProps={{ shrink: true }}
-                    sx={{
-                      width: 180,
-                      "& .MuiInputBase-root": { ...inputSx, fontFamily: "'DM Sans', sans-serif", fontSize: 13 },
-                      "& .MuiInputLabel-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 13 },
-                    }}
-                  />
+                  <TextField label="Assessment Date" type="date" size="small" value={selectedDate}
+                    onChange={e => setSelectedDate(e.target.value)} InputLabelProps={{ shrink: true }}
+                    sx={{ width: 180, "& .MuiInputBase-root": { ...inputSx, fontFamily: "'DM Sans', sans-serif", fontSize: 13 }, "& .MuiInputLabel-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 13 } }} />
                 ) : (
-                  <TextField
-                    label="Assessment Date"
-                    value={todayDate}
-                    disabled
-                    size="small"
-                    sx={{
-                      width: 160,
-                      "& .MuiInputBase-root": { ...inputSx, fontFamily: "'DM Sans', sans-serif", fontSize: 13 },
-                      "& .MuiInputLabel-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 13 },
-                    }}
-                  />
+                  <TextField label="Assessment Date" value={todayDate} disabled size="small"
+                    sx={{ width: 160, "& .MuiInputBase-root": { ...inputSx, fontFamily: "'DM Sans', sans-serif", fontSize: 13 }, "& .MuiInputLabel-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 13 } }} />
                 )
               )}
 
-              {/* Out Of */}
-              <Box sx={{ display: "flex", alignItems: "flex-end", gap: 1.5 }}>
-                <Tooltip
-                  title={
-                    outOfLocked
-                      ? isFixedOutOfBatch && isAutoOutOfType
-                        ? `Out Of is fixed for ${isPdft ? "PDFT" : "DVFT"} batches. Contact Admin or Manager to override.`
-                        : "Marks entry window is closed."
-                      : isAdminOrManager && isFixedOutOfBatch && isAutoOutOfType
-                        ? "Admin/Manager override — fixed Out Of is editable for you."
-                        : ""
-                  }
-                >
+              {/* Out Of + Save Out Of + Extension button */}
+              <Box sx={{ display: "flex", alignItems: "flex-end", gap: 1.5, flexWrap: "wrap" }}>
+
+                {/* Out Of field */}
+                <Tooltip title={
+                  outOfLocked
+                    ? isFixedOutOfBatch && isAutoOutOfType
+                      ? `Out Of is fixed for ${isPdft ? "PDFT" : "DVFT"} batches. Contact Admin or Manager to override.`
+                      : "Marks entry window is closed."
+                    : isAdminOrManager && isFixedOutOfBatch && isAutoOutOfType
+                      ? "Admin/Manager override — fixed Out Of is editable for you."
+                      : ""
+                }>
                   <span>
                     <TextField
-                      label="Out Of"
-                      value={outOff}
-                      disabled={outOfLocked}
-                      size="small"
+                      label="Out Of" value={outOff} disabled={outOfLocked} size="small"
+                      onChange={e => handleOutOfChange(e.target.value)}
+                      inputProps={{ inputMode: "numeric" }}
+                      helperText={isFixedOutOfBatch && outOff && isAutoOutOfType ? (isAdminOrManager ? "Override" : "Fixed") : ""}
                       sx={{
                         width: 110,
-                        "& .MuiInputBase-root": {
-                          ...inputSx,
-                          fontFamily: "'DM Sans', sans-serif",
-                          fontSize: 13,
-                          // Amber tint when admin is overriding a fixed value
-                          background: isAdminOrManager && isFixedOutOfBatch && isAutoOutOfType
-                            ? "#fef3c7"
-                            : "transparent",
-                        },
+                        "& .MuiInputBase-root": { ...inputSx, fontFamily: "'DM Sans', sans-serif", fontSize: 13, background: isAdminOrManager && isFixedOutOfBatch && isAutoOutOfType ? "#fef3c7" : "transparent" },
                         "& .MuiInputLabel-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 13 },
                         "& .MuiFormHelperText-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 10 },
                       }}
-                      onChange={e => handleOutOfChange(e.target.value)}
-                      inputProps={{ inputMode: "numeric" }}
-                      helperText={
-                        isFixedOutOfBatch && outOff && isAutoOutOfType
-                          ? isAdminOrManager ? "Override" : "Fixed"
-                          : ""
-                      }
                     />
                   </span>
                 </Tooltip>
 
-                {/* Save Out Of — only rendered for Admin / Manager */}
+                {/* Save Out Of — Admin/Manager only */}
                 {isAdminOrManager && selectedDate && (
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    onClick={handleSaveOutOf}
+                  <Button variant="outlined" size="small" onClick={handleSaveOutOf}
                     disabled={savingOutOf || !outOff}
                     startIcon={savingOutOf ? <CircularProgress size={12} color="inherit" /> : <SaveIcon sx={{ fontSize: 14 }} />}
-                    sx={{
-                      fontFamily: "'DM Sans', sans-serif",
-                      fontWeight: 700,
-                      fontSize: 12,
-                      borderRadius: "10px",
-                      textTransform: "none",
-                      borderColor: TOKENS.border,
-                      color: TOKENS.textSub,
-                      whiteSpace: "nowrap",
-                      height: 40,
-                      "&:hover": { borderColor: TOKENS.accent, color: TOKENS.accent, background: TOKENS.accentLight },
-                    }}
-                  >
+                    sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 12, borderRadius: "10px", textTransform: "none", borderColor: TOKENS.border, color: TOKENS.textSub, whiteSpace: "nowrap", height: 40, "&:hover": { borderColor: TOKENS.accent, color: TOKENS.accent, background: TOKENS.accentLight } }}>
                     {savingOutOf ? "Saving…" : "Save Out Of"}
                   </Button>
+                )}
+
+                {/* ── Request Extension button ─────────────────────────────
+                    Visible only to non-Admin/Manager trainers after the
+                    normal window has closed and an assessment is selected.  */}
+                {showExtButton && (
+                  <Tooltip title={
+                    extStatus?.status === "pending"
+                      ? "Extension request is awaiting Manager approval"
+                      : extStatus?.status === "approved"
+                        ? `Extension granted — window open until ${extStatus?.extended_until ? new Date(extStatus.extended_until).toLocaleDateString("en-GB") : ""} 11:59 PM`
+                        : extStatus?.status === "rejected"
+                          ? "Previous request was rejected — you can send a new one"
+                          : "Request the Manager to reopen the marks entry window for 24 hours"
+                  }>
+                    <span>
+                      <Button
+                        variant="contained" size="small"
+                        disabled={extBtnDisabled}
+                        onClick={() => setExtDialogOpen(true)}
+                        startIcon={extBtnIcon()}
+                        sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 12, borderRadius: "10px", textTransform: "none", whiteSpace: "nowrap", height: 40, px: 2, background: extBg, "&:hover": { background: extHover }, "&:disabled": { opacity: 0.72, color: "#fff" } }}
+                      >
+                        {extBtnLabel()}
+                      </Button>
+                    </span>
+                  </Tooltip>
                 )}
               </Box>
             </Box>
@@ -800,14 +917,9 @@ function MarkSheet() {
                   <StatPill icon={<AssignmentIcon sx={{ fontSize: 14 }} />} label="Assessment" value={topicName || ASSESSMENT_MAP[assessmentType]?.label} accent />
                   {selectedDate && <StatPill icon={<CalendarTodayIcon sx={{ fontSize: 14 }} />} label="Date" value={selectedDate} />}
                   <StatPill icon={<InfoOutlinedIcon sx={{ fontSize: 14 }} />} label="Out Of" value={outOff || "—"} />
-                  {selectedCoursePlannerId && (
-                    <StatPill icon={<InfoOutlinedIcon sx={{ fontSize: 14 }} />} label="Planner ID" value={selectedCoursePlannerId} />
-                  )}
+                  {selectedCoursePlannerId && <StatPill icon={<InfoOutlinedIcon sx={{ fontSize: 14 }} />} label="Planner ID" value={selectedCoursePlannerId} />}
                   <BatchBadge batchNo={batchNo} />
-                  {/* Show override badge when admin is editing a fixed-batch out-of */}
-                  {isAdminOrManager && isFixedOutOfBatch && isAutoOutOfType && (
-                    <OutOfOverrideBadge />
-                  )}
+                  {isAdminOrManager && isFixedOutOfBatch && isAutoOutOfType && <OutOfOverrideBadge />}
                 </Box>
               </Fade>
             )}
@@ -823,17 +935,11 @@ function MarkSheet() {
             right={
               learners.length > 0 && (
                 <Box sx={{ display: "flex", gap: 1.5, alignItems: "center" }}>
-                  <Chip
-                    label={`${learners.length} learners`}
-                    size="small"
-                    sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 11, background: TOKENS.accentLight, color: TOKENS.accent, border: `1px solid ${TOKENS.accent}33` }}
-                  />
+                  <Chip label={`${learners.length} learners`} size="small"
+                    sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 11, background: TOKENS.accentLight, color: TOKENS.accent, border: `1px solid ${TOKENS.accent}33` }} />
                   {marksEnteredCount > 0 && (
-                    <Chip
-                      label={`${marksEnteredCount} entered`}
-                      size="small"
-                      sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 11, background: TOKENS.success.light, color: TOKENS.success.text, border: `1px solid ${TOKENS.success.fill}44` }}
-                    />
+                    <Chip label={`${marksEnteredCount} entered`} size="small"
+                      sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 11, background: TOKENS.success.light, color: TOKENS.success.text, border: `1px solid ${TOKENS.success.fill}44` }} />
                   )}
                 </Box>
               )
@@ -856,9 +962,7 @@ function MarkSheet() {
                         <TableCell sx={{ ...tableHeadSx, width: 40 }}>#</TableCell>
                         <TableCell sx={tableHeadSx}>Name</TableCell>
                         <TableCell sx={tableHeadSx}>Email</TableCell>
-                        <TableCell sx={{ ...tableHeadSx, width: 130 }}>
-                          Marks{outOff ? ` / ${outOff}` : ""}
-                        </TableCell>
+                        <TableCell sx={{ ...tableHeadSx, width: 130 }}>Marks{outOff ? ` / ${outOff}` : ""}</TableCell>
                         <TableCell sx={{ ...tableHeadSx, width: 80 }}>%</TableCell>
                       </TableRow>
                     </TableHead>
@@ -873,31 +977,18 @@ function MarkSheet() {
                           pctNum >= 50 ? TOKENS.warning.fill :
                           TOKENS.error.fill;
                         return (
-                          <TableRow
-                            key={l.id}
-                            sx={{ "&:nth-of-type(even)": { background: TOKENS.surfaceAlt }, "&:hover": { background: TOKENS.accentLight + "66", transition: "background 0.15s" } }}
-                          >
+                          <TableRow key={l.id}
+                            sx={{ "&:nth-of-type(even)": { background: TOKENS.surfaceAlt }, "&:hover": { background: TOKENS.accentLight + "66", transition: "background 0.15s" } }}>
                             <TableCell sx={{ ...tableCellSx, color: TOKENS.textSub, fontFamily: "'DM Mono', monospace", fontSize: 11 }}>{idx + 1}</TableCell>
                             <TableCell sx={{ ...tableCellSx, fontWeight: 600 }}>{l.name}</TableCell>
                             <TableCell sx={{ ...tableCellSx, color: TOKENS.textSub, fontSize: 12 }}>{l.email}</TableCell>
                             <TableCell sx={{ ...tableCellSx, py: 0.5 }}>
-                              <TextField
-                                size="small"
-                                disabled={!windowOpen}
+                              <TextField size="small"
+                                disabled={!effectiveWindowOpen}
                                 value={marks[l.id]?.points || ""}
                                 onChange={e => handleMarksInput(l.id, e.target.value)}
                                 inputProps={{ inputMode: "numeric" }}
-                                sx={{
-                                  width: 90,
-                                  "& .MuiInputBase-root": {
-                                    fontFamily: "'DM Mono', monospace",
-                                    fontSize: 13,
-                                    fontWeight: 700,
-                                    borderRadius: "8px",
-                                    background: hasMarks ? TOKENS.accentLight : "transparent",
-                                    "& .MuiOutlinedInput-notchedOutline": { borderColor: hasMarks ? TOKENS.accent + "44" : TOKENS.border },
-                                  },
-                                }}
+                                sx={{ width: 90, "& .MuiInputBase-root": { fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 700, borderRadius: "8px", background: hasMarks ? TOKENS.accentLight : "transparent", "& .MuiOutlinedInput-notchedOutline": { borderColor: hasMarks ? TOKENS.accent + "44" : TOKENS.border } } }}
                               />
                             </TableCell>
                             <TableCell sx={{ ...tableCellSx }}>
@@ -918,24 +1009,20 @@ function MarkSheet() {
 
                 {/* Save Button */}
                 <Box sx={{ mt: 3, display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
-                  <Button
-                    variant="contained"
-                    onClick={handleSave}
-                    disabled={
-                      saving || !windowOpen || !batchNo || !selectedDate || !outOff ||
-                      (!isAutoDateAssessment && !selectedCoursePlannerId)
-                    }
+                  <Button variant="contained" onClick={handleSave}
+                    disabled={saving || !effectiveWindowOpen || !batchNo || !selectedDate || !outOff || (!isAutoDateAssessment && !selectedCoursePlannerId)}
                     startIcon={saving ? <CircularProgress size={16} color="inherit" /> : <SaveIcon sx={{ fontSize: 18 }} />}
-                    sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 13, borderRadius: "10px", textTransform: "none", px: 3, py: 1.2, background: TOKENS.accent, "&:hover": { background: "#2a3fd4" }, "&:disabled": { opacity: 0.5 } }}
-                  >
+                    sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 13, borderRadius: "10px", textTransform: "none", px: 3, py: 1.2, background: TOKENS.accent, "&:hover": { background: "#2a3fd4" }, "&:disabled": { opacity: 0.5 } }}>
                     {saving ? "Saving…" : `Save Marks${marksEnteredCount > 0 ? ` (${marksEnteredCount})` : ""}`}
                   </Button>
 
-                  {!windowOpen && (
+                  {!effectiveWindowOpen && (
                     <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2, py: 0.8, borderRadius: "8px", background: TOKENS.error.light, border: `1px solid ${TOKENS.error.fill}44` }}>
                       <LockIcon sx={{ fontSize: 14, color: TOKENS.error.fill }} />
                       <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, color: TOKENS.error.text }}>
-                        Window closed — contact admin for extension
+                        {isAdminOrManager
+                          ? "Window closed — contact admin for extension"
+                          : "Window closed — use \"Request Extension\" above"}
                       </Typography>
                     </Box>
                   )}
@@ -947,22 +1034,27 @@ function MarkSheet() {
               batchNo ? (
                 <Box sx={{ textAlign: "center", py: 6 }}>
                   <GroupIcon sx={{ fontSize: 40, color: TOKENS.border, mb: 1 }} />
-                  <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TOKENS.textSub }}>
-                    No learners found for batch {batchNo}.
-                  </Typography>
+                  <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TOKENS.textSub }}>No learners found for batch {batchNo}.</Typography>
                 </Box>
               ) : (
                 <Box sx={{ textAlign: "center", py: 6 }}>
                   <AssignmentIcon sx={{ fontSize: 40, color: TOKENS.border, mb: 1 }} />
-                  <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TOKENS.textSub }}>
-                    Select a batch above to load learners.
-                  </Typography>
+                  <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TOKENS.textSub }}>Select a batch above to load learners.</Typography>
                 </Box>
               )
             )}
           </Box>
         </Box>
       </Box>
+
+      {/* ── Extension Request Dialog ── */}
+      <ExtensionRequestDialog
+        open={extDialogOpen}
+        onClose={() => setExtDialogOpen(false)}
+        onSubmit={handleSubmitExtension}
+        submitting={submittingExt}
+        context={{ batchNo, assessmentLabel: ASSESSMENT_MAP[assessmentType]?.label, topicName, selectedDate }}
+      />
     </Box>
   );
 }
