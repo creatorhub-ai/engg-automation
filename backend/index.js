@@ -1362,24 +1362,32 @@ app.get("/api/marks/extension-status", async (req, res) => {
 });
 
 
-app.post("/api/marks/approve-extension", authenticateUser, async (req, res) => {
-  if (!["Admin", "Manager"].includes(req.user.role)) {
-    return res.status(403).json({ error: "Unauthorized" });
+app.post("/api/marks/approve-extension", authenticate, requireAdminOrManager, async (req, res) => {
+  try {
+    const { request_id, status } = req.body;
+
+    if (!request_id || !status) {
+      return res.status(400).json({ error: "request_id and status are required" });
+    }
+
+    await pool.query(
+      `UPDATE marks_extension_requests
+       SET status = $1,
+           decided_at = NOW(),
+           decided_by = $2
+       WHERE id = $3`,
+      [status, req.user.email, request_id]
+    );
+
+    return res.json({ success: true });
+
+  } catch (err) {
+    console.error("Approve extension error:", err);
+    return res.status(500).json({ error: err.message });
   }
-
-  const { request_id, status } = req.body;
-
-  await db.query(
-    `UPDATE marks_extension_requests
-     SET status=$1, decided_at=NOW(), decided_by=$2
-     WHERE id=$3`,
-    [status, req.user.email, request_id]
-  );
-
-  res.json({ success: true });
 });
 
-app.get("/api/marks/check-extension", authenticateUser, async (req, res) => {
+app.get("/api/marks/check-extension", authenticate, async (req, res) => {
   const { batch_no, assessment_type, assessment_date } = req.query;
 
   const result = await db.query(
