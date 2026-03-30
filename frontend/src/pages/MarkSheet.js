@@ -154,11 +154,6 @@ function getFixedOutOf(topicName, assessmentType, batchNo) {
 }
 
 const todayDate = new Date().toISOString().split("T")[0];
-const parseDate = (str) => {
-  if (!str) return null;
-  const [y, m, d] = str.split("-").map(Number);
-  return new Date(y, m - 1, d);
-};
 
 function getCurrentUser() {
   try { return JSON.parse(localStorage.getItem("user") || "{}"); }
@@ -170,7 +165,6 @@ function useCurrentUserRole() {
   const localUser = getCurrentUser();
   const [role,    setRole]    = useState(localUser?.role || "");
   const [loading, setLoading] = useState(true);
-
   useEffect(() => {
     fetch(`${API_BASE}/api/me`, { credentials: "include" })
       .then(r => r.ok ? r.json() : Promise.reject())
@@ -179,7 +173,6 @@ function useCurrentUserRole() {
       .finally(() => setLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
   return { role, loading, isAdminOrManager: role === "Admin" || role === "Manager" };
 }
 
@@ -263,92 +256,6 @@ function OutOfOverrideBadge() {
   );
 }
 
-/* ─── Extension Request Dialog ───────────────────────────────────────────── */
-function ExtensionRequestDialog({ open, onClose, onSubmit, submitting, context }) {
-  const [reason, setReason] = useState("");
-
-  const handleClose  = () => { setReason(""); onClose(); };
-  const handleSubmit = () => { if (reason.trim()) onSubmit(reason.trim()); };
-
-  return (
-    <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth
-      PaperProps={{ sx: { borderRadius: "20px", fontFamily: "'DM Sans', sans-serif", boxShadow: "0 24px 60px rgba(0,0,0,0.15)" } }}
-    >
-      <DialogTitle sx={{ pt: 3, px: 3, pb: 1 }}>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
-          <Box sx={{ width: 40, height: 40, borderRadius: "12px", background: TOKENS.purple.light, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <AccessTimeIcon sx={{ fontSize: 20, color: TOKENS.purple.fill }} />
-          </Box>
-          <Box>
-            <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 17, fontWeight: 800, color: TOKENS.text, letterSpacing: "-0.02em" }}>
-              Request Marks Extension
-            </Typography>
-            <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: TOKENS.textSub, mt: 0.3 }}>
-              Your request will be sent to the Manager for approval
-            </Typography>
-          </Box>
-        </Box>
-      </DialogTitle>
-
-      <DialogContent sx={{ px: 3, pt: 2 }}>
-        {/* Context chips */}
-        <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1, mb: 2.5, p: 2, borderRadius: "12px", background: TOKENS.surfaceAlt, border: `1px solid ${TOKENS.border}` }}>
-          {context?.batchNo && (
-            <Chip size="small" label={`Batch: ${context.batchNo}`}
-              sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 700, background: TOKENS.accentLight, color: TOKENS.accent }} />
-          )}
-          {context?.assessmentLabel && (
-            <Chip size="small" label={context.assessmentLabel}
-              sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 700, border: `1px solid ${TOKENS.border}` }} />
-          )}
-          {context?.topicName && context.topicName !== context.assessmentLabel && (
-            <Chip size="small" label={context.topicName}
-              sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 700, border: `1px solid ${TOKENS.border}` }} />
-          )}
-          {context?.selectedDate && (
-            <Chip size="small" label={context.selectedDate}
-              sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, color: TOKENS.textSub }} />
-          )}
-        </Box>
-
-        {/* Info note */}
-        <Box sx={{ mb: 2.5, p: 2, borderRadius: "10px", background: TOKENS.purple.light, border: `1px solid ${TOKENS.purple.fill}33`, display: "flex", gap: 1.5 }}>
-          <InfoOutlinedIcon sx={{ fontSize: 16, color: TOKENS.purple.fill, mt: 0.2, flexShrink: 0 }} />
-          <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: TOKENS.purple.text, lineHeight: 1.7 }}>
-            Once the Manager <strong>approves</strong> your request, the marks entry window will reopen for <strong>24 hours</strong> — until <strong>11:59 PM of the next day</strong>. After that it will close automatically.
-          </Typography>
-        </Box>
-
-        <TextField
-          label="Reason for extension *"
-          multiline rows={3} fullWidth
-          value={reason}
-          onChange={e => setReason(e.target.value)}
-          placeholder="Explain why you need an extension for this assessment…"
-          sx={{
-            "& .MuiInputBase-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 13, borderRadius: "10px" },
-            "& .MuiInputLabel-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 13 },
-            "& .MuiOutlinedInput-notchedOutline": { borderColor: TOKENS.border },
-          }}
-        />
-      </DialogContent>
-
-      <DialogActions sx={{ px: 3, pb: 3, gap: 1.5 }}>
-        <Button onClick={handleClose} disabled={submitting}
-          sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 13, textTransform: "none", borderRadius: "10px", color: TOKENS.textSub, px: 2.5 }}>
-          Cancel
-        </Button>
-        <Button variant="contained" onClick={handleSubmit}
-          disabled={submitting || !reason.trim()}
-          startIcon={submitting ? <CircularProgress size={14} color="inherit" /> : <SendIcon sx={{ fontSize: 15 }} />}
-          sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 13, textTransform: "none", borderRadius: "10px", px: 3, background: TOKENS.purple.fill, "&:hover": { background: "#6d28d9" }, "&:disabled": { opacity: 0.5 } }}>
-          {submitting ? "Sending…" : "Send Request"}
-        </Button>
-      </DialogActions>
-    </Dialog>
-  );
-}
-
 /* ─── Main Component ─────────────────────────────────────────────────────── */
 function MarkSheet() {
   const { isAdminOrManager, loading: roleLoading } = useCurrentUserRole();
@@ -367,20 +274,11 @@ function MarkSheet() {
   const [topicName,               setTopicName]               = useState("");
   const [marks,                   setMarks]                   = useState({});
   const [outOff,                  setOutOff]                  = useState("");
-  const [windowOpen,              setWindowOpen]              = useState(true);
   const [windowCloseDate,         setWindowCloseDate]         = useState("");
   const [message,                 setMessage]                 = useState("");
   const [saving,                  setSaving]                  = useState(false);
   const [savingOutOf,             setSavingOutOf]             = useState(false);
   const [loadingMarks,            setLoadingMarks]            = useState(false);
-  const [currentDate,             setCurrentDate]             = useState(new Date());
-
-  /* ── Extension state ── */
-  const [extDialogOpen,     setExtDialogOpen]     = useState(false);
-  const [submittingExt,     setSubmittingExt]     = useState(false);
-  const [extStatus,         setExtStatus]         = useState(null);
-  // extStatus: null | { status: "pending"|"approved"|"rejected", extended_until: string|null }
-  const [loadingExtStatus,  setLoadingExtStatus]  = useState(false);
 
   const isPdft            = isPdftBatch(batchNo);
   const isDvft            = isDvftBatch(batchNo);
@@ -389,29 +287,15 @@ function MarkSheet() {
   const isAutoOutOfType      = AUTO_OUT_OF_TYPES.includes(assessmentType);
   const isDvftAutoDateType   = isDvft && isAutoDateAssessment;
 
-  /* ── Extension window active? ── */
-  // The extension window is live when: status=approved AND extended_until is in the future
-  const extWindowActive =
-    extStatus?.status === "approved" &&
-    extStatus?.extended_until &&
-    new Date(extStatus.extended_until) >= currentDate;
+  /* ── Window is always open — no date-based restriction ── */
+  const effectiveWindowOpen = true;
 
-  /* ── Combined effective window ── */
-  const effectiveWindowOpen = windowOpen || extWindowActive;
-
+  /* ── Out Of locked only for fixed-batch rules, never for window state ── */
   const outOfLocked = isAdminOrManager
     ? false
-    : isAutoOutOfType
-      ? (!effectiveWindowOpen || isFixedOutOfBatch)
-      : !effectiveWindowOpen;
+    : isAutoOutOfType && isFixedOutOfBatch;
 
   const marksEnteredCount = learners.filter(l => marks[l.id]?.points).length;
-
-  /* ── Clock — ticks every second so extWindowActive re-evaluates in real time ── */
-  useEffect(() => {
-    const i = setInterval(() => setCurrentDate(new Date()), 1000);
-    return () => clearInterval(i);
-  }, []);
 
   /* ── Load batches ── */
   useEffect(() => {
@@ -431,29 +315,6 @@ function MarkSheet() {
       .finally(() => setLoadingLearners(false));
   }, [batchNo]);
 
-  /* ── Load extension status for current assessment ── */
-  const loadExtStatus = useCallback(async () => {
-    // Extension not relevant for auto-date types (final_project/viva always open)
-    if (!batchNo || !selectedDate || isAutoDateAssessment) {
-      setExtStatus(null);
-      return;
-    }
-    setLoadingExtStatus(true);
-    try {
-      const cfg    = ASSESSMENT_MAP[assessmentType];
-      const params = new URLSearchParams({ batch_no: batchNo, assessment_type: cfg.api, assessment_date: selectedDate });
-      if (selectedCoursePlannerId) params.set("course_planner_id", selectedCoursePlannerId);
-      const res = await fetch(`${API_BASE}/api/marks/extension-status?${params}`, { credentials: "include" });
-      setExtStatus(res.ok ? await res.json() : null);
-    } catch {
-      setExtStatus(null);
-    } finally {
-      setLoadingExtStatus(false);
-    }
-  }, [batchNo, assessmentType, selectedDate, selectedCoursePlannerId, isAutoDateAssessment]);
-
-  useEffect(() => { loadExtStatus(); }, [loadExtStatus]);
-
   /* ── Load periods ── */
   useEffect(() => {
     if (!batchNo) return;
@@ -461,7 +322,7 @@ function MarkSheet() {
       setSelectedDate(isDvft ? "" : todayDate);
       setSelectedCoursePlannerId(""); setSelectedWeekNo("");
       setTopicName(ASSESSMENT_MAP[assessmentType].label);
-      setPeriods([]); setExtStatus(null);
+      setPeriods([]);
       const fixed = getFixedOutOf("", assessmentType, batchNo);
       if (fixed !== null) setOutOff(String(fixed));
       return;
@@ -478,26 +339,23 @@ function MarkSheet() {
         setPeriods(unique);
       })
       .catch(() => setPeriods([]));
-
     setPeriodValue(""); setSelectedDate(""); setSelectedCoursePlannerId("");
-    setSelectedWeekNo(""); setTopicName(""); setMarks({}); setOutOff(""); setExtStatus(null);
+    setSelectedWeekNo(""); setTopicName(""); setMarks({}); setOutOff("");
   }, [batchNo, assessmentType]);
 
-  /* ── Window Logic ── */
+  /* ── Window close date — informational only, does not gate entry ── */
   useEffect(() => {
-    if (isAutoDateAssessment) { setWindowOpen(true); return; }
-    if (!selectedDate) return;
-    const assessmentDate = parseDate(selectedDate);
+    if (isAutoDateAssessment || !selectedDate) return;
+    const assessmentDate = new Date(selectedDate + "T00:00:00");
     if (!assessmentDate) return;
     let close = new Date(assessmentDate);
     const type = ASSESSMENT_MAP[assessmentType]?.type;
-    if (type === "weekly")      close.setDate(close.getDate() + 3);
-    else if (type === "mid")    close.setDate(close.getDate() + 5);
-    else if (type === "final")  close.setDate(close.getDate() + 7);
+    if (type === "weekly")     close.setDate(close.getDate() + 3);
+    else if (type === "mid")   close.setDate(close.getDate() + 5);
+    else if (type === "final") close.setDate(close.getDate() + 7);
     close.setHours(23, 59, 59, 999);
-    setWindowOpen(currentDate <= close);
     setWindowCloseDate(close.toLocaleDateString("en-GB"));
-  }, [selectedDate, assessmentType, currentDate, isAutoDateAssessment]);
+  }, [selectedDate, assessmentType, isAutoDateAssessment]);
 
   /* ── Load existing marks ── */
   const loadExistingMarks = useCallback(async (plannerId, date) => {
@@ -534,7 +392,7 @@ function MarkSheet() {
     setSelectedWeekNo(weekPart || "");
     setSelectedDate(datePart || "");
     setTopicName(topic);
-    setMarks({}); setOutOff(""); setExtStatus(null);
+    setMarks({}); setOutOff("");
     const fixed = getFixedOutOf(topic, assessmentType, batchNo);
     if (fixed !== null) setOutOff(String(fixed));
     if (plannerId && datePart) loadExistingMarks(plannerId, datePart);
@@ -594,40 +452,8 @@ function MarkSheet() {
     finally   { setSavingOutOf(false); setTimeout(() => setMessage(""), 4000); }
   };
 
-  /* ── Submit Extension Request ── */
-  const handleSubmitExtension = async (reason) => {
-    setSubmittingExt(true);
-    try {
-      const cfg         = ASSESSMENT_MAP[assessmentType];
-      const currentUser = getCurrentUser();
-      const res = await fetch(`${API_BASE}/api/marks/request-extension`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
-        body: JSON.stringify({
-          batch_no:          batchNo,
-          assessment_type:   cfg.api,
-          assessment_date:   selectedDate,
-          course_planner_id: selectedCoursePlannerId ? Number(selectedCoursePlannerId) : undefined,
-          week_no:           selectedWeekNo ? Number(selectedWeekNo) : undefined,
-          assessment_name:   topicName || cfg.label,
-          trainer_email:     currentUser?.email || "",
-          reason,
-        }),
-      });
-      if (res.ok) {
-        setExtDialogOpen(false);
-        setMessage("✅ Extension request sent to Manager successfully.");
-        await loadExtStatus();
-      } else {
-        const err = await res.json().catch(() => ({}));
-        setMessage(`❌ Failed to send request: ${err.error || "Unknown error"}`);
-      }
-    } catch { setMessage("❌ Network error while sending extension request."); }
-    finally   { setSubmittingExt(false); setTimeout(() => setMessage(""), 5000); }
-  };
-
   /* ── Save Marks ── */
   const handleSave = async () => {
-    if (!effectiveWindowOpen) { setMessage("❌ Marks entry window closed. Cannot save."); return; }
     if (!batchNo || !selectedDate || !outOff) { setMessage("❌ Please complete all required fields."); return; }
     if (!isAutoDateAssessment && !selectedCoursePlannerId) {
       setMessage("❌ Please select an assessment date from the dropdown."); return;
@@ -635,11 +461,9 @@ function MarkSheet() {
     if (isDvftAutoDateType && !selectedDate) {
       setMessage("❌ Please enter the assessment date."); return;
     }
-
     const cfg = ASSESSMENT_MAP[assessmentType];
     const learnersWithMarks = learners.filter(l => marks[l.id]?.points);
     if (learnersWithMarks.length === 0) { setMessage("❌ No marks entered."); return; }
-
     setSaving(true); setMessage("");
     let savedCount = 0, failCount = 0;
     try {
@@ -675,38 +499,8 @@ function MarkSheet() {
   /* ── Reset ── */
   const resetSelections = () => {
     setPeriodValue(""); setSelectedDate(""); setSelectedCoursePlannerId("");
-    setSelectedWeekNo(""); setTopicName(""); setMarks({}); setOutOff(""); setExtStatus(null);
+    setSelectedWeekNo(""); setTopicName(""); setMarks({}); setOutOff("");
   };
-
-  /* ── Extension button helpers ── */
-  // Only show to non-admin trainers AFTER the normal window has closed and an assessment is selected
-  const showExtButton = !isAutoDateAssessment && !!selectedDate && !windowOpen && !isAdminOrManager;
-
-  const extBtnDisabled = loadingExtStatus ||
-    extStatus?.status === "pending" ||
-    extStatus?.status === "approved";
-
-  const extBtnLabel = () => {
-    if (loadingExtStatus)               return "Checking…";
-    if (extStatus?.status === "pending")  return "Request Pending";
-    if (extStatus?.status === "approved") return "Extension Granted";
-    if (extStatus?.status === "rejected") return "Re-request Extension";
-    return "Request Extension";
-  };
-
-  const extBtnIcon = () => {
-    if (loadingExtStatus)               return <CircularProgress size={13} color="inherit" />;
-    if (extStatus?.status === "pending")  return <HourglassEmptyIcon sx={{ fontSize: 15 }} />;
-    if (extStatus?.status === "approved") return <CheckCircleIcon sx={{ fontSize: 15 }} />;
-    return <AccessTimeIcon sx={{ fontSize: 15 }} />;
-  };
-
-  const extBtnBg = () => {
-    if (extStatus?.status === "pending")  return { bg: TOKENS.warning.fill, hover: "#d97706" };
-    if (extStatus?.status === "approved") return { bg: TOKENS.success.fill, hover: "#059669" };
-    return { bg: TOKENS.purple.fill, hover: "#6d28d9" };
-  };
-  const { bg: extBg, hover: extHover } = extBtnBg();
 
   /* ── Loading state ── */
   if (loadingBatches || roleLoading) return (
@@ -724,7 +518,6 @@ function MarkSheet() {
   return (
     <Box sx={{ minHeight: "100vh", background: TOKENS.bg, p: { xs: 2, md: 4 }, fontFamily: "'DM Sans', sans-serif" }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');`}</style>
-
       <Box sx={{ maxWidth: 1200, mx: "auto" }}>
 
         {/* ── Page Header ── */}
@@ -746,40 +539,21 @@ function MarkSheet() {
             right={
               selectedDate && (
                 <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
-                  {/* Extension active banner */}
-                  {extWindowActive && (
-                    <Fade in>
-                      <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2, py: 0.8, borderRadius: "10px", background: TOKENS.purple.light, border: `1px solid ${TOKENS.purple.fill}44` }}>
-                        <CheckCircleIcon sx={{ fontSize: 14, color: TOKENS.purple.fill }} />
-                        <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700, color: TOKENS.purple.text }}>
-                          Extension active · closes {new Date(extStatus.extended_until).toLocaleDateString("en-GB")} 11:59 PM
-                        </Typography>
-                      </Box>
-                    </Fade>
-                  )}
-                  {/* Window status badge */}
-                  <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2, py: 0.8, borderRadius: "10px", background: effectiveWindowOpen ? TOKENS.success.light : TOKENS.error.light, border: `1px solid ${effectiveWindowOpen ? TOKENS.success.fill : TOKENS.error.fill}44` }}>
-                    {effectiveWindowOpen
-                      ? <LockOpenIcon sx={{ fontSize: 14, color: TOKENS.success.fill }} />
-                      : <LockIcon     sx={{ fontSize: 14, color: TOKENS.error.fill   }} />
-                    }
-                    <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700, color: effectiveWindowOpen ? TOKENS.success.text : TOKENS.error.text }}>
-                      {extWindowActive
-                        ? "Extended window open"
-                        : effectiveWindowOpen
-                          ? `Window open · closes ${windowCloseDate}`
-                          : `Window closed ${windowCloseDate}`
-                      }
+                  {/* Always-open window badge */}
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2, py: 0.8, borderRadius: "10px", background: TOKENS.success.light, border: `1px solid ${TOKENS.success.fill}44` }}>
+                    <LockOpenIcon sx={{ fontSize: 14, color: TOKENS.success.fill }} />
+                    <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700, color: TOKENS.success.text }}>
+                      {!isAutoDateAssessment && windowCloseDate
+                        ? `Window open · standard close ${windowCloseDate}`
+                        : "Window open"}
                     </Typography>
                   </Box>
                 </Box>
               )
             }
           />
-
           <Box sx={{ p: 3 }}>
             <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap", alignItems: "flex-end" }}>
-
               {/* Assessment Type */}
               <FormControl size="small" sx={{ minWidth: 220 }}>
                 <InputLabel sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Assessment Type</InputLabel>
@@ -842,15 +616,11 @@ function MarkSheet() {
                 )
               )}
 
-              {/* Out Of + Save Out Of + Extension button */}
+              {/* Out Of + Save Out Of */}
               <Box sx={{ display: "flex", alignItems: "flex-end", gap: 1.5, flexWrap: "wrap" }}>
-
-                {/* Out Of field */}
                 <Tooltip title={
                   outOfLocked
-                    ? isFixedOutOfBatch && isAutoOutOfType
-                      ? `Out Of is fixed for ${isPdft ? "PDFT" : "DVFT"} batches. Contact Admin or Manager to override.`
-                      : "Marks entry window is closed."
+                    ? `Out Of is fixed for ${isPdft ? "PDFT" : "DVFT"} batches. Contact Admin or Manager to override.`
                     : isAdminOrManager && isFixedOutOfBatch && isAutoOutOfType
                       ? "Admin/Manager override — fixed Out Of is editable for you."
                       : ""
@@ -879,33 +649,6 @@ function MarkSheet() {
                     sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 12, borderRadius: "10px", textTransform: "none", borderColor: TOKENS.border, color: TOKENS.textSub, whiteSpace: "nowrap", height: 40, "&:hover": { borderColor: TOKENS.accent, color: TOKENS.accent, background: TOKENS.accentLight } }}>
                     {savingOutOf ? "Saving…" : "Save Out Of"}
                   </Button>
-                )}
-
-                {/* ── Request Extension button ─────────────────────────────
-                    Visible only to non-Admin/Manager trainers after the
-                    normal window has closed and an assessment is selected.  */}
-                {showExtButton && (
-                  <Tooltip title={
-                    extStatus?.status === "pending"
-                      ? "Extension request is awaiting Manager approval"
-                      : extStatus?.status === "approved"
-                        ? `Extension granted — window open until ${extStatus?.extended_until ? new Date(extStatus.extended_until).toLocaleDateString("en-GB") : ""} 11:59 PM`
-                        : extStatus?.status === "rejected"
-                          ? "Previous request was rejected — you can send a new one"
-                          : "Request the Manager to reopen the marks entry window for 24 hours"
-                  }>
-                    <span>
-                      <Button
-                        variant="contained" size="small"
-                        disabled={extBtnDisabled}
-                        onClick={() => setExtDialogOpen(true)}
-                        startIcon={extBtnIcon()}
-                        sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 12, borderRadius: "10px", textTransform: "none", whiteSpace: "nowrap", height: 40, px: 2, background: extBg, "&:hover": { background: extHover }, "&:disabled": { opacity: 0.72, color: "#fff" } }}
-                      >
-                        {extBtnLabel()}
-                      </Button>
-                    </span>
-                  </Tooltip>
                 )}
               </Box>
             </Box>
@@ -984,7 +727,6 @@ function MarkSheet() {
                             <TableCell sx={{ ...tableCellSx, color: TOKENS.textSub, fontSize: 12 }}>{l.email}</TableCell>
                             <TableCell sx={{ ...tableCellSx, py: 0.5 }}>
                               <TextField size="small"
-                                disabled={!effectiveWindowOpen}
                                 value={marks[l.id]?.points || ""}
                                 onChange={e => handleMarksInput(l.id, e.target.value)}
                                 inputProps={{ inputMode: "numeric" }}
@@ -1010,22 +752,11 @@ function MarkSheet() {
                 {/* Save Button */}
                 <Box sx={{ mt: 3, display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
                   <Button variant="contained" onClick={handleSave}
-                    disabled={saving || !effectiveWindowOpen || !batchNo || !selectedDate || !outOff || (!isAutoDateAssessment && !selectedCoursePlannerId)}
+                    disabled={saving || !batchNo || !selectedDate || !outOff || (!isAutoDateAssessment && !selectedCoursePlannerId)}
                     startIcon={saving ? <CircularProgress size={16} color="inherit" /> : <SaveIcon sx={{ fontSize: 18 }} />}
                     sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 13, borderRadius: "10px", textTransform: "none", px: 3, py: 1.2, background: TOKENS.accent, "&:hover": { background: "#2a3fd4" }, "&:disabled": { opacity: 0.5 } }}>
                     {saving ? "Saving…" : `Save Marks${marksEnteredCount > 0 ? ` (${marksEnteredCount})` : ""}`}
                   </Button>
-
-                  {!effectiveWindowOpen && (
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2, py: 0.8, borderRadius: "8px", background: TOKENS.error.light, border: `1px solid ${TOKENS.error.fill}44` }}>
-                      <LockIcon sx={{ fontSize: 14, color: TOKENS.error.fill }} />
-                      <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, color: TOKENS.error.text }}>
-                        {isAdminOrManager
-                          ? "Window closed — contact admin for extension"
-                          : "Window closed — use \"Request Extension\" above"}
-                      </Typography>
-                    </Box>
-                  )}
                 </Box>
 
                 <StatusBanner message={message} />
@@ -1045,16 +776,8 @@ function MarkSheet() {
             )}
           </Box>
         </Box>
-      </Box>
 
-      {/* ── Extension Request Dialog ── */}
-      <ExtensionRequestDialog
-        open={extDialogOpen}
-        onClose={() => setExtDialogOpen(false)}
-        onSubmit={handleSubmitExtension}
-        submitting={submittingExt}
-        context={{ batchNo, assessmentLabel: ASSESSMENT_MAP[assessmentType]?.label, topicName, selectedDate }}
-      />
+      </Box>
     </Box>
   );
 }
