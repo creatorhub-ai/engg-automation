@@ -63,7 +63,7 @@ const MENUS_BY_ROLE = {
     { id: 10, name: "User Dashboard", path: "/users" },
     { id: 13, name: "Manager Leave Dashboard", path: "/manager/leaves" },
     { id: 14, name: "Announcement", path: "/announcement" },
-    { id: 17, name: "Announcement", path: "/apply-leave" },
+    { id: 17, name: "Leave Application", path: "/apply-leave" },
   ],
   manager: [
     { id: 1, name: "Classroom Planner", path: "/classroom-planner" },
@@ -76,7 +76,7 @@ const MENUS_BY_ROLE = {
     { id: 8, name: "Report", path: "/reports" },
     { id: 9, name: "User Dashboard", path: "/users" },
     { id: 12, name: "Announcement", path: "/announcement" },
-    { id: 14, name: "Announcement", path: "/apply-leave" },
+    { id: 14, name: "Leave Application", path: "/apply-leave" },
   ],
   trainer: [
     { id: 1, name: "Trainer Dashboards", path: "/trainer-dashboard" },
@@ -89,7 +89,7 @@ const MENUS_BY_ROLE = {
     { id: 5, name: "Course Progress", path: "/course-progress" },
     { id: 6, name: "Announcement", path: "/announcement" },
     { id: 7, name: "Trainer Dashboards", path: "/trainer-dashboard" },
-    { id: 8, name: "Announcement", path: "/apply-leave" },
+    { id: 8, name: "Leave Application", path: "/apply-leave" },
   ],
 };
 
