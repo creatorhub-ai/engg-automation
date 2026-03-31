@@ -109,7 +109,7 @@ const AUTO_OUT_OF_TYPES = ["intermediate", "final", "final_project", "viva"];
 
 /* ─── PDFT Out Of Rules ──────────────────────────────────────────────────── */
 const PDFT_OUT_OF_RULES = [
-  { keywords: ["intermediate"],    outOf: 25  },
+  { keywords: ["intermediate"],    outOf: 30  },
   { keywords: ["digital design"],  outOf: 30  },
   { keywords: ["cmos"],            outOf: 20  },
   { keywords: ["tcl"],             outOf: 25  },
