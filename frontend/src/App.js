@@ -30,6 +30,7 @@ import MarksDashboard from "./pages/MarksDashboard";
 import MarkEntryDashboard from "./pages/MarkEntryDashboard";
 import TrainerParentDashboard from "./pages/TrainerParentDashboard";
 import ClassroomMatrixDashboard from "./pages/ClassroomMatrixDashboard";
+import LeaveApply from "./pages/LeaveApply";
 
 const roleMenus = {
   admin: [
@@ -50,6 +51,7 @@ const roleMenus = {
     { text: "Marks Dashboard", path: "/marks-dashboard" }, 
     { text: "Announcement", path: "/announcement" }, 
     { text: "Classroom Planner-2", path: "/classroom-planner" }, 
+    { text: "Apply Leave", path: "/apply-leave" },
     { text: "Manager Leave Dashboard", path: "/manager/leaves" }, 
     { text: "Manager Leave Dashboard", path: "/holiday-upload" },
     { text: "Trainer Assignment Dashboard", path: "/trainer-assignment" },
@@ -63,6 +65,7 @@ const roleMenus = {
     { text: "Internal Communication", path: "/internal" },
     { text: "Final Assessment Schedule", path: "/final-assessments" },
     { text: "Soft Skill Announcement", path: "/soft-skill-announcement" },
+    { text: "Apply Leave", path: "/apply-leave" },
     { text: "Mail Status Check", path: "/mail-status" },
     { text: "Attendance Mailer", path: "/attendance-mailer" },
     { text: "Reports", path: "/reports" },
@@ -90,6 +93,7 @@ const roleMenus = {
     { text: "Internal Communication", path: "/internal" },
     { text: "Final Assessment Schedule", path: "/final-assessments" },
     { text: "Mail Status Check", path: "/mail-status" },
+    { text: "Apply Leave", path: "/apply-leave" },
     { text: "Course Progress", path: "/course-progress" },
     { text: "Marks Dashboard", path: "/marks/entry" },
   ],
@@ -171,6 +175,8 @@ function getComponentForPath(path, login) {
       return <MarkEntryDashboard user={login} />;
     case "/classroom-matrix":
       return <ClassroomMatrixDashboard user={login} />;
+    case "/apply-leave":
+      return <LeaveApply user={login} />;
     default:
       return <div>Page not found</div>;
   }
