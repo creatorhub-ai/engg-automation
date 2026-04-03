@@ -492,32 +492,8 @@ function computeOccupancyEnd(startDateStr) {
 }
 
 function isWindowOpen(assessmentType, assessmentDate) {
-  const date = new Date(assessmentDate);
-  const now = new Date();
-
-  let close = new Date(date);
-
-  if (assessmentType === "weekly-assessment") {
-    // Friday → Monday
-    close.setDate(close.getDate() + 3);
-  } 
-  else if (
-    assessmentType === "intermediate-assessment" ||
-    assessmentType === "module-level-assessment"
-  ) {
-    // Friday → Wednesday
-    close.setDate(close.getDate() + 5);
-  } 
-  else if (assessmentType === "final-assessment") {
-    // 7 days
-    close.setDate(close.getDate() + 7);
-  }
-
-  close.setHours(23, 59, 59, 999);
-
-  return now <= close;
+  return true; // Window always open — controlled by extension request system
 }
-
 
 // Tools: you need a 'tools' column in classroom_occupancy or separate table if you want to restrict by required tools.
 async function hasRequiredTools(classroomName, requiredTools) {
@@ -6281,7 +6257,7 @@ app.post("/api/marks/viva", async (req, res) => {
 app.get("/api/marks/:type", async (req, res) => {
   const { batch_no, assessment_date, course_planner_id } = req.query;
 
-  const result = await pool.query(
+  const result = await db.query(
     `SELECT learner_id, points, out_off
      FROM final_assessment_scores
      WHERE batch_no=$1
@@ -6312,7 +6288,7 @@ app.post("/api/outoff/save", async (req, res) => {
 // Fetch all marks for a learner and batch (optional API for dashboard display)
 app.get('/api/marks/:category', async (req, res) => {
   try {
-    const { category } = req.params; // one of: weekly-assessment-scores, intermediate-assessment-scores, module-level-assessment-scores, weekly-quiz-scores
+    const { category } = req.params;
     const { learner_id, batchno } = req.query;
     const { data, error } = await supabase
       .from(category)
