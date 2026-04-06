@@ -66,6 +66,7 @@ export default function UploadLearners() {
             phone: r.phone || r.Phone || "",
             batch_no: r.batch_no || r.Batch || r.batch || "",
             status: r.status || r.Status || "",
+            server_id: r.server_id || r.server || "",
             __rowIndex: index + 2,
           };
 
@@ -202,6 +203,9 @@ export default function UploadLearners() {
                         </Box>
                         <Box component="td" sx={{ border: "1px solid #eee", p: 1, fontSize: 13 }}>
                           {row.status}
+                        </Box>
+                        <Box component="td" sx={{ border: "1px solid #eee", p: 1, fontSize: 13 }}>
+                          {row.server_id}
                         </Box>
                         <Box
                           component="td"
