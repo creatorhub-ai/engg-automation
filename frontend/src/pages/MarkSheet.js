@@ -97,10 +97,10 @@ const tableCellSx = {
 
 /* ─── Assessment config ──────────────────────────────────────────────────── */
 const ASSESSMENT_MAP = {
-  weekly:        { api: "weekly-assessment",      label: "Weekly Assessment",      type: "weekly" },
-  intermediate:  { api: "intermediate-assessment", label: "Intermediate Assessment", type: "mid"   },
-  module:        { api: "module-level-assessment", label: "Module Level Assessment", type: "mid"   },
-  final:         { api: "final-assessment",        label: "Final Assessment",        type: "final" },
+  weekly:        { api: "weekly-assessment",       label: "Weekly Assessment",       type: "weekly" },
+  intermediate:  { api: "intermediate-assessment", label: "Intermediate Assessment", type: "mid"    },
+  module:        { api: "module-level-assessment", label: "Module Level Assessment", type: "mid"    },
+  final:         { api: "final-assessment",        label: "Final Assessment",        type: "final"  },
   final_project: { api: "final-project",           label: "Final Project",           autoDate: true },
   viva:          { api: "viva",                    label: "Viva",                    autoDate: true },
 };
@@ -256,6 +256,15 @@ function OutOfOverrideBadge() {
   );
 }
 
+/* ─── Helper: calculate percentage ──────────────────────────────────────── */
+function calculatePercentage(points, outOf) {
+  if (!points || !outOf || String(points).toUpperCase() === "AB") return "";
+  const pointsNum = parseFloat(points);
+  const outOfNum  = parseFloat(outOf);
+  if (isNaN(pointsNum) || isNaN(outOfNum) || outOfNum === 0) return "";
+  return String(Math.round((pointsNum / outOfNum) * 100));
+}
+
 /* ─── Main Component ─────────────────────────────────────────────────────── */
 function MarkSheet() {
   const { isAdminOrManager, loading: roleLoading } = useCurrentUserRole();
@@ -287,21 +296,25 @@ function MarkSheet() {
   const isAutoOutOfType      = AUTO_OUT_OF_TYPES.includes(assessmentType);
   const isDvftAutoDateType   = isDvft && isAutoDateAssessment;
 
-  /* ── Window is always open — no date-based restriction ── */
   const effectiveWindowOpen = true;
 
-  /* ── Out Of locked only for fixed-batch rules, never for window state ── */
   const outOfLocked = isAdminOrManager
     ? false
     : isAutoOutOfType && isFixedOutOfBatch;
 
-  const marksEnteredCount = learners.filter(l => marks[l.id]?.points && marks[l.id].points.trim() !== "").length;
+  const marksEnteredCount = learners.filter(
+    l => marks[l.id]?.points && String(marks[l.id].points).trim() !== ""
+  ).length;
 
   /* ── Load batches ── */
   useEffect(() => {
     fetch(`${API_BASE}/api/batches`)
       .then(r => r.json())
-      .then(data => setAvailableBatches(Array.isArray(data) ? [...new Set(data.map(b => typeof b === "string" ? b : b.batch_no))] : []))
+      .then(data => setAvailableBatches(
+        Array.isArray(data)
+          ? [...new Set(data.map(b => typeof b === "string" ? b : b.batch_no))]
+          : []
+      ))
       .finally(() => setLoadingBatches(false));
   }, []);
 
@@ -319,12 +332,18 @@ function MarkSheet() {
   useEffect(() => {
     if (!batchNo) return;
     if (isAutoDateAssessment) {
-      setSelectedDate(isDvft ? "" : todayDate);
-      setSelectedCoursePlannerId(""); setSelectedWeekNo("");
+      const autoDate = isDvft ? "" : todayDate;
+      setSelectedDate(autoDate);
+      setSelectedCoursePlannerId("");
+      setSelectedWeekNo("");
       setTopicName(ASSESSMENT_MAP[assessmentType].label);
       setPeriods([]);
       const fixed = getFixedOutOf("", assessmentType, batchNo);
       if (fixed !== null) setOutOff(String(fixed));
+      // For PDFT auto-date, load marks immediately using today's date
+      if (!isDvft && autoDate) {
+        setMarks({});
+      }
       return;
     }
     const apiType = ASSESSMENT_MAP[assessmentType].api;
@@ -339,11 +358,17 @@ function MarkSheet() {
         setPeriods(unique);
       })
       .catch(() => setPeriods([]));
-    setPeriodValue(""); setSelectedDate(""); setSelectedCoursePlannerId("");
-    setSelectedWeekNo(""); setTopicName(""); setMarks({}); setOutOff("");
+    setPeriodValue("");
+    setSelectedDate("");
+    setSelectedCoursePlannerId("");
+    setSelectedWeekNo("");
+    setTopicName("");
+    setMarks({});
+    setOutOff("");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [batchNo, assessmentType]);
 
-  /* ── Window close date — informational only, does not gate entry ── */
+  /* ── Window close date ── */
   useEffect(() => {
     if (isAutoDateAssessment || !selectedDate) return;
     const assessmentDate = new Date(selectedDate + "T00:00:00");
@@ -357,69 +382,103 @@ function MarkSheet() {
     setWindowCloseDate(close.toLocaleDateString("en-GB"));
   }, [selectedDate, assessmentType, isAutoDateAssessment]);
 
-  /* ── Load existing marks ── */
-  const loadExistingMarks = useCallback(async (plannerId, date) => {
-    if (!batchNo || !plannerId || !date) return;
+  /* ── Load existing marks ─────────────────────────────────────────────────
+     KEY FIX: This function NO LONGER calls setMarks({}) / setOutOff("") before
+     fetching. State is reset by the caller (handlePeriodSelect / the date
+     useEffect) BEFORE this function is invoked, so there is no race condition.
+  ── */
+  const loadExistingMarks = useCallback(async (plannerId, date, fixedOutOf) => {
+    if (!batchNo || !date) return;
     setLoadingMarks(true);
     try {
       const cfg = ASSESSMENT_MAP[assessmentType];
-      const res = await fetch(`${API_BASE}/api/marks/${cfg.api}?batch_no=${batchNo}&course_planner_id=${plannerId}&assessment_date=${date}`);
+      // Build query — for auto-date types there's no course_planner_id
+      const query = plannerId
+        ? `batch_no=${batchNo}&course_planner_id=${plannerId}&assessment_date=${date}`
+        : `batch_no=${batchNo}&assessment_date=${date}`;
+
+      const res = await fetch(`${API_BASE}/api/marks/${cfg.api}?${query}`);
       if (!res.ok) return;
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
+        // Only update outOff from saved value when not locked by batch rules
         const savedOutOf = data[0]?.out_off;
-        if (savedOutOf && (!isFixedOutOfBatch || isAdminOrManager)) setOutOff(String(savedOutOf));
+        if (savedOutOf !== undefined && savedOutOf !== null) {
+          if (!isFixedOutOfBatch || isAdminOrManager) {
+            setOutOff(String(savedOutOf));
+          }
+        }
+        const currentOutOf = fixedOutOf ?? (savedOutOf ? String(savedOutOf) : "");
         const marksMap = {};
         data.forEach(row => {
-          // Store raw points value as-is (supports decimals and absent codes like "AB")
+          const rawPoints = String(row.points ?? "");
           marksMap[row.learner_id] = {
-            points:     String(row.points ?? ""),
-            percentage: row.percentage !== null ? String(row.percentage) : "",
+            points:     rawPoints,
+            percentage: calculatePercentage(rawPoints, currentOutOf),
           };
         });
         setMarks(marksMap);
       }
-    } catch (e) { console.error("Failed to load existing marks", e); }
-    finally     { setLoadingMarks(false); }
+    } catch (e) {
+      console.error("Failed to load existing marks", e);
+    } finally {
+      setLoadingMarks(false);
+    }
   }, [batchNo, assessmentType, isFixedOutOfBatch, isAdminOrManager]);
+
+  /* ── Auto-date assessment: load marks when date becomes available ─────── */
+  useEffect(() => {
+    if (!isAutoDateAssessment || !batchNo || !selectedDate) return;
+    const fixed = getFixedOutOf("", assessmentType, batchNo);
+    const fixedOutOfStr = fixed !== null ? String(fixed) : "";
+    // Reset marks before loading
+    setMarks({});
+    loadExistingMarks(null, selectedDate, fixedOutOfStr);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAutoDateAssessment, batchNo, selectedDate]);
 
   /* ── Period selection ── */
   const handlePeriodSelect = (e) => {
     const val = e.target.value;
     setPeriodValue(val);
+
     const [plannerId, weekPart, datePart, ...topicParts] = val.split("::");
     const topic = topicParts.join("::");
+
     setSelectedCoursePlannerId(plannerId || "");
     setSelectedWeekNo(weekPart || "");
     setSelectedDate(datePart || "");
     setTopicName(topic);
-    setMarks({}); setOutOff("");
+
+    // Determine fixed out-of first so we can pass it directly to loadExistingMarks
     const fixed = getFixedOutOf(topic, assessmentType, batchNo);
-    if (fixed !== null) setOutOff(String(fixed));
-    if (plannerId && datePart) loadExistingMarks(plannerId, datePart);
+    const fixedOutOfStr = fixed !== null ? String(fixed) : "";
+
+    // Reset marks and outOf BEFORE triggering the load — avoids any race condition
+    setMarks({});
+    if (fixed !== null) {
+      setOutOff(fixedOutOfStr);
+    } else {
+      setOutOff("");
+    }
+
+    // Now load saved marks for this period
+    if (plannerId && datePart) {
+      loadExistingMarks(plannerId, datePart, fixedOutOfStr);
+    }
   };
 
-  /* ── Marks input handler - allows decimals and absent codes ── */
+  /* ── Marks input — supports decimals (10.5) and absent code (AB) ── */
   const handleMarksInput = (id, val) => {
-    // Allow: numbers, decimals (.), absent codes (AB), empty string
-    // Remove any other characters
-    const cleaned = val.replace(/[^0-9.AB]/g, "").toUpperCase();
+    // Allow digits, a single decimal point, and letters A/B for "AB"
+    const cleaned = val.replace(/[^0-9.ABab]/g, "").toUpperCase();
     setMarks(prev => ({
       ...prev,
       [id]: {
-        points: cleaned,
+        points:     cleaned,
         percentage: calculatePercentage(cleaned, outOff),
       },
     }));
-  };
-
-  /* ── Helper function to calculate percentage ── */
-  const calculatePercentage = (points, outOf) => {
-    if (!points || !outOf || points === "AB") return "";
-    const pointsNum = parseFloat(points);
-    const outOfNum = parseFloat(outOf);
-    if (isNaN(pointsNum) || isNaN(outOfNum) || outOfNum === 0) return "";
-    return Math.round((pointsNum / outOfNum) * 100).toString();
   };
 
   /* ── Out Of change ── */
@@ -430,7 +489,10 @@ function MarkSheet() {
       const updated = { ...prev };
       Object.keys(updated).forEach(id => {
         if (updated[id]?.points) {
-          updated[id] = { ...updated[id], percentage: calculatePercentage(updated[id].points, val) };
+          updated[id] = {
+            ...updated[id],
+            percentage: calculatePercentage(updated[id].points, val),
+          };
         }
       });
       return updated;
@@ -444,7 +506,9 @@ function MarkSheet() {
     try {
       const cfg = ASSESSMENT_MAP[assessmentType];
       const res = await fetch(`${API_BASE}/api/marks/update-out-of`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({
           batch_no:          batchNo,
           assessment_type:   cfg.api,
@@ -453,38 +517,56 @@ function MarkSheet() {
           out_off:           Number(outOff),
         }),
       });
-      setMessage(res.status === 403
-        ? "❌ Permission denied — only Admin or Manager can update Out Of."
-        : res.ok
-          ? "✅ Out Of updated successfully."
-          : `❌ Failed to update Out Of: ${(await res.json().catch(() => ({}))).error || "Unknown error"}`);
-    } catch { setMessage("❌ Network error while updating Out Of."); }
-    finally   { setSavingOutOf(false); setTimeout(() => setMessage(""), 4000); }
+      setMessage(
+        res.status === 403
+          ? "❌ Permission denied — only Admin or Manager can update Out Of."
+          : res.ok
+            ? "✅ Out Of updated successfully."
+            : `❌ Failed to update Out Of: ${(await res.json().catch(() => ({}))).error || "Unknown error"}`
+      );
+    } catch {
+      setMessage("❌ Network error while updating Out Of.");
+    } finally {
+      setSavingOutOf(false);
+      setTimeout(() => setMessage(""), 4000);
+    }
   };
 
   /* ── Save Marks ── */
   const handleSave = async () => {
-    if (!batchNo || !selectedDate || !outOff) { setMessage("❌ Please complete all required fields."); return; }
+    if (!batchNo || !selectedDate || !outOff) {
+      setMessage("❌ Please complete all required fields.");
+      return;
+    }
     if (!isAutoDateAssessment && !selectedCoursePlannerId) {
-      setMessage("❌ Please select an assessment date from the dropdown."); return;
+      setMessage("❌ Please select an assessment date from the dropdown.");
+      return;
     }
     if (isDvftAutoDateType && !selectedDate) {
-      setMessage("❌ Please enter the assessment date."); return;
+      setMessage("❌ Please enter the assessment date.");
+      return;
     }
     const cfg = ASSESSMENT_MAP[assessmentType];
-    const learnersWithMarks = learners.filter(l => marks[l.id]?.points && marks[l.id].points.trim() !== "");
-    if (learnersWithMarks.length === 0) { setMessage("❌ No marks entered."); return; }
-    setSaving(true); setMessage("");
+    const learnersWithMarks = learners.filter(
+      l => marks[l.id]?.points && String(marks[l.id].points).trim() !== ""
+    );
+    if (learnersWithMarks.length === 0) {
+      setMessage("❌ No marks entered.");
+      return;
+    }
+    setSaving(true);
+    setMessage("");
     let savedCount = 0, failCount = 0;
     try {
       for (const l of learnersWithMarks) {
+        const rawPoints = String(marks[l.id].points).trim();
         const payload = {
           learner_id:        l.id,
           batch_no:          batchNo,
           assessment_date:   selectedDate,
           assessment_name:   topicName || cfg.label,
           out_off:           Number(outOff),
-          points:            marks[l.id].points.trim(), // Send raw points as-is (supports "AB", decimals)
+          points:            rawPoints,          // supports decimals + "AB"
           percentage:        marks[l.id].percentage || null,
           course_planner_id: selectedCoursePlannerId ? Number(selectedCoursePlannerId) : undefined,
         };
@@ -494,22 +576,36 @@ function MarkSheet() {
         }
         try {
           const response = await fetch(`${API_BASE}/api/marks/${cfg.api}`, {
-            method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
             body: JSON.stringify(payload),
           });
           if (!response.ok) failCount++; else savedCount++;
-        } catch { failCount++; }
+        } catch {
+          failCount++;
+        }
       }
-      setMessage(failCount === 0
-        ? `✅ Marks saved successfully for ${savedCount} learner(s).`
-        : `⚠️ Saved ${savedCount} record(s). ${failCount} failed — check console.`);
-    } finally { setSaving(false); setTimeout(() => setMessage(""), 5000); }
+      setMessage(
+        failCount === 0
+          ? `✅ Marks saved successfully for ${savedCount} learner(s).`
+          : `⚠️ Saved ${savedCount} record(s). ${failCount} failed — check console.`
+      );
+    } finally {
+      setSaving(false);
+      setTimeout(() => setMessage(""), 5000);
+    }
   };
 
   /* ── Reset ── */
   const resetSelections = () => {
-    setPeriodValue(""); setSelectedDate(""); setSelectedCoursePlannerId("");
-    setSelectedWeekNo(""); setTopicName(""); setMarks({}); setOutOff("");
+    setPeriodValue("");
+    setSelectedDate("");
+    setSelectedCoursePlannerId("");
+    setSelectedWeekNo("");
+    setTopicName("");
+    setMarks({});
+    setOutOff("");
   };
 
   /* ── Loading state ── */
@@ -549,7 +645,6 @@ function MarkSheet() {
             right={
               selectedDate && (
                 <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
-                  {/* Always-open window badge */}
                   <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2, py: 0.8, borderRadius: "10px", background: TOKENS.success.light, border: `1px solid ${TOKENS.success.fill}44` }}>
                     <LockOpenIcon sx={{ fontSize: 14, color: TOKENS.success.fill }} />
                     <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700, color: TOKENS.success.text }}>
@@ -564,6 +659,7 @@ function MarkSheet() {
           />
           <Box sx={{ p: 3 }}>
             <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap", alignItems: "flex-end" }}>
+
               {/* Assessment Type */}
               <FormControl size="small" sx={{ minWidth: 220 }}>
                 <InputLabel sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Assessment Type</InputLabel>
@@ -618,7 +714,11 @@ function MarkSheet() {
               {isAutoDateAssessment && (
                 isDvft ? (
                   <TextField label="Assessment Date" type="date" size="small" value={selectedDate}
-                    onChange={e => setSelectedDate(e.target.value)} InputLabelProps={{ shrink: true }}
+                    onChange={e => {
+                      setMarks({});
+                      setSelectedDate(e.target.value);
+                    }}
+                    InputLabelProps={{ shrink: true }}
                     sx={{ width: 180, "& .MuiInputBase-root": { ...inputSx, fontFamily: "'DM Sans', sans-serif", fontSize: 13 }, "& .MuiInputLabel-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 13 } }} />
                 ) : (
                   <TextField label="Assessment Date" value={todayDate} disabled size="small"
@@ -637,14 +737,28 @@ function MarkSheet() {
                 }>
                   <span>
                     <TextField
-                      label="Out Of" value={outOff} disabled={outOfLocked} size="small"
+                      label="Out Of"
+                      value={outOff}
+                      disabled={outOfLocked}
+                      size="small"
                       onChange={e => handleOutOfChange(e.target.value)}
                       inputProps={{ inputMode: "decimal" }}
-                      helperText={isFixedOutOfBatch && outOff && isAutoOutOfType ? (isAdminOrManager ? "Override" : "Fixed") : ""}
+                      helperText={
+                        isFixedOutOfBatch && outOff && isAutoOutOfType
+                          ? (isAdminOrManager ? "Override" : "Fixed")
+                          : ""
+                      }
                       sx={{
                         width: 110,
-                        "& .MuiInputBase-root": { ...inputSx, fontFamily: "'DM Sans', sans-serif", fontSize: 13, background: isAdminOrManager && isFixedOutOfBatch && isAutoOutOfType ? "#fef3c7" : "transparent" },
-                        "& .MuiInputLabel-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 13 },
+                        "& .MuiInputBase-root": {
+                          ...inputSx,
+                          fontFamily: "'DM Sans', sans-serif",
+                          fontSize: 13,
+                          background: isAdminOrManager && isFixedOutOfBatch && isAutoOutOfType
+                            ? "#fef3c7"
+                            : "transparent",
+                        },
+                        "& .MuiInputLabel-root":   { fontFamily: "'DM Sans', sans-serif", fontSize: 13 },
                         "& .MuiFormHelperText-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 10 },
                       }}
                     />
@@ -715,11 +829,13 @@ function MarkSheet() {
                         <TableCell sx={{ ...tableHeadSx, width: 40 }}>#</TableCell>
                         <TableCell sx={tableHeadSx}>Name</TableCell>
                         <TableCell sx={tableHeadSx}>Email</TableCell>
-                        <TableCell sx={{ ...tableHeadSx, width: 130 }}>
-                          Marks{outOff ? ` / ${outOff}` : ""} 
-                          <Tooltip title="Enter numbers, decimals (10.5) or AB for absent">
-                            <InfoOutlinedIcon sx={{ fontSize: 14, ml: 0.5, color: TOKENS.textSub }} />
-                          </Tooltip>
+                        <TableCell sx={{ ...tableHeadSx, width: 150 }}>
+                          <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+                            Marks{outOff ? ` / ${outOff}` : ""}
+                            <Tooltip title="Enter numbers (10 or 10.5) or AB for absent" placement="top">
+                              <InfoOutlinedIcon sx={{ fontSize: 13, color: TOKENS.textSub, cursor: "help" }} />
+                            </Tooltip>
+                          </Box>
                         </TableCell>
                         <TableCell sx={{ ...tableHeadSx, width: 80 }}>%</TableCell>
                       </TableRow>
@@ -727,52 +843,61 @@ function MarkSheet() {
                     <TableBody>
                       {learners.map((l, idx) => {
                         const markData = marks[l.id];
-                        const hasMarks = markData?.points && markData.points.trim() !== "";
-                        const points = markData?.points || "";
-                        const pct    = markData?.percentage;
-                        const pctNum = pct ? parseFloat(pct) : 0;
-                        const pctColor =
-                          !hasMarks || pct === "" ? TOKENS.textSub :
-                          points === "AB" ? TOKENS.warning.fill :
-                          pctNum >= 75 ? TOKENS.success.fill :
-                          pctNum >= 50 ? TOKENS.warning.fill :
-                          TOKENS.error.fill;
-                        
+                        const rawPoints = markData?.points ?? "";
+                        const hasMarks  = String(rawPoints).trim() !== "";
+                        const isAbsent  = String(rawPoints).toUpperCase() === "AB";
+                        const pct       = markData?.percentage ?? "";
+                        const pctNum    = pct !== "" ? parseFloat(pct) : NaN;
+                        const pctColor  =
+                          !hasMarks      ? TOKENS.textSub :
+                          isAbsent       ? TOKENS.warning.fill :
+                          isNaN(pctNum)  ? TOKENS.textSub :
+                          pctNum >= 75   ? TOKENS.success.fill :
+                          pctNum >= 50   ? TOKENS.warning.fill :
+                                           TOKENS.error.fill;
+
                         return (
                           <TableRow key={l.id}
-                            sx={{ "&:nth-of-type(even)": { background: TOKENS.surfaceAlt }, "&:hover": { background: TOKENS.accentLight + "66", transition: "background 0.15s" } }}>
+                            sx={{
+                              "&:nth-of-type(even)": { background: TOKENS.surfaceAlt },
+                              "&:hover": { background: TOKENS.accentLight + "66", transition: "background 0.15s" },
+                            }}>
                             <TableCell sx={{ ...tableCellSx, color: TOKENS.textSub, fontFamily: "'DM Mono', monospace", fontSize: 11 }}>{idx + 1}</TableCell>
                             <TableCell sx={{ ...tableCellSx, fontWeight: 600 }}>{l.name}</TableCell>
                             <TableCell sx={{ ...tableCellSx, color: TOKENS.textSub, fontSize: 12 }}>{l.email}</TableCell>
                             <TableCell sx={{ ...tableCellSx, py: 0.5 }}>
-                              <TextField size="small"
-                                value={points}
+                              <TextField
+                                size="small"
+                                value={rawPoints}
                                 onChange={e => handleMarksInput(l.id, e.target.value)}
-                                placeholder="10.5 or AB"
-                                sx={{ width: 90, "& .MuiInputBase-root": { 
-                                  fontFamily: "'DM Mono', monospace", 
-                                  fontSize: 13, 
-                                  fontWeight: 700, 
-                                  borderRadius: "8px", 
-                                  background: hasMarks ? TOKENS.accentLight : "transparent", 
-                                  "& .MuiOutlinedInput-notchedOutline": { 
-                                    borderColor: hasMarks ? TOKENS.accent + "44" : TOKENS.border 
-                                  } 
-                                } }}
+                                placeholder="10.5 / AB"
+                                sx={{
+                                  width: 100,
+                                  "& .MuiInputBase-root": {
+                                    fontFamily: "'DM Mono', monospace",
+                                    fontSize:   13,
+                                    fontWeight: 700,
+                                    borderRadius: "8px",
+                                    background: hasMarks ? TOKENS.accentLight : "transparent",
+                                    "& .MuiOutlinedInput-notchedOutline": {
+                                      borderColor: hasMarks ? TOKENS.accent + "44" : TOKENS.border,
+                                    },
+                                  },
+                                }}
                               />
                             </TableCell>
                             <TableCell sx={{ ...tableCellSx }}>
                               {hasMarks ? (
-                                points === "AB" ? (
+                                isAbsent ? (
                                   <Box sx={{ display: "inline-flex", alignItems: "center", gap: 0.5, px: 1.2, py: 0.3, borderRadius: "20px", background: `${TOKENS.warning.fill}18`, border: `1px solid ${TOKENS.warning.fill}44` }}>
                                     <Typography sx={{ fontFamily: "'DM Mono', monospace", fontSize: 12, fontWeight: 800, color: TOKENS.warning.fill }}>AB</Typography>
                                   </Box>
-                                ) : pct !== undefined && pct !== "" ? (
+                                ) : pct !== "" ? (
                                   <Box sx={{ display: "inline-flex", alignItems: "center", gap: 0.5, px: 1.2, py: 0.3, borderRadius: "20px", background: `${pctColor}18`, border: `1px solid ${pctColor}44` }}>
                                     <Typography sx={{ fontFamily: "'DM Mono', monospace", fontSize: 12, fontWeight: 800, color: pctColor }}>{pct}%</Typography>
                                   </Box>
                                 ) : (
-                                  <Typography sx={{ fontFamily: "'DM Mono', monospace", fontSize: 12, color: TOKENS.textSub }}>--</Typography>
+                                  <Typography sx={{ fontFamily: "'DM Mono', monospace", fontSize: 12, color: TOKENS.textSub }}>—</Typography>
                                 )
                               ) : (
                                 <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TOKENS.textSub }}>—</Typography>
