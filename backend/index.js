@@ -85,23 +85,26 @@ const ALLOWED_ORIGINS = [
 ];
 
 app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Credentials", "true");
+  const origin = req.headers.origin;
+  if (ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  }
+
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Vary", "Origin");
+
+  if (req.method === "OPTIONS") return res.sendStatus(200);
   next();
 });
 
 app.use(cors({
   origin: [
-    "https://engg-automation-r1ke.onrender.com", // frontend URL
-  ],
-  credentials: true, // ⭐ VERY IMPORTANT
-}));
-
-// Also handle preflight
-app.options("*", cors({
-  origin: [
     "https://engg-automation-r1ke.onrender.com",
+    "http://localhost:3000"
   ],
-  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE"],
+  allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
 // =====================================================
@@ -492,8 +495,32 @@ function computeOccupancyEnd(startDateStr) {
 }
 
 function isWindowOpen(assessmentType, assessmentDate) {
-  return true; // Window always open — controlled by extension request system
+  const date = new Date(assessmentDate);
+  const now = new Date();
+
+  let close = new Date(date);
+
+  if (assessmentType === "weekly-assessment") {
+    // Friday → Monday
+    close.setDate(close.getDate() + 3);
+  } 
+  else if (
+    assessmentType === "intermediate-assessment" ||
+    assessmentType === "module-level-assessment"
+  ) {
+    // Friday → Wednesday
+    close.setDate(close.getDate() + 5);
+  } 
+  else if (assessmentType === "final-assessment") {
+    // 7 days
+    close.setDate(close.getDate() + 7);
+  }
+
+  close.setHours(23, 59, 59, 999);
+
+  return now <= close;
 }
+
 
 // Tools: you need a 'tools' column in classroom_occupancy or separate table if you want to restrict by required tools.
 async function hasRequiredTools(classroomName, requiredTools) {
@@ -597,36 +624,6 @@ async function findAvailableClassroom(supabase, students, start_date, end_date, 
   return null; // no classroom available
 }
 
-// ── Helper: resolve the current user's role from the DB ──────────────────────
-// Assumes your auth middleware attaches req.user = { id, email } after verifying
-// the session / JWT.  Adjust the lookup key (id vs email) to match your setup.
-async function getUserRole(req) {
-  const userId = req.user?.id;
-  const email  = req.user?.email;
-  if (!userId && !email) return null;
-  const { data, error } = await supabase
-    .from("internal_users")
-    .select("role, is_active")
-    .eq(userId ? "id" : "email", userId || email)
-    .single();
-  if (error || !data || !data.is_active) return null;
-  return data.role;
-}
-
-// ── Middleware: require Admin or Manager ──────────────────────────────────────
-async function requireAdminOrManager(req, res, next) {
-  try {
-    const role = await getUserRole(req);
-    if (role === "Admin" || role === "Manager") return next();
-    return res.status(403).json({ error: "Permission denied — Admin or Manager role required." });
-  } catch (err) {
-    console.error("Role check error:", err);
-    return res.status(500).json({ error: "Failed to verify permissions." });
-  }
-}
-
-
-
 // Check license availability for domain and students count
 async function checkLicenseAvailability(supabase, domain, students) {
   let { data: licenses, error } = await supabase.from('licenses').select('count').eq('domain', domain);
@@ -699,22 +696,6 @@ app.get('/api/session-attendance-report', async (req, res) => {
     res.json([]); // Always return array
   }
 });
-
-// ── GET /api/me — return the current user's role to the frontend ──────────────
-// The frontend's useCurrentUserRole hook calls this on mount to get a
-// server-verified role instead of trusting localStorage alone.
-app.get("/api/me", async (req, res) => {
-  try {
-    const role = await getUserRole(req);
-    if (!role) return res.status(401).json({ error: "Unauthenticated or inactive user." });
-    res.json({ role });
-  } catch (err) {
-    console.error("GET /api/me error:", err);
-    res.status(500).json({ error: "Failed to fetch user info." });
-  }
-});
-
-
 
 // Add this route to your Express app
 app.get('/api/modules-by-date', async (req, res) => {
@@ -1224,291 +1205,28 @@ app.post("/api/marks/extension-request", async (req, res) => {
   }
 });
 
-app.post("/api/marks/request-extension", async (req, res) => {
-  const {
-    batch_no, assessment_type, assessment_date,
-    course_planner_id, week_no, assessment_name,
-    trainer_email, reason,
-  } = req.body;
- 
-  if (!batch_no || !assessment_type || !assessment_date || !trainer_email) {
-    return res.status(400).json({
-      error: "batch_no, assessment_type, assessment_date, trainer_email are required",
-    });
-  }
- 
-  try {
-    // Check for an existing pending or approved request for this trainer+assessment
-    const existing = await pool.query(
-      `SELECT id, status
-       FROM marks_extension_requests
-       WHERE batch_no = $1
-         AND assessment_type = $2
-         AND assessment_date = $3
-         AND trainer_email   = $4
-       ORDER BY created_at DESC
-       LIMIT 1`,
-      [batch_no, assessment_type, assessment_date, trainer_email]
-    );
- 
-    if (existing.rows.length > 0) {
-      const { status } = existing.rows[0];
-      if (status === "pending") {
-        return res.status(409).json({ error: "A pending extension request already exists for this assessment." });
-      }
-      if (status === "approved") {
-        return res.status(409).json({ error: "An extension is already approved for this assessment." });
-      }
-      // status === "rejected" → fall through and create a new request
-    }
- 
-    const result = await pool.query(
-      `INSERT INTO marks_extension_requests
-         (batch_no, assessment_type, assessment_name, assessment_date,
-          course_planner_id, week_no, trainer_email, reason, status, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', now())
-       RETURNING id`,
-      [
-        batch_no,
-        assessment_type,
-        assessment_name || null,
-        assessment_date,
-        course_planner_id || null,
-        week_no           || null,
-        trainer_email,
-        reason            || null,
-      ]
-    );
- 
-    return res.status(201).json({ id: result.rows[0].id, status: "pending" });
-  } catch (err) {
-    console.error("POST /api/marks/request-extension error:", err);
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-
-// Called by MarkSheet.js whenever the selected assessment changes.
-// Returns the most recent extension request for the logged-in trainer + this
-// assessment window, including extended_until so the frontend can compare it
-// to the current time and decide if the extension window is still live.
-app.get("/api/marks/extension-status", async (req, res) => {
-  const { batch_no, assessment_type, assessment_date } = req.query;
- 
-  // trainer_email comes from the authenticated session
-  const trainerEmail = req.user?.email;
- 
-  if (!batch_no || !assessment_type || !assessment_date) {
-    return res.status(400).json({ error: "batch_no, assessment_type, assessment_date are required" });
-  }
- 
-  try {
-    const result = await pool.query(
-      `SELECT id, status, extended_until, rejection_reason, decided_at, decided_by
-       FROM marks_extension_requests
-       WHERE batch_no        = $1
-         AND assessment_type = $2
-         AND assessment_date = $3
-         AND trainer_email   = $4
-       ORDER BY created_at DESC
-       LIMIT 1`,
-      [batch_no, assessment_type, assessment_date, trainerEmail]
-    );
- 
-    if (result.rows.length === 0) {
-      return res.json({ status: null, extended_until: null });
-    }
- 
-    const row = result.rows[0];
-    return res.json({
-      id:               row.id,
-      status:           row.status,
-      extended_until:   row.extended_until,   // ISO string or null
-      rejection_reason: row.rejection_reason,
-      decided_at:       row.decided_at,
-      decided_by:       row.decided_by,
-    });
-  } catch (err) {
-    console.error("GET /api/marks/extension-status error:", err);
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-
-app.post("/api/marks/approve-extension", authenticate, requireAdminOrManager, async (req, res) => {
-  try {
-    const { request_id, status } = req.body;
-
-    if (!request_id || !status) {
-      return res.status(400).json({ error: "request_id and status are required" });
-    }
-
-    await pool.query(
-      `UPDATE marks_extension_requests
-       SET status = $1,
-           decided_at = NOW(),
-           decided_by = $2
-       WHERE id = $3`,
-      [status, req.user.email, request_id]
-    );
-
-    return res.json({ success: true });
-
-  } catch (err) {
-    console.error("Approve extension error:", err);
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-app.get("/api/marks/check-extension", authenticate, async (req, res) => {
-  const { batch_no, assessment_type, assessment_date } = req.query;
-
-  const result = await db.query(
-    `SELECT * FROM marks_extension_requests
-     WHERE batch_no=$1
-     AND assessment_type=$2
-     AND assessment_date=$3
-     AND status='approved'
-     ORDER BY decided_at DESC
-     LIMIT 1`,
-    [batch_no, assessment_type, assessment_date]
-  );
-
-  if (result.rows.length === 0) {
-    return res.json({ approved: false });
-  }
-
-  const decidedAt = new Date(result.rows[0].decided_at);
-
-  // 🔥 EXTENSION RULE: Next day 11:59 PM
-  const validTill = new Date(decidedAt);
-  validTill.setDate(validTill.getDate() + 1);
-  validTill.setHours(23, 59, 59, 999);
-
-  res.json({
-    approved: true,
-    valid_till: validTill,
-  });
-});
-
-
-
 // 4) GET /api/marks/extension-requests
 app.get("/api/marks/extension-requests", async (req, res) => {
-  const { batch_no, status } = req.query;
-  const callerEmail    = req.user?.email;
-  const callerRole     = await getUserRole(req).catch(() => null);
-  const isPrivileged   = callerRole === "Admin" || callerRole === "Manager";
- 
   try {
-    const conditions = [];
-    const values     = [];
-    let   idx        = 1;
- 
-    if (batch_no) { conditions.push(`batch_no = $${idx++}`); values.push(batch_no); }
-    if (status)   { conditions.push(`status = $${idx++}`);   values.push(status);   }
- 
-    // Non-privileged users only see their own requests
-    if (!isPrivileged && callerEmail) {
-      conditions.push(`trainer_email = $${idx++}`);
-      values.push(callerEmail);
+    const status = req.query.status || "pending";
+
+    const { data, error } = await supabase
+      .from("marks_entry_extension_requests")
+      .select("*")
+      .eq("status", status)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("list extension-requests error:", error);
+      return res.status(500).json({ error: "Failed to fetch requests" });
     }
- 
-    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
- 
-    const result = await pool.query(
-      `SELECT id, batch_no, assessment_type, assessment_name, assessment_date,
-              course_planner_id, week_no, trainer_email, reason,
-              status, rejection_reason, decided_by, decided_at,
-              extended_until, created_at
-       FROM marks_extension_requests
-       ${where}
-       ORDER BY
-         CASE status WHEN 'pending' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END,
-         created_at DESC`,
-      values
-    );
- 
-    return res.json(result.rows);
+
+    return res.json(data || []);
   } catch (err) {
-    console.error("GET /api/marks/extension-requests error:", err);
-    return res.status(500).json({ error: err.message });
+    console.error("list extension-requests error:", err);
+    return res.status(500).json({ error: "Internal server error" });
   }
 });
-
-
-app.post("/api/marks/decide-extension", requireAdminOrManager, async (req, res) => {
-  const { id, action, decided_by, rejection_reason } = req.body;
- 
-  if (!id || !["approve", "reject"].includes(action)) {
-    return res.status(400).json({ error: "id and action ('approve'|'reject') are required" });
-  }
- 
-  try {
-    // Verify the request is still pending
-    const check = await pool.query(
-      `SELECT id, status FROM marks_extension_requests WHERE id = $1`,
-      [id]
-    );
-    if (check.rows.length === 0) return res.status(404).json({ error: "Request not found" });
-    if (check.rows[0].status !== "pending") {
-      return res.status(409).json({ error: `Request is already ${check.rows[0].status}` });
-    }
- 
-    let extended_until = null;
- 
-    if (action === "approve") {
-      // ── Calculate "next calendar day at 23:59:59 IST" in UTC ────────────
-      // IST = UTC + 5h 30m
-      // 1. Get current time shifted to IST
-      const nowUtcMs  = Date.now();
-      const istOffMs  = 5.5 * 60 * 60 * 1000;          // +5:30 in ms
-      const nowIst    = new Date(nowUtcMs + istOffMs);  // pretend this is local IST
- 
-      // 2. Advance to tomorrow in IST
-      const tomorrowIst = new Date(nowIst);
-      tomorrowIst.setUTCDate(tomorrowIst.getUTCDate() + 1);
- 
-      // 3. Set to 23:59:59.999 IST, then convert back to UTC
-      //    23:59:59 IST = 23:59:59 - 5:30 = 18:29:59 UTC
-      const extUTC = new Date(Date.UTC(
-        tomorrowIst.getUTCFullYear(),
-        tomorrowIst.getUTCMonth(),
-        tomorrowIst.getUTCDate(),
-        18, 29, 59, 999    // 23:59:59.999 IST → 18:29:59.999 UTC
-      ));
- 
-      extended_until = extUTC.toISOString();
-    }
- 
-    await pool.query(
-      `UPDATE marks_extension_requests
-       SET status           = $1,
-           decided_by       = $2,
-           decided_at       = now(),
-           extended_until   = $3,
-           rejection_reason = $4
-       WHERE id = $5`,
-      [
-        action === "approve" ? "approved" : "rejected",
-        decided_by || null,
-        extended_until,
-        action === "reject" ? (rejection_reason || null) : null,
-        id,
-      ]
-    );
- 
-    return res.json({
-      id,
-      status:         action === "approve" ? "approved" : "rejected",
-      extended_until, // null for rejections
-    });
-  } catch (err) {
-    console.error("POST /api/marks/decide-extension error:", err);
-    return res.status(500).json({ error: err.message });
-  }
-});
-
 
 // 5) POST /api/marks/extension-requests/:id/approve
 app.post("/api/marks/extension-requests/:id/approve", async (req, res) => {
@@ -5675,7 +5393,6 @@ app.get('/apiperiods/:batchNo/:assessmentType', async (req, res) => {
   }
 });
 
-// ── POST /api/trainer-leaves  (CREATE) ──────────────────────────────────
 app.post("/api/trainer-leaves", async (req, res) => {
   const {
     trainer_email,
@@ -5686,156 +5403,68 @@ app.post("/api/trainer-leaves", async (req, res) => {
     reason,
     batch_nos,
   } = req.body;
- 
+
   if (!trainer_email || !start_date || !end_date) {
     return res.status(400).json({ error: "Missing required fields" });
   }
- 
+
   try {
-    // 1️⃣ Fetch DISTINCT module names from course_planner_data via Supabase
-    let moduleNameStr = "";
-    try {
-      const { data: moduleRows, error: moduleErr } = await supabase
-        .from("course_planner_data")
-        .select("module_name")
-        .eq("trainer_email", trainer_email)
-        .gte("date", start_date)
-        .lte("date", end_date)
-        .not("module_name", "is", null);
- 
-      if (!moduleErr && moduleRows && moduleRows.length > 0) {
-        const uniqueModules = [...new Set(moduleRows.map((r) => r.module_name).filter(Boolean))];
-        moduleNameStr = uniqueModules.join(", ");
-      }
-    } catch (modErr) {
-      // Non-fatal: continue without module_name
-      console.warn("Could not fetch module names (non-fatal):", modErr.message);
-    }
- 
-    // 2️⃣ Insert leave record via Supabase (same client used everywhere else)
-    const { data, error } = await supabase
-      .from("trainer_unavailability")
-      .insert({
+    // 1️⃣ Fetch DISTINCT module names from course_planner_data
+    const moduleResult = await pool.query(
+      `
+      SELECT DISTINCT module_name
+      FROM course_planner_data
+      WHERE trainer_email = $1
+        AND date BETWEEN $2 AND $3
+        AND module_name IS NOT NULL
+      `,
+      [trainer_email, start_date, end_date]
+    );
+
+    // 2️⃣ Convert to comma-separated string
+    const moduleNames = moduleResult.rows
+      .map((r) => r.module_name)
+      .filter(Boolean);
+
+    const moduleNameStr = moduleNames.join(", ");
+
+    // 3️⃣ Insert leave record
+    await pool.query(
+      `
+      INSERT INTO trainer_unavailability
+      (
         trainer_email,
-        trainer_name:  trainer_name  || null,
-        domain:        domain        || null,
+        trainer_name,
+        domain,
         start_date,
         end_date,
-        reason:        reason        || null,
-        batch_nos:     batch_nos     || null,
-        module_name:   moduleNameStr || null,
-        status:        "pending",
-      })
-      .select("id, module_name")
-      .single();
- 
-    if (error) {
-      console.error("Error inserting trainer leave:", error);
-      return res.status(500).json({ error: error.message || "Failed to apply leave" });
-    }
- 
+        reason,
+        batch_nos,
+        module_name
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+      `,
+      [
+        trainer_email,
+        trainer_name,
+        domain,
+        start_date,
+        end_date,
+        reason,
+        batch_nos,
+        moduleNameStr,
+      ]
+    );
+
     res.json({
       success: true,
-      id:          data.id,
-      module_name: data.module_name,
+      module_name: moduleNameStr,
     });
   } catch (err) {
     console.error("Error applying leave:", err);
     res.status(500).json({ error: "Failed to apply leave" });
   }
 });
-
-// ── PUT /api/trainer-leaves/:id  (EDIT dates / reason) ──────────────────
-app.put("/api/trainer-leaves/:id", async (req, res) => {
-  const { id } = req.params;
-  const { start_date, end_date, reason } = req.body;
- 
-  if (!id) return res.status(400).json({ error: "Missing id" });
-  if (!start_date || !end_date) return res.status(400).json({ error: "start_date and end_date are required" });
-  if (new Date(start_date) > new Date(end_date))
-    return res.status(400).json({ error: "end_date must be after start_date" });
- 
-  try {
-    // Only allow editing pending records
-    const { data: existing, error: fetchErr } = await supabase
-      .from("trainer_unavailability")
-      .select("id, status")
-      .eq("id", Number(id))
-      .maybeSingle();
- 
-    if (fetchErr || !existing) {
-      return res.status(404).json({ error: "Leave record not found" });
-    }
- 
-    if (["assigned", "approved"].includes((existing.status || "").toLowerCase())) {
-      return res.status(403).json({ error: "Cannot edit a leave that has already been processed" });
-    }
- 
-    const { data, error } = await supabase
-      .from("trainer_unavailability")
-      .update({
-        start_date,
-        end_date,
-        reason:     reason || null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", Number(id))
-      .select("id, start_date, end_date, reason, status")
-      .single();
- 
-    if (error) {
-      console.error("Error updating trainer leave:", error);
-      return res.status(500).json({ error: error.message || "Failed to update leave" });
-    }
- 
-    res.json({ success: true, data });
-  } catch (err) {
-    console.error("PUT /api/trainer-leaves/:id error:", err);
-    res.status(500).json({ error: "Failed to update leave" });
-  }
-});
-
-
-// ── DELETE /api/trainer-leaves/:id  (CANCEL / DELETE) ───────────────────
-app.delete("/api/trainer-leaves/:id", async (req, res) => {
-  const { id } = req.params;
- 
-  if (!id) return res.status(400).json({ error: "Missing id" });
- 
-  try {
-    // Prevent deletion of already-processed records
-    const { data: existing, error: fetchErr } = await supabase
-      .from("trainer_unavailability")
-      .select("id, status")
-      .eq("id", Number(id))
-      .maybeSingle();
- 
-    if (fetchErr || !existing) {
-      return res.status(404).json({ error: "Leave record not found" });
-    }
- 
-    if (["assigned", "approved"].includes((existing.status || "").toLowerCase())) {
-      return res.status(403).json({ error: "Cannot delete a leave that has already been processed" });
-    }
- 
-    const { error } = await supabase
-      .from("trainer_unavailability")
-      .delete()
-      .eq("id", Number(id));
- 
-    if (error) {
-      console.error("Error deleting trainer leave:", error);
-      return res.status(500).json({ error: error.message || "Failed to delete leave" });
-    }
- 
-    res.json({ success: true });
-  } catch (err) {
-    console.error("DELETE /api/trainer-leaves/:id error:", err);
-    res.status(500).json({ error: "Failed to delete leave" });
-  }
-});
-
-
 
 //get the topics from course planner table
 app.get("/api/topic", async (req, res) => {
@@ -6257,7 +5886,7 @@ app.post("/api/marks/viva", async (req, res) => {
 app.get("/api/marks/:type", async (req, res) => {
   const { batch_no, assessment_date, course_planner_id } = req.query;
 
-  const result = await db.query(
+  const result = await pool.query(
     `SELECT learner_id, points, out_off
      FROM final_assessment_scores
      WHERE batch_no=$1
@@ -6288,7 +5917,7 @@ app.post("/api/outoff/save", async (req, res) => {
 // Fetch all marks for a learner and batch (optional API for dashboard display)
 app.get('/api/marks/:category', async (req, res) => {
   try {
-    const { category } = req.params;
+    const { category } = req.params; // one of: weekly-assessment-scores, intermediate-assessment-scores, module-level-assessment-scores, weekly-quiz-scores
     const { learner_id, batchno } = req.query;
     const { data, error } = await supabase
       .from(category)
@@ -6303,27 +5932,39 @@ app.get('/api/marks/:category', async (req, res) => {
 });
 
 //update the out of marks in the marks sheet page
-app.post("/api/marks/update-out-of", requireAdminOrManager, async (req, res) => {
+app.post("/api/marks/update-out-of", async (req, res) => {
   const { batch_no, assessment_type, course_planner_id, assessment_date, out_off } = req.body;
- 
-  if (!batch_no || !assessment_type || !assessment_date || out_off == null) {
-    return res.status(400).json({
-      error: "batch_no, assessment_type, assessment_date, out_off are required",
-    });
-  }
- 
+
+  if (!batch_no || !assessment_type || !assessment_date || out_off == null)
+    return res.status(400).json({ error: "batch_no, assessment_type, assessment_date, out_off are required" });
+
   const table = ASSESSMENT_TABLE_MAP[assessment_type];
   if (!table) return res.status(400).json({ error: "Invalid assessment type" });
- 
+
   try {
-    let query, values;
+    let query;
+    let values;
+
     if (course_planner_id) {
-      query  = `UPDATE ${table} SET out_off = $1 WHERE batch_no = $2 AND course_planner_id = $3 AND assessment_date = $4`;
+      query = `
+        UPDATE ${table}
+        SET out_off = $1
+        WHERE batch_no = $2
+          AND course_planner_id = $3
+          AND assessment_date = $4
+      `;
       values = [Number(out_off), batch_no, Number(course_planner_id), assessment_date];
     } else {
-      query  = `UPDATE ${table} SET out_off = $1 WHERE batch_no = $2 AND assessment_date = $3`;
+      // Auto-date assessments
+      query = `
+        UPDATE ${table}
+        SET out_off = $1
+        WHERE batch_no = $2
+          AND assessment_date = $3
+      `;
       values = [Number(out_off), batch_no, assessment_date];
     }
+
     const result = await pool.query(query, values);
     return res.json({ updated: result.rowCount });
   } catch (err) {

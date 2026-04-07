@@ -295,7 +295,7 @@ function MarkSheet() {
     ? false
     : isAutoOutOfType && isFixedOutOfBatch;
 
-  const marksEnteredCount = learners.filter(l => marks[l.id]?.points).length;
+  const marksEnteredCount = learners.filter(l => marks[l.id]?.points && marks[l.id].points.trim() !== "").length;
 
   /* ── Load batches ── */
   useEffect(() => {
@@ -371,6 +371,7 @@ function MarkSheet() {
         if (savedOutOf && (!isFixedOutOfBatch || isAdminOrManager)) setOutOff(String(savedOutOf));
         const marksMap = {};
         data.forEach(row => {
+          // Store raw points value as-is (supports decimals and absent codes like "AB")
           marksMap[row.learner_id] = {
             points:     String(row.points ?? ""),
             percentage: row.percentage !== null ? String(row.percentage) : "",
@@ -398,29 +399,38 @@ function MarkSheet() {
     if (plannerId && datePart) loadExistingMarks(plannerId, datePart);
   };
 
-  /* ── Marks input ── */
+  /* ── Marks input handler - allows decimals and absent codes ── */
   const handleMarksInput = (id, val) => {
-    const points = val.replace(/\D/g, "");
+    // Allow: numbers, decimals (.), absent codes (AB), empty string
+    // Remove any other characters
+    const cleaned = val.replace(/[^0-9.AB]/g, "").toUpperCase();
     setMarks(prev => ({
       ...prev,
       [id]: {
-        points,
-        percentage: outOff && Number(outOff) > 0
-          ? Math.round((Number(points) / Number(outOff)) * 100)
-          : "",
+        points: cleaned,
+        percentage: calculatePercentage(cleaned, outOff),
       },
     }));
   };
 
+  /* ── Helper function to calculate percentage ── */
+  const calculatePercentage = (points, outOf) => {
+    if (!points || !outOf || points === "AB") return "";
+    const pointsNum = parseFloat(points);
+    const outOfNum = parseFloat(outOf);
+    if (isNaN(pointsNum) || isNaN(outOfNum) || outOfNum === 0) return "";
+    return Math.round((pointsNum / outOfNum) * 100).toString();
+  };
+
   /* ── Out Of change ── */
   const handleOutOfChange = (v) => {
-    const val = v.replace(/\D/g, "");
+    const val = v.replace(/[^0-9.]/g, "");
     setOutOff(val);
     setMarks(prev => {
       const updated = { ...prev };
       Object.keys(updated).forEach(id => {
         if (updated[id]?.points) {
-          updated[id] = { ...updated[id], percentage: Number(val) > 0 ? Math.round((Number(updated[id].points) / Number(val)) * 100) : "" };
+          updated[id] = { ...updated[id], percentage: calculatePercentage(updated[id].points, val) };
         }
       });
       return updated;
@@ -462,7 +472,7 @@ function MarkSheet() {
       setMessage("❌ Please enter the assessment date."); return;
     }
     const cfg = ASSESSMENT_MAP[assessmentType];
-    const learnersWithMarks = learners.filter(l => marks[l.id]?.points);
+    const learnersWithMarks = learners.filter(l => marks[l.id]?.points && marks[l.id].points.trim() !== "");
     if (learnersWithMarks.length === 0) { setMessage("❌ No marks entered."); return; }
     setSaving(true); setMessage("");
     let savedCount = 0, failCount = 0;
@@ -474,7 +484,7 @@ function MarkSheet() {
           assessment_date:   selectedDate,
           assessment_name:   topicName || cfg.label,
           out_off:           Number(outOff),
-          points:            Number(marks[l.id].points),
+          points:            marks[l.id].points.trim(), // Send raw points as-is (supports "AB", decimals)
           percentage:        marks[l.id].percentage || null,
           course_planner_id: selectedCoursePlannerId ? Number(selectedCoursePlannerId) : undefined,
         };
@@ -629,7 +639,7 @@ function MarkSheet() {
                     <TextField
                       label="Out Of" value={outOff} disabled={outOfLocked} size="small"
                       onChange={e => handleOutOfChange(e.target.value)}
-                      inputProps={{ inputMode: "numeric" }}
+                      inputProps={{ inputMode: "decimal" }}
                       helperText={isFixedOutOfBatch && outOff && isAutoOutOfType ? (isAdminOrManager ? "Override" : "Fixed") : ""}
                       sx={{
                         width: 110,
@@ -705,20 +715,29 @@ function MarkSheet() {
                         <TableCell sx={{ ...tableHeadSx, width: 40 }}>#</TableCell>
                         <TableCell sx={tableHeadSx}>Name</TableCell>
                         <TableCell sx={tableHeadSx}>Email</TableCell>
-                        <TableCell sx={{ ...tableHeadSx, width: 130 }}>Marks{outOff ? ` / ${outOff}` : ""}</TableCell>
+                        <TableCell sx={{ ...tableHeadSx, width: 130 }}>
+                          Marks{outOff ? ` / ${outOff}` : ""} 
+                          <Tooltip title="Enter numbers, decimals (10.5) or AB for absent">
+                            <InfoOutlinedIcon sx={{ fontSize: 14, ml: 0.5, color: TOKENS.textSub }} />
+                          </Tooltip>
+                        </TableCell>
                         <TableCell sx={{ ...tableHeadSx, width: 80 }}>%</TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
                       {learners.map((l, idx) => {
-                        const hasMarks = !!marks[l.id]?.points;
-                        const pct      = marks[l.id]?.percentage;
-                        const pctNum   = Number(pct);
+                        const markData = marks[l.id];
+                        const hasMarks = markData?.points && markData.points.trim() !== "";
+                        const points = markData?.points || "";
+                        const pct    = markData?.percentage;
+                        const pctNum = pct ? parseFloat(pct) : 0;
                         const pctColor =
-                          pct === "" || pct === undefined ? TOKENS.textSub :
+                          !hasMarks || pct === "" ? TOKENS.textSub :
+                          points === "AB" ? TOKENS.warning.fill :
                           pctNum >= 75 ? TOKENS.success.fill :
                           pctNum >= 50 ? TOKENS.warning.fill :
                           TOKENS.error.fill;
+                        
                         return (
                           <TableRow key={l.id}
                             sx={{ "&:nth-of-type(even)": { background: TOKENS.surfaceAlt }, "&:hover": { background: TOKENS.accentLight + "66", transition: "background 0.15s" } }}>
@@ -727,17 +746,34 @@ function MarkSheet() {
                             <TableCell sx={{ ...tableCellSx, color: TOKENS.textSub, fontSize: 12 }}>{l.email}</TableCell>
                             <TableCell sx={{ ...tableCellSx, py: 0.5 }}>
                               <TextField size="small"
-                                value={marks[l.id]?.points || ""}
+                                value={points}
                                 onChange={e => handleMarksInput(l.id, e.target.value)}
-                                inputProps={{ inputMode: "numeric" }}
-                                sx={{ width: 90, "& .MuiInputBase-root": { fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 700, borderRadius: "8px", background: hasMarks ? TOKENS.accentLight : "transparent", "& .MuiOutlinedInput-notchedOutline": { borderColor: hasMarks ? TOKENS.accent + "44" : TOKENS.border } } }}
+                                placeholder="10.5 or AB"
+                                sx={{ width: 90, "& .MuiInputBase-root": { 
+                                  fontFamily: "'DM Mono', monospace", 
+                                  fontSize: 13, 
+                                  fontWeight: 700, 
+                                  borderRadius: "8px", 
+                                  background: hasMarks ? TOKENS.accentLight : "transparent", 
+                                  "& .MuiOutlinedInput-notchedOutline": { 
+                                    borderColor: hasMarks ? TOKENS.accent + "44" : TOKENS.border 
+                                  } 
+                                } }}
                               />
                             </TableCell>
                             <TableCell sx={{ ...tableCellSx }}>
-                              {pct !== undefined && pct !== "" ? (
-                                <Box sx={{ display: "inline-flex", alignItems: "center", gap: 0.5, px: 1.2, py: 0.3, borderRadius: "20px", background: `${pctColor}18`, border: `1px solid ${pctColor}44` }}>
-                                  <Typography sx={{ fontFamily: "'DM Mono', monospace", fontSize: 12, fontWeight: 800, color: pctColor }}>{pct}%</Typography>
-                                </Box>
+                              {hasMarks ? (
+                                points === "AB" ? (
+                                  <Box sx={{ display: "inline-flex", alignItems: "center", gap: 0.5, px: 1.2, py: 0.3, borderRadius: "20px", background: `${TOKENS.warning.fill}18`, border: `1px solid ${TOKENS.warning.fill}44` }}>
+                                    <Typography sx={{ fontFamily: "'DM Mono', monospace", fontSize: 12, fontWeight: 800, color: TOKENS.warning.fill }}>AB</Typography>
+                                  </Box>
+                                ) : pct !== undefined && pct !== "" ? (
+                                  <Box sx={{ display: "inline-flex", alignItems: "center", gap: 0.5, px: 1.2, py: 0.3, borderRadius: "20px", background: `${pctColor}18`, border: `1px solid ${pctColor}44` }}>
+                                    <Typography sx={{ fontFamily: "'DM Mono', monospace", fontSize: 12, fontWeight: 800, color: pctColor }}>{pct}%</Typography>
+                                  </Box>
+                                ) : (
+                                  <Typography sx={{ fontFamily: "'DM Mono', monospace", fontSize: 12, color: TOKENS.textSub }}>--</Typography>
+                                )
                               ) : (
                                 <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TOKENS.textSub }}>—</Typography>
                               )}
