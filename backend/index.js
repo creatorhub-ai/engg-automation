@@ -1556,38 +1556,56 @@ app.get("/api/course-planner-meta/:batchNo", async (req, res) => {
 });
 
 
-// === Get Batch List ===
+// === Get Batch List (merged from course_planner_data + learners_data) ===
 app.get("/api/batches", async (req, res) => {
   const domain = req.query.domain;
 
   try {
-    let query = supabase
+    // 1) Fetch batches from course_planner_data
+    let plannerQuery = supabase
       .from("course_planner_data")
       .select("batch_no, date");
 
     if (domain) {
-      query = query.eq("domain", domain);
+      plannerQuery = plannerQuery.eq("domain", domain);
     }
 
-    // Order by date ascending (start date)
-    query = query.order("date", { ascending: true });
+    plannerQuery = plannerQuery.order("date", { ascending: true });
 
-    const { data, error } = await query;
-
-    if (error) throw error;
+    const { data: plannerData, error: plannerError } = await plannerQuery;
+    if (plannerError) throw plannerError;
 
     // Group by batch_no picking earliest date as start_date
     const batchMap = {};
-    for (const row of data || []) {
-      if (!row.batch_no || !row.date) continue;
-      if (!batchMap[row.batch_no]) batchMap[row.batch_no] = row.date;
+    for (const row of plannerData || []) {
+      if (!row.batch_no) continue;
+      if (!batchMap[row.batch_no] && row.date) batchMap[row.batch_no] = row.date;
+    }
+
+    // 2) Fetch distinct batch_no from learners_data (no domain filter — learners may not have domain)
+    const { data: learnerData, error: learnerError } = await supabase
+      .from("learners_data")
+      .select("batch_no");
+
+    if (learnerError) {
+      console.warn("Warning: failed to fetch learners_data batches:", learnerError.message);
+      // Continue with planner batches only
+    } else {
+      for (const row of learnerData || []) {
+        if (!row.batch_no) continue;
+        // Add batch if not already present from planner data
+        if (!batchMap[row.batch_no]) batchMap[row.batch_no] = null;
+      }
     }
 
     // Format output array [{ batch_no, start_date }, ...]
     const formatted = Object.entries(batchMap).map(([batch_no, date]) => ({
       batch_no,
-      start_date: formatDate(date),
+      start_date: date ? formatDate(date) : "",
     }));
+
+    // Sort by batch_no for consistent ordering
+    formatted.sort((a, b) => (a.batch_no || "").localeCompare(b.batch_no || ""));
 
     res.json(formatted);
   } catch (err) {
@@ -3624,17 +3642,30 @@ app.get("/api/get_batches_by_domain", async (req, res) => {
     const domain = req.query.domain;
     if (!domain) return res.status(400).json({ error: "Domain is required" });
 
-    const { data, error } = await supabase
+    // Fetch from course_planner_data
+    const { data: plannerData, error: plannerError } = await supabase
       .from("course_planner_data")
       .select("batch_no")
       .eq("domain", domain)
       .neq("batch_no", null);
 
-    if (error) throw error;
+    if (plannerError) throw plannerError;
 
-    // Get distinct batch_no
-    const batchSet = new Set(data.map((row) => row.batch_no));
-    const batches = Array.from(batchSet);
+    const batchSet = new Set(plannerData.map((row) => row.batch_no).filter(Boolean));
+
+    // Also fetch from learners_data to include batches not yet in planner
+    const { data: learnerData, error: learnerError } = await supabase
+      .from("learners_data")
+      .select("batch_no")
+      .neq("batch_no", null);
+
+    if (!learnerError && learnerData) {
+      for (const row of learnerData) {
+        if (row.batch_no) batchSet.add(row.batch_no);
+      }
+    }
+
+    const batches = Array.from(batchSet).sort();
 
     res.json(batches);
   } catch (err) {
