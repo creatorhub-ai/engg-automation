@@ -152,20 +152,11 @@ function getCurrentUser() {
   catch { return {}; }
 }
 
-/* ─── Server-side role hook ──────────────────────────────────────────────── */
+/* ─── Role hook (reads from localStorage — no server call needed) ────────── */
 function useCurrentUserRole() {
   const localUser = getCurrentUser();
-  const [role,    setRole]    = useState(localUser?.role || "");
-  const [loading, setLoading] = useState(true);
-  useEffect(() => {
-    fetch(`${API_BASE}/api/me`, { credentials: "include" })
-      .then(r => r.ok ? r.json() : Promise.reject())
-      .then(d => { if (d?.role) setRole(d.role); })
-      .catch(() => setRole(localUser?.role || ""))
-      .finally(() => setLoading(false));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  return { role, loading, isAdminOrManager: role === "Admin" || role === "Manager" };
+  const role = localUser?.role || "";
+  return { role, loading: false, isAdminOrManager: role === "Admin" || role === "Manager" };
 }
 
 function deduplicatePeriods(data) {
@@ -271,6 +262,7 @@ function MarkSheet() {
   const [saving,                  setSaving]                  = useState(false);
   const [savingOutOf,             setSavingOutOf]             = useState(false);
   const [loadingMarks,            setLoadingMarks]            = useState(false);
+  const [marksAlreadySaved,       setMarksAlreadySaved]       = useState(false);
 
   const isPdft            = isPdftBatch(batchNo);
   const isDvft            = isDvftBatch(batchNo);
@@ -380,6 +372,9 @@ function MarkSheet() {
       const data = await res.json();
       
       if (Array.isArray(data) && data.length > 0) {
+        // Marks exist in DB — mark as already saved (read-only)
+        setMarksAlreadySaved(true);
+
         // Load out_off from saved data if not already set from fixed rules
         const savedOutOf = data[0]?.out_off;
         if (savedOutOf != null && savedOutOf !== undefined) {
@@ -388,7 +383,7 @@ function MarkSheet() {
             setOutOff(String(savedOutOf));
           }
         }
-        
+
         // Build marks map from saved data
         const marksMap = {};
         data.forEach(row => {
@@ -410,8 +405,9 @@ function MarkSheet() {
         setMarks(marksMap);
         console.log(`Loaded ${Object.keys(marksMap).length} existing mark records`);
       } else {
-        // No saved marks — clear the marks map
+        // No saved marks — clear the marks map, allow editing
         setMarks({});
+        setMarksAlreadySaved(false);
         console.log("No existing marks found for this assessment");
       }
     } catch (e) {
@@ -433,7 +429,8 @@ function MarkSheet() {
     setSelectedDate(datePart || "");
     setTopicName(topic);
     setMarks({});
-    
+    setMarksAlreadySaved(false);
+
     // Set fixed out-of first
     const fixed = getFixedOutOf(topic, assessmentType, batchNo);
     const newOutOff = fixed !== null ? String(fixed) : "";
@@ -505,7 +502,7 @@ function MarkSheet() {
     try {
       const cfg = ASSESSMENT_MAP[assessmentType];
       const res = await fetch(`${API_BASE}/api/marks/update-out-of`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+        method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           batch_no:          batchNo,
           assessment_type:   cfg.api,
@@ -558,7 +555,7 @@ function MarkSheet() {
         }
         try {
           const response = await fetch(`${API_BASE}/api/marks/${cfg.api}`, {
-            method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+            method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
           });
           if (!response.ok) failCount++; else savedCount++;
@@ -574,6 +571,7 @@ function MarkSheet() {
   const resetSelections = () => {
     setPeriodValue(""); setSelectedDate(""); setSelectedCoursePlannerId("");
     setSelectedWeekNo(""); setTopicName(""); setMarks({}); setOutOff("");
+    setMarksAlreadySaved(false);
   };
 
   /* ── Loading state ── */
@@ -819,7 +817,8 @@ function MarkSheet() {
                               <TextField size="small"
                                 value={points}
                                 onChange={e => handleMarksInput(l.id, e.target.value)}
-                                placeholder="e.g. 10.5 or AB"
+                                placeholder={marksAlreadySaved ? "" : "e.g. 10.5 or AB"}
+                                disabled={marksAlreadySaved}
                                 inputProps={{
                                   style: {
                                     fontFamily: "'DM Mono', monospace",
@@ -832,16 +831,18 @@ function MarkSheet() {
                                   width: 110,
                                   "& .MuiInputBase-root": {
                                     borderRadius: "8px",
-                                    background: hasMarks
-                                      ? (isAbsent ? "#fef3c7" : TOKENS.accentLight)
-                                      : "transparent",
+                                    background: marksAlreadySaved
+                                      ? TOKENS.surfaceAlt
+                                      : hasMarks
+                                        ? (isAbsent ? "#fef3c7" : TOKENS.accentLight)
+                                        : "transparent",
                                     "& .MuiOutlinedInput-notchedOutline": {
                                       borderColor: hasMarks
                                         ? (isAbsent ? TOKENS.warning.fill + "66" : TOKENS.accent + "44")
                                         : TOKENS.border
                                     },
                                     "&:hover .MuiOutlinedInput-notchedOutline": {
-                                      borderColor: TOKENS.accent
+                                      borderColor: marksAlreadySaved ? TOKENS.border : TOKENS.accent
                                     },
                                   }
                                 }}
@@ -873,20 +874,31 @@ function MarkSheet() {
 
                 {/* Save Button */}
                 <Box sx={{ mt: 3, display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
-                  <Button variant="contained" onClick={handleSave}
-                    disabled={saving || !batchNo || !selectedDate || !outOff || (!isAutoDateAssessment && !selectedCoursePlannerId)}
-                    startIcon={saving ? <CircularProgress size={16} color="inherit" /> : <SaveIcon sx={{ fontSize: 18 }} />}
-                    sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 13, borderRadius: "10px", textTransform: "none", px: 3, py: 1.2, background: TOKENS.accent, "&:hover": { background: "#2a3fd4" }, "&:disabled": { opacity: 0.5 } }}>
-                    {saving ? "Saving…" : `Save Marks${marksEnteredCount > 0 ? ` (${marksEnteredCount})` : ""}`}
-                  </Button>
+                  {marksAlreadySaved ? (
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2.5, py: 1.2, borderRadius: "10px", background: TOKENS.success.light, border: `1px solid ${TOKENS.success.fill}44` }}>
+                      <LockIcon sx={{ fontSize: 16, color: TOKENS.success.fill }} />
+                      <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: TOKENS.success.text }}>
+                        Marks already saved — editing is disabled
+                      </Typography>
+                    </Box>
+                  ) : (
+                    <>
+                      <Button variant="contained" onClick={handleSave}
+                        disabled={saving || !batchNo || !selectedDate || !outOff || (!isAutoDateAssessment && !selectedCoursePlannerId)}
+                        startIcon={saving ? <CircularProgress size={16} color="inherit" /> : <SaveIcon sx={{ fontSize: 18 }} />}
+                        sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 13, borderRadius: "10px", textTransform: "none", px: 3, py: 1.2, background: TOKENS.accent, "&:hover": { background: "#2a3fd4" }, "&:disabled": { opacity: 0.5 } }}>
+                        {saving ? "Saving…" : `Save Marks${marksEnteredCount > 0 ? ` (${marksEnteredCount})` : ""}`}
+                      </Button>
 
-                  {/* Info about AB */}
-                  <Box sx={{ display: "flex", alignItems: "center", gap: 0.8, px: 2, py: 0.8, borderRadius: "10px", background: TOKENS.surfaceAlt, border: `1px solid ${TOKENS.border}` }}>
-                    <InfoOutlinedIcon sx={{ fontSize: 14, color: TOKENS.textSub }} />
-                    <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: TOKENS.textSub }}>
-                      Enter <strong>AB</strong> for absent · decimals like <strong>10.5</strong> are supported
-                    </Typography>
-                  </Box>
+                      {/* Info about AB */}
+                      <Box sx={{ display: "flex", alignItems: "center", gap: 0.8, px: 2, py: 0.8, borderRadius: "10px", background: TOKENS.surfaceAlt, border: `1px solid ${TOKENS.border}` }}>
+                        <InfoOutlinedIcon sx={{ fontSize: 14, color: TOKENS.textSub }} />
+                        <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: TOKENS.textSub }}>
+                          Enter <strong>AB</strong> for absent · decimals like <strong>10.5</strong> are supported
+                        </Typography>
+                      </Box>
+                    </>
+                  )}
                 </Box>
 
                 <StatusBanner message={message} />

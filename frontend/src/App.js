@@ -88,11 +88,10 @@ const roleMenus = {
   coordinator: [
     { text: "Home", path: "/home" },
     { text: "Internal Communication", path: "/internal" },
-    { text: "Final Assessment Schedule", path: "/final-assessments" },
     { text: "Mail Status Check", path: "/mail-status" },
     { text: "Course Progress", path: "/course-progress" },
-    { text: "Marks Dashboard", path: "/marks/entry" },
     { text: "Trainer Dashboards", path: "/trainer-dashboard" },
+    { text: "Users Management", path: "/users" },
   ],
 };
 
