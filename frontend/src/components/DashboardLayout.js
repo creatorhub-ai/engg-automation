@@ -88,6 +88,7 @@ const MENUS_BY_ROLE = {
     { id: 4, name: "Mail Status Check", path: "/mail-status" },
     { id: 5, name: "Course Progress", path: "/course-progress" },
     { id: 6, name: "Announcement", path: "/announcement" },
+    { id: 7, name: "Trainer Dashboards", path: "/trainer-dashboard" },
   ],
 };
 
