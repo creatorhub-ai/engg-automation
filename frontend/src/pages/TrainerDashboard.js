@@ -115,7 +115,6 @@ const dialogSx = {
    TrainerUnavailabilityForm  — Apply Leave + Leave History
 ══════════════════════════════════════════════════════════════════════════ */
 function TrainerUnavailabilityForm({ user, token }) {
-  /* ── Form state ── */
   const [domain,           setDomain]           = useState("");
   const [start,            setStart]            = useState("");
   const [end,              setEnd]              = useState("");
@@ -127,28 +126,21 @@ function TrainerUnavailabilityForm({ user, token }) {
   const [loading,          setLoading]          = useState(false);
   const [submitting,       setSubmitting]        = useState(false);
 
-  /* ── Leave history state ── */
   const [leaveHistory,   setLeaveHistory]   = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError,   setHistoryError]   = useState("");
 
-  /* ── Edit dialog state ── */
-  const [editDialog, setEditDialog] = useState({
-    open: false, leaveId: null, start: "", end: "", reason: "",
-  });
+  const [editDialog, setEditDialog] = useState({ open: false, leaveId: null, start: "", end: "", reason: "" });
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [editErr,        setEditErr]        = useState("");
 
-  /* ── Delete confirm dialog ── */
   const [deleteDialog,  setDeleteDialog]  = useState({ open: false, leaveId: null });
   const [deleteLoading, setDeleteLoading] = useState(false);
 
-  /* ── Section toggle ── */
   const [showForm, setShowForm] = useState(true);
 
   const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
 
-  /* ─── fetch trainer batches ─── */
   const fetchBatches = useCallback(async () => {
     if (!user?.email) return;
     try {
@@ -172,7 +164,6 @@ function TrainerUnavailabilityForm({ user, token }) {
     }
   }, [user?.email, token]); // eslint-disable-line
 
-  /* ─── fetch leave history for this trainer ─── */
   const fetchLeaveHistory = useCallback(async () => {
     if (!user?.email) return;
     try {
@@ -183,18 +174,10 @@ function TrainerUnavailabilityForm({ user, token }) {
         timeout: 10000,
       });
       const all = Array.isArray(res.data) ? res.data : [];
-      // Filter only this trainer's records
-      const mine = all.filter(
-        (r) =>
-          (r.trainer_email || "").toLowerCase().trim() ===
-          (user.email || "").toLowerCase().trim()
+      const mine = all.filter(r =>
+        (r.trainer_email || "").toLowerCase().trim() === (user.email || "").toLowerCase().trim()
       );
-      // Sort newest first
-      mine.sort(
-        (a, b) =>
-          new Date(b.submitted_at || b.created_at || 0) -
-          new Date(a.submitted_at || a.created_at || 0)
-      );
+      mine.sort((a, b) => new Date(b.submitted_at || b.created_at || 0) - new Date(a.submitted_at || a.created_at || 0));
       setLeaveHistory(mine);
     } catch (e) {
       console.error("Error loading leave history:", e);
@@ -209,10 +192,8 @@ function TrainerUnavailabilityForm({ user, token }) {
 
   useEffect(() => {
     if (selectedBatchNos.length === 0) return;
-    const selected = trainerBatches.filter((b) =>
-      selectedBatchNos.includes(b.batch_no || b.batchno)
-    );
-    const uniqueDomains = Array.from(new Set(selected.map((b) => b.domain || "")));
+    const selected     = trainerBatches.filter(b => selectedBatchNos.includes(b.batch_no || b.batchno));
+    const uniqueDomains = Array.from(new Set(selected.map(b => b.domain || "")));
     if (uniqueDomains.length === 1) setDomain(uniqueDomains[0]);
   }, [selectedBatchNos, trainerBatches]);
 
@@ -221,7 +202,6 @@ function TrainerUnavailabilityForm({ user, token }) {
     setSelectedBatchNos(typeof value === "string" ? value.split(",") : value);
   };
 
-  /* ─── Submit new leave ─── */
   const submitUnavailability = async () => {
     setMsg(""); setErr(""); setSubmitting(true);
     if (!start || !end)                              { setErr("Please select From and To dates");     setSubmitting(false); return; }
@@ -232,31 +212,21 @@ function TrainerUnavailabilityForm({ user, token }) {
     try {
       const response = await axios.post(
         `${API_BASE}/api/trainer-leaves`,
-        {
-          trainer_email: user.email,
-          trainer_name:  user.name,
-          domain,
-          start_date:    start,
-          end_date:      end,
-          reason,
-          batch_nos:     selectedBatchNos.join(","),
-        },
+        { trainer_email: user.email, trainer_name: user.name, domain, start_date: start, end_date: end, reason, batch_nos: selectedBatchNos.join(",") },
         { headers: authHeaders, timeout: 15000 }
       );
-
       if (response.data?.success) {
         setMsg("✅ Leave request submitted successfully!");
         setStart(""); setEnd(""); setReason(""); setSelectedBatchNos([]); setDomain("");
-        fetchBatches();
-        fetchLeaveHistory();
+        fetchBatches(); fetchLeaveHistory();
       } else {
         setErr(`Server response: ${response.data?.message || "Unknown error"}`);
       }
     } catch (e) {
-      console.error("🚨 Submit failed:", e.response?.data || e);
-      if (e.response?.status === 404)       setErr("🚫 API endpoint not found.");
+      console.error("Submit failed:", e.response?.data || e);
+      if (e.response?.status === 404)       setErr("API endpoint not found.");
       else if (e.response?.status === 400)  setErr(`Validation error: ${e.response.data?.error || "Check your input"}`);
-      else if (e.code === "ECONNABORTED")   setErr("⏰ Request timeout. Please try again.");
+      else if (e.code === "ECONNABORTED")   setErr("Request timeout. Please try again.");
       else if (e.response?.status === 500)  setErr(`Server error: ${e.response.data?.error || "Please contact admin"}`);
       else                                  setErr(`Failed: ${e.response?.data?.error || e.message}`);
     } finally {
@@ -264,24 +234,15 @@ function TrainerUnavailabilityForm({ user, token }) {
     }
   };
 
-  /* ─── Open edit dialog ─── */
   const openEdit = (leave) => {
     setEditErr("");
-    setEditDialog({
-      open:    true,
-      leaveId: leave.id,
-      start:   leave.start_date || "",
-      end:     leave.end_date   || "",
-      reason:  leave.reason     || "",
-    });
+    setEditDialog({ open: true, leaveId: leave.id, start: leave.start_date || "", end: leave.end_date || "", reason: leave.reason || "" });
   };
 
-  /* ─── Submit edit ─── */
   const submitEdit = async () => {
     setEditErr(""); setEditSubmitting(true);
-    if (!editDialog.start || !editDialog.end)                              { setEditErr("Please select both dates");               setEditSubmitting(false); return; }
-    if (new Date(editDialog.start) > new Date(editDialog.end))             { setEditErr("End date must be after start date");      setEditSubmitting(false); return; }
-
+    if (!editDialog.start || !editDialog.end)                               { setEditErr("Please select both dates");          setEditSubmitting(false); return; }
+    if (new Date(editDialog.start) > new Date(editDialog.end))              { setEditErr("End date must be after start date"); setEditSubmitting(false); return; }
     try {
       const res = await axios.put(
         `${API_BASE}/api/trainer-leaves/${editDialog.leaveId}`,
@@ -301,24 +262,16 @@ function TrainerUnavailabilityForm({ user, token }) {
     }
   };
 
-  /* ─── Delete / cancel leave ─── */
   const confirmDelete = async () => {
     setDeleteLoading(true);
     try {
-      await axios.delete(
-        `${API_BASE}/api/trainer-leaves/${deleteDialog.leaveId}`,
-        { headers: authHeaders, timeout: 10000 }
-      );
+      await axios.delete(`${API_BASE}/api/trainer-leaves/${deleteDialog.leaveId}`, { headers: authHeaders, timeout: 10000 });
       setDeleteDialog({ open: false, leaveId: null });
       fetchLeaveHistory();
-    } catch (e) {
-      console.error("Delete leave error:", e);
-    } finally {
-      setDeleteLoading(false);
-    }
+    } catch (e) { console.error("Delete leave error:", e); }
+    finally { setDeleteLoading(false); }
   };
 
-  /* ─── Helpers ─── */
   const fmtDate = (d) => {
     if (!d) return "—";
     try { return new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }); }
@@ -336,25 +289,11 @@ function TrainerUnavailabilityForm({ user, token }) {
     );
   };
 
-  /* ══ RENDER ══════════════════════════════════════════════════════════════ */
   return (
     <Box>
-
-      {/* ── Apply Leave Card ─────────────────────────────────────────── */}
+      {/* Apply Leave Card */}
       <Box sx={{ ...cardSx, mb: 2.5 }}>
-
-        {/* Collapsible header */}
-        <Box
-          onClick={() => setShowForm((v) => !v)}
-          sx={{
-            px: 3, py: 2, cursor: "pointer",
-            background: `linear-gradient(135deg, ${T.accent}12 0%, ${T.accentLight} 100%)`,
-            borderBottom: showForm ? `1px solid ${T.border}` : "none",
-            display: "flex", alignItems: "center", gap: 1.5,
-            transition: "background 0.2s",
-            "&:hover": { background: `linear-gradient(135deg, ${T.accent}22 0%, ${T.accentLight} 100%)` },
-          }}
-        >
+        <Box onClick={() => setShowForm(v => !v)} sx={{ px: 3, py: 2, cursor: "pointer", background: `linear-gradient(135deg, ${T.accent}12 0%, ${T.accentLight} 100%)`, borderBottom: showForm ? `1px solid ${T.border}` : "none", display: "flex", alignItems: "center", gap: 1.5, transition: "background 0.2s", "&:hover": { background: `linear-gradient(135deg, ${T.accent}22 0%, ${T.accentLight} 100%)` } }}>
           <Box sx={{ width: 38, height: 38, borderRadius: "11px", background: `linear-gradient(135deg, ${T.accent}, ${T.accentDark})`, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 3px 10px ${T.accent}33`, flexShrink: 0 }}>
             <AddCircleOutlineIcon sx={{ color: "#fff", fontSize: 20 }} />
           </Box>
@@ -374,72 +313,31 @@ function TrainerUnavailabilityForm({ user, token }) {
               </Box>
             )}
 
-            {/* Batch selector */}
-            <TextField
-              select
-              label="Select Batch(es)"
-              value={selectedBatchNos}
-              onChange={handleBatchChange}
-              fullWidth
-              disabled={loading || submitting}
-              SelectProps={{
-                multiple: true,
-                renderValue: (selected) => selected.length > 0 ? selected.join(", ") : "No batch selected",
-              }}
-              sx={{ mb: 2, ...fieldSx }}
-              helperText={selectedBatchNos.length === 0 ? "Select batches you want to apply leave for" : ""}
-            >
-              {trainerBatches.map((b) => {
+            <TextField select label="Select Batch(es)" value={selectedBatchNos} onChange={handleBatchChange} fullWidth disabled={loading || submitting}
+              SelectProps={{ multiple: true, renderValue: (selected) => selected.length > 0 ? selected.join(", ") : "No batch selected" }}
+              sx={{ mb: 2, ...fieldSx }} helperText={selectedBatchNos.length === 0 ? "Select batches you want to apply leave for" : ""}>
+              {trainerBatches.map(b => {
                 const bn = b.batch_no || b.batchno;
                 return <MenuItem key={bn} value={bn} sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>{bn}{b.domain ? ` (${b.domain})` : ""}</MenuItem>;
               })}
-              {trainerBatches.length === 0 && !loading && (
-                <MenuItem disabled sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>No batches found</MenuItem>
-              )}
+              {trainerBatches.length === 0 && !loading && <MenuItem disabled sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>No batches found</MenuItem>}
             </TextField>
 
-            {/* Domain */}
-            <TextField
-              label="Domain *"
-              value={domain}
-              onChange={(e) => setDomain(e.target.value)}
-              fullWidth
-              disabled={loading || submitting}
-              required
-              error={!domain && selectedBatchNos.length > 0}
-              helperText={!domain && selectedBatchNos.length > 0 ? "Domain is required" : ""}
-              sx={{ mb: 2, ...fieldSx }}
-            />
+            <TextField label="Domain *" value={domain} onChange={e => setDomain(e.target.value)} fullWidth disabled={loading || submitting} required error={!domain && selectedBatchNos.length > 0} helperText={!domain && selectedBatchNos.length > 0 ? "Domain is required" : ""} sx={{ mb: 2, ...fieldSx }} />
 
-            {/* Date range */}
             <Grid container spacing={2} sx={{ mb: 2 }}>
               <Grid item xs={12} sm={6}>
-                <TextField label="From Date *" type="date" value={start} onChange={(e) => setStart(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} disabled={loading || submitting} required error={!start} helperText={!start ? "Required" : ""} sx={fieldSx} />
+                <TextField label="From Date *" type="date" value={start} onChange={e => setStart(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} disabled={loading || submitting} required error={!start} helperText={!start ? "Required" : ""} sx={fieldSx} />
               </Grid>
               <Grid item xs={12} sm={6}>
-                <TextField label="To Date *" type="date" value={end} onChange={(e) => setEnd(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} disabled={loading || submitting} required error={!end || (start && new Date(start) > new Date(end))} helperText={!end ? "Required" : (start && new Date(start) > new Date(end)) ? "End date must be after start date" : ""} sx={fieldSx} />
+                <TextField label="To Date *" type="date" value={end} onChange={e => setEnd(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} disabled={loading || submitting} required error={!end || (start && new Date(start) > new Date(end))} helperText={!end ? "Required" : (start && new Date(start) > new Date(end)) ? "End date must be after start date" : ""} sx={fieldSx} />
               </Grid>
             </Grid>
 
-            {/* Reason */}
-            <TextField label="Reason (Optional)" value={reason} onChange={(e) => setReason(e.target.value)} fullWidth multiline rows={2} disabled={loading || submitting} sx={{ mb: 2.5, ...fieldSx }} />
+            <TextField label="Reason (Optional)" value={reason} onChange={e => setReason(e.target.value)} fullWidth multiline rows={2} disabled={loading || submitting} sx={{ mb: 2.5, ...fieldSx }} />
 
-            {/* Submit */}
-            <Button
-              onClick={submitUnavailability}
-              variant="contained"
-              disabled={loading || submitting || selectedBatchNos.length === 0}
-              startIcon={submitting ? <CircularProgress size={18} color="inherit" /> : null}
-              fullWidth
-              sx={{
-                fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 14,
-                borderRadius: "10px", py: 1.4, textTransform: "none",
-                background: `linear-gradient(135deg, ${T.accent} 0%, ${T.accentDark} 100%)`,
-                boxShadow: `0 4px 14px ${T.accent}44`,
-                "&:hover": { background: `linear-gradient(135deg, ${T.accentDark} 0%, ${T.accent} 100%)` },
-                "&.Mui-disabled": { background: T.border, color: T.textSub, boxShadow: "none" },
-              }}
-            >
+            <Button onClick={submitUnavailability} variant="contained" disabled={loading || submitting || selectedBatchNos.length === 0} startIcon={submitting ? <CircularProgress size={18} color="inherit" /> : null} fullWidth
+              sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 14, borderRadius: "10px", py: 1.4, textTransform: "none", background: `linear-gradient(135deg, ${T.accent} 0%, ${T.accentDark} 100%)`, boxShadow: `0 4px 14px ${T.accent}44`, "&:hover": { background: `linear-gradient(135deg, ${T.accentDark} 0%, ${T.accent} 100%)` }, "&.Mui-disabled": { background: T.border, color: T.textSub, boxShadow: "none" } }}>
               {submitting ? "Submitting…" : "Submit Leave Request"}
             </Button>
 
@@ -449,11 +347,9 @@ function TrainerUnavailabilityForm({ user, token }) {
         )}
       </Box>
 
-      {/* ── Leave History Card ────────────────────────────────────────── */}
+      {/* Leave History Card */}
       <Box sx={{ ...cardSx }}>
-
-        {/* Header */}
-        <Box sx={{ px: 3, py: 2, background: `linear-gradient(135deg, #7c3aed12 0%, #ede9fe 100%)`, borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: 1.5 }}>
+        <Box sx={{ px: 3, py: 2, background: "linear-gradient(135deg, #7c3aed12 0%, #ede9fe 100%)", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: 1.5 }}>
           <Box sx={{ width: 38, height: 38, borderRadius: "11px", background: "linear-gradient(135deg, #7c3aed, #6d28d9)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 3px 10px #7c3aed33", flexShrink: 0 }}>
             <CalendarMonthIcon sx={{ color: "#fff", fontSize: 20 }} />
           </Box>
@@ -469,24 +365,16 @@ function TrainerUnavailabilityForm({ user, token }) {
             <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: T.textSub }}>All your submitted leave requests</Typography>
           </Box>
           <Tooltip title="Refresh">
-            <IconButton
-              size="small"
-              onClick={fetchLeaveHistory}
-              disabled={historyLoading}
-              sx={{ color: T.accent, background: T.accentLight, borderRadius: "8px", "&:hover": { background: T.accent, color: "#fff" } }}
-            >
+            <IconButton size="small" onClick={fetchLeaveHistory} disabled={historyLoading} sx={{ color: T.accent, background: T.accentLight, borderRadius: "8px", "&:hover": { background: T.accent, color: "#fff" } }}>
               <Typography sx={{ fontSize: 16, lineHeight: 1 }}>↻</Typography>
             </IconButton>
           </Tooltip>
         </Box>
 
-        {/* Body */}
         <Box sx={{ p: 2 }}>
-
-          {/* Loading skeletons */}
           {historyLoading && (
             <Box sx={{ px: 1 }}>
-              {[1, 2, 3].map((i) => (
+              {[1, 2, 3].map(i => (
                 <Box key={i} sx={{ display: "flex", gap: 2, mb: 1.5, alignItems: "center" }}>
                   <Skeleton variant="rounded" width={80}  height={36} sx={{ borderRadius: "8px" }} />
                   <Skeleton variant="rounded" width={80}  height={36} sx={{ borderRadius: "8px" }} />
@@ -498,15 +386,12 @@ function TrainerUnavailabilityForm({ user, token }) {
             </Box>
           )}
 
-          {!historyLoading && historyError && (
-            <Alert severity="error" sx={{ borderRadius: "10px", fontFamily: "'DM Sans', sans-serif" }}>{historyError}</Alert>
-          )}
+          {!historyLoading && historyError && <Alert severity="error" sx={{ borderRadius: "10px", fontFamily: "'DM Sans', sans-serif" }}>{historyError}</Alert>}
 
           {!historyLoading && !historyError && leaveHistory.length === 0 && (
             <Box sx={{ py: 5, textAlign: "center" }}>
               <EventBusyIcon sx={{ fontSize: 44, color: T.border, mb: 1 }} />
               <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, color: T.textSub }}>No leave requests found.</Typography>
-              <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: T.border }}>Submit a leave request above to see it here.</Typography>
             </Box>
           )}
 
@@ -515,28 +400,21 @@ function TrainerUnavailabilityForm({ user, token }) {
               <Table size="small">
                 <TableHead>
                   <TableRow sx={{ background: T.surfaceAlt }}>
-                    {["Batch(es)", "Domain", "From", "To", "Duration", "Reason", "Status", "Actions"].map((h) => (
+                    {["Batch(es)", "Domain", "From", "To", "Duration", "Reason", "Status", "Actions"].map(h => (
                       <TableCell key={h} sx={{ ...labelSx, py: 1.3, borderBottom: `2px solid ${T.border}`, whiteSpace: "nowrap" }}>{h}</TableCell>
                     ))}
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {leaveHistory.map((leave) => {
-                    const canEdit = !["assigned", "approved"].includes((leave.status || "").toLowerCase());
-                    const s       = leave.start_date;
-                    const e2      = leave.end_date;
+                  {leaveHistory.map(leave => {
+                    const canEdit  = !["assigned", "approved"].includes((leave.status || "").toLowerCase());
+                    const s        = leave.start_date;
+                    const e2       = leave.end_date;
                     let durationDays = null;
                     try { durationDays = Math.round((new Date(e2) - new Date(s)) / (1000 * 60 * 60 * 24)) + 1; } catch { /* */ }
 
                     return (
-                      <TableRow
-                        key={leave.id}
-                        sx={{
-                          "&:nth-of-type(even)": { background: T.surfaceAlt },
-                          "&:hover": { background: T.accentLight, transition: "background 0.15s" },
-                        }}
-                      >
-                        {/* Batch(es) */}
+                      <TableRow key={leave.id} sx={{ "&:nth-of-type(even)": { background: T.surfaceAlt }, "&:hover": { background: T.accentLight, transition: "background 0.15s" } }}>
                         <TableCell sx={{ maxWidth: 130 }}>
                           <Tooltip title={leave.batch_nos || "—"}>
                             <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700, color: T.accent, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 120 }}>
@@ -544,28 +422,14 @@ function TrainerUnavailabilityForm({ user, token }) {
                             </Typography>
                           </Tooltip>
                         </TableCell>
-
-                        {/* Domain */}
                         <TableCell sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: T.text }}>{leave.domain || "—"}</TableCell>
-
-                        {/* From */}
                         <TableCell sx={{ fontFamily: "'DM Mono', monospace", fontSize: 12, color: T.textSub, whiteSpace: "nowrap" }}>{fmtDate(s)}</TableCell>
-
-                        {/* To */}
                         <TableCell sx={{ fontFamily: "'DM Mono', monospace", fontSize: 12, color: T.textSub, whiteSpace: "nowrap" }}>{fmtDate(e2)}</TableCell>
-
-                        {/* Duration */}
                         <TableCell>
                           {durationDays != null && (
-                            <Chip
-                              label={`${durationDays}d`}
-                              size="small"
-                              sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 11, height: 22, background: T.accentLight, color: T.accent, border: `1px solid ${T.accent}44` }}
-                            />
+                            <Chip label={`${durationDays}d`} size="small" sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 11, height: 22, background: T.accentLight, color: T.accent, border: `1px solid ${T.accent}44` }} />
                           )}
                         </TableCell>
-
-                        {/* Reason */}
                         <TableCell sx={{ maxWidth: 150 }}>
                           <Tooltip title={leave.reason || "No reason provided"}>
                             <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: T.textSub, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 140 }}>
@@ -573,33 +437,21 @@ function TrainerUnavailabilityForm({ user, token }) {
                             </Typography>
                           </Tooltip>
                         </TableCell>
-
-                        {/* Status */}
                         <TableCell>{getLeaveStatusChip(leave.status)}</TableCell>
-
-                        {/* Actions */}
                         <TableCell>
                           <Box sx={{ display: "flex", gap: 0.5 }}>
                             <Tooltip title={canEdit ? "Edit leave dates" : "Cannot edit — already processed"}>
                               <span>
-                                <IconButton
-                                  size="small"
-                                  disabled={!canEdit}
-                                  onClick={() => openEdit(leave)}
-                                  sx={{ color: T.accent, background: T.accentLight, borderRadius: "7px", p: 0.6, "&:hover": { background: T.accent, color: "#fff" }, "&.Mui-disabled": { opacity: 0.35 }, transition: "all 0.18s" }}
-                                >
+                                <IconButton size="small" disabled={!canEdit} onClick={() => openEdit(leave)}
+                                  sx={{ color: T.accent, background: T.accentLight, borderRadius: "7px", p: 0.6, "&:hover": { background: T.accent, color: "#fff" }, "&.Mui-disabled": { opacity: 0.35 }, transition: "all 0.18s" }}>
                                   <EditIcon sx={{ fontSize: 15 }} />
                                 </IconButton>
                               </span>
                             </Tooltip>
                             <Tooltip title={canEdit ? "Cancel / delete this leave" : "Cannot delete — already processed"}>
                               <span>
-                                <IconButton
-                                  size="small"
-                                  disabled={!canEdit}
-                                  onClick={() => setDeleteDialog({ open: true, leaveId: leave.id })}
-                                  sx={{ color: T.danger, background: "#fee2e2", borderRadius: "7px", p: 0.6, "&:hover": { background: T.danger, color: "#fff" }, "&.Mui-disabled": { opacity: 0.35 }, transition: "all 0.18s" }}
-                                >
+                                <IconButton size="small" disabled={!canEdit} onClick={() => setDeleteDialog({ open: true, leaveId: leave.id })}
+                                  sx={{ color: T.danger, background: "#fee2e2", borderRadius: "7px", p: 0.6, "&:hover": { background: T.danger, color: "#fff" }, "&.Mui-disabled": { opacity: 0.35 }, transition: "all 0.18s" }}>
                                   <DeleteIcon sx={{ fontSize: 15 }} />
                                 </IconButton>
                               </span>
@@ -616,52 +468,29 @@ function TrainerUnavailabilityForm({ user, token }) {
         </Box>
       </Box>
 
-      {/* ── Edit Leave Dialog ──────────────────────────────────────────── */}
+      {/* Edit Dialog */}
       <Dialog open={editDialog.open} onClose={() => setEditDialog({ ...editDialog, open: false })} maxWidth="xs" fullWidth sx={dialogSx}>
         <DialogTitle sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 800, color: T.text, fontSize: 17, pb: 1 }}>Edit Leave Request</DialogTitle>
         <DialogContent>
           <Box sx={{ pt: 1 }}>
             <Grid container spacing={2}>
-              <Grid item xs={12}>
-                <TextField label="From Date *" type="date" value={editDialog.start} onChange={(e) => setEditDialog({ ...editDialog, start: e.target.value })} fullWidth InputLabelProps={{ shrink: true }} disabled={editSubmitting} required sx={fieldSx} />
-              </Grid>
-              <Grid item xs={12}>
-                <TextField
-                  label="To Date *"
-                  type="date"
-                  value={editDialog.end}
-                  onChange={(e) => setEditDialog({ ...editDialog, end: e.target.value })}
-                  fullWidth
-                  InputLabelProps={{ shrink: true }}
-                  disabled={editSubmitting}
-                  required
-                  error={editDialog.start && editDialog.end && new Date(editDialog.start) > new Date(editDialog.end)}
-                  helperText={editDialog.start && editDialog.end && new Date(editDialog.start) > new Date(editDialog.end) ? "End date must be after start date" : ""}
-                  sx={fieldSx}
-                />
-              </Grid>
-              <Grid item xs={12}>
-                <TextField label="Reason" value={editDialog.reason} onChange={(e) => setEditDialog({ ...editDialog, reason: e.target.value })} fullWidth multiline rows={2} disabled={editSubmitting} sx={fieldSx} />
-              </Grid>
+              <Grid item xs={12}><TextField label="From Date *" type="date" value={editDialog.start} onChange={e => setEditDialog({ ...editDialog, start: e.target.value })} fullWidth InputLabelProps={{ shrink: true }} disabled={editSubmitting} required sx={fieldSx} /></Grid>
+              <Grid item xs={12}><TextField label="To Date *" type="date" value={editDialog.end} onChange={e => setEditDialog({ ...editDialog, end: e.target.value })} fullWidth InputLabelProps={{ shrink: true }} disabled={editSubmitting} required error={editDialog.start && editDialog.end && new Date(editDialog.start) > new Date(editDialog.end)} helperText={editDialog.start && editDialog.end && new Date(editDialog.start) > new Date(editDialog.end) ? "End date must be after start date" : ""} sx={fieldSx} /></Grid>
+              <Grid item xs={12}><TextField label="Reason" value={editDialog.reason} onChange={e => setEditDialog({ ...editDialog, reason: e.target.value })} fullWidth multiline rows={2} disabled={editSubmitting} sx={fieldSx} /></Grid>
             </Grid>
             {editErr && <Alert severity="error" sx={{ mt: 1.5, borderRadius: "10px", fontFamily: "'DM Sans', sans-serif" }}>{editErr}</Alert>}
           </Box>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2.5, gap: 1 }}>
           <Button onClick={() => setEditDialog({ open: false, leaveId: null, start: "", end: "", reason: "" })} sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 600, textTransform: "none", borderRadius: "8px", color: T.textSub, border: `1px solid ${T.border}` }}>Cancel</Button>
-          <Button
-            onClick={submitEdit}
-            variant="contained"
-            disabled={editSubmitting || !editDialog.start || !editDialog.end}
-            startIcon={editSubmitting ? <CircularProgress size={16} color="inherit" /> : <EditIcon sx={{ fontSize: 16 }} />}
-            sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, textTransform: "none", borderRadius: "8px", background: `linear-gradient(135deg, ${T.accent}, ${T.accentDark})`, boxShadow: `0 3px 10px ${T.accent}44`, "&.Mui-disabled": { background: T.border, color: T.textSub, boxShadow: "none" } }}
-          >
+          <Button onClick={submitEdit} variant="contained" disabled={editSubmitting || !editDialog.start || !editDialog.end} startIcon={editSubmitting ? <CircularProgress size={16} color="inherit" /> : <EditIcon sx={{ fontSize: 16 }} />}
+            sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, textTransform: "none", borderRadius: "8px", background: `linear-gradient(135deg, ${T.accent}, ${T.accentDark})`, boxShadow: `0 3px 10px ${T.accent}44`, "&.Mui-disabled": { background: T.border, color: T.textSub, boxShadow: "none" } }}>
             {editSubmitting ? "Saving…" : "Save Changes"}
           </Button>
         </DialogActions>
       </Dialog>
 
-      {/* ── Delete Confirm Dialog ─────────────────────────────────────── */}
+      {/* Delete Confirm Dialog */}
       <Dialog open={deleteDialog.open} onClose={() => setDeleteDialog({ open: false, leaveId: null })} maxWidth="xs" sx={dialogSx}>
         <DialogTitle sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 800, color: T.text, fontSize: 17 }}>Cancel Leave Request?</DialogTitle>
         <DialogContent>
@@ -671,13 +500,8 @@ function TrainerUnavailabilityForm({ user, token }) {
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2.5, gap: 1 }}>
           <Button onClick={() => setDeleteDialog({ open: false, leaveId: null })} sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 600, textTransform: "none", borderRadius: "8px", color: T.textSub, border: `1px solid ${T.border}` }}>Keep</Button>
-          <Button
-            onClick={confirmDelete}
-            variant="contained"
-            disabled={deleteLoading}
-            startIcon={deleteLoading ? <CircularProgress size={16} color="inherit" /> : <DeleteIcon sx={{ fontSize: 16 }} />}
-            sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, textTransform: "none", borderRadius: "8px", background: `linear-gradient(135deg, ${T.danger}, #b91c1c)`, boxShadow: "0 3px 10px #dc262644", "&.Mui-disabled": { background: T.border, color: T.textSub } }}
-          >
+          <Button onClick={confirmDelete} variant="contained" disabled={deleteLoading} startIcon={deleteLoading ? <CircularProgress size={16} color="inherit" /> : <DeleteIcon sx={{ fontSize: 16 }} />}
+            sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, textTransform: "none", borderRadius: "8px", background: `linear-gradient(135deg, ${T.danger}, #b91c1c)`, boxShadow: "0 3px 10px #dc262644", "&.Mui-disabled": { background: T.border, color: T.textSub } }}>
             {deleteLoading ? "Deleting…" : "Yes, Delete"}
           </Button>
         </DialogActions>
@@ -690,7 +514,9 @@ function TrainerUnavailabilityForm({ user, token }) {
    TrainerDashboard  (main export)
 ══════════════════════════════════════════════════════════════════════════ */
 function TrainerDashboard({ user, token }) {
+  // FIX: store as objects { batch_no, start_date }
   const [batches,         setBatches]         = useState([]);
+  const [loadingBatches,  setLoadingBatches]  = useState(true);
   const [selectedBatch,   setSelectedBatch]   = useState("");
   const [weeks,           setWeeks]           = useState([]);
   const [selectedWeek,    setSelectedWeek]    = useState("");
@@ -732,16 +558,45 @@ function TrainerDashboard({ user, token }) {
     setRemarksSnackbarMessage(msg || ""); setRemarksSnackbarSeverity(severity); setRemarksSnackbarOpen(true);
   };
 
-  /* ── Load batches ── */
+  /* ── FIX: Robust batch loading ── */
   useEffect(() => {
-    (async () => {
+    const fetchBatches = async () => {
+      setLoadingBatches(true);
       try {
         const headers = token ? { Authorization: `Bearer ${token}` } : {};
         const res = await axios.get(`${API_BASE}/api/batches`, { headers });
-        if (Array.isArray(res.data)) setBatches(res.data);
-        else { setBatches([]); setMessage("No batches found"); }
-      } catch { setMessage("Error loading batches"); }
-    })();
+
+        if (!Array.isArray(res.data)) {
+          console.warn("/api/batches returned non-array:", res.data);
+          setBatches([]);
+          return;
+        }
+
+        // Normalize: each item may be a string or an object with batch_no
+        const normalized = res.data
+          .map(b => {
+            if (typeof b === "string") return { batch_no: b, start_date: "" };
+            if (b && typeof b === "object" && b.batch_no) return b;
+            return null;
+          })
+          .filter(Boolean)
+          .sort((a, b) => (a.batch_no || "").localeCompare(b.batch_no || ""));
+
+        console.log(`TrainerDashboard: loaded ${normalized.length} batches`);
+        setBatches(normalized);
+
+        if (normalized.length === 0) {
+          setMessage("No batches found");
+        }
+      } catch (err) {
+        console.error("Failed to load batches:", err);
+        setMessage("Error loading batches");
+        setBatches([]);
+      } finally {
+        setLoadingBatches(false);
+      }
+    };
+    fetchBatches();
   }, [token]);
 
   /* ── Load weeks + all topics when batch changes ── */
@@ -765,12 +620,12 @@ function TrainerDashboard({ user, token }) {
         setAllBatchTopics(all);
         if (all.length > 0) {
           const ws = {};
-          all.forEach((t) => {
+          all.forEach(t => {
             const w = Number(t.week_no ?? t.weekno);
             if (!ws[w]) ws[w] = { hasNotCompleted: false };
             if ((t.topic_status ?? t.topicstatus) !== "Completed") ws[w].hasNotCompleted = true;
           });
-          const cands = Object.keys(ws).map(Number).filter((w) => ws[w].hasNotCompleted);
+          const cands = Object.keys(ws).map(Number).filter(w => ws[w].hasNotCompleted);
           setFirstIncompleteWeek(cands.length > 0 ? Math.min(...cands) : null);
         } else { setFirstIncompleteWeek(null); }
       } catch {
@@ -809,10 +664,7 @@ function TrainerDashboard({ user, token }) {
           });
           setTopics(sorted);
           const newR = {}, newD = {};
-          sorted.forEach((t) => {
-            newR[t.id] = t.remarks || "";
-            newD[t.id] = t.actual_date || t.actualdate || t.date || "";
-          });
+          sorted.forEach(t => { newR[t.id] = t.remarks || ""; newD[t.id] = t.actual_date || t.actualdate || t.date || ""; });
           setRemarksMap(newR); setActualDatesMap(newD);
           setPendingStatusChanges({}); setBlockedTopics({}); setMessage("");
         } else { setTopics([]); setMessage("No topics"); }
@@ -829,14 +681,13 @@ function TrainerDashboard({ user, token }) {
   const topicsByDate = topics.reduce((acc, t) => { const k = t.date || "No Date"; if (!acc[k]) acc[k] = []; acc[k].push(t); return acc; }, {});
   const sortedDates  = Object.keys(topicsByDate).sort((a, b) => new Date(a) - new Date(b));
 
-  /* ── Date change confirmation ── */
   const handleActualDateChange = (topicId, newDate, plannedDate) => {
     setDateChangeDialog({ open: true, topicId, newDate, plannedDate });
   };
 
   const confirmDateChange = () => {
     const { topicId, newDate, plannedDate } = dateChangeDialog;
-    setActualDatesMap((prev) => ({ ...prev, [topicId]: newDate }));
+    setActualDatesMap(prev => ({ ...prev, [topicId]: newDate }));
     const crossesPlanned = new Date(newDate) > new Date(plannedDate);
     setDateChangeDialog({ open: false, topicId: null, newDate: null, plannedDate: null });
     if (crossesPlanned) setSaveChangesDialog({ open: true, topicId, newDate, remarks: remarksMap[topicId] || "" });
@@ -854,7 +705,7 @@ function TrainerDashboard({ user, token }) {
 
   const saveActualDate = async (topicId, actualDate) => {
     try {
-      const topic = topics.find((t) => t.id === topicId);
+      const topic    = topics.find(t => t.id === topicId);
       if (!topic?.date || !actualDate) return;
       const daysDiff = Math.round((new Date(actualDate) - new Date(topic.date)) / (1000 * 60 * 60 * 24));
       const headers  = token ? { Authorization: `Bearer ${token}` } : {};
@@ -864,7 +715,7 @@ function TrainerDashboard({ user, token }) {
         { headers }
       );
       if (res.data?.success) {
-        setTopics((prev) => prev.map((t) => t.id === topicId ? { ...t, actual_date: actualDate, date_difference: daysDiff } : t));
+        setTopics(prev => prev.map(t => t.id === topicId ? { ...t, actual_date: actualDate, date_difference: daysDiff } : t));
         if (daysDiff > 2)      showSnackbar(`✅ Date saved! Exceeding by ${daysDiff} days`, "warning");
         else if (daysDiff > 0) showSnackbar(`✅ Date saved! ${daysDiff} day(s) late`, "warning");
         else if (daysDiff < 0) showSnackbar(`✅ Date saved! ${Math.abs(daysDiff)} day(s) early`, "success");
@@ -872,25 +723,25 @@ function TrainerDashboard({ user, token }) {
       } else throw new Error("Save failed");
     } catch {
       showSnackbar("❌ Failed to save date", "error");
-      const topic = topics.find((t) => t.id === topicId);
-      setActualDatesMap((prev) => ({ ...prev, [topicId]: topic?.actual_date || topic?.actualdate || topic?.date || "" }));
+      const topic = topics.find(t => t.id === topicId);
+      setActualDatesMap(prev => ({ ...prev, [topicId]: topic?.actual_date || topic?.actualdate || topic?.date || "" }));
     }
   };
 
   const handlePendingStatusChange = (topicId, value) => {
-    setPendingStatusChanges((prev) => ({ ...prev, [topicId]: value }));
+    setPendingStatusChanges(prev => ({ ...prev, [topicId]: value }));
   };
 
   const handleStatusConfirm = async (topicId) => {
     const newStatus = pendingStatusChanges[topicId];
     if (!newStatus) { setMessage("No status change to confirm."); return; }
-    const topic      = topics.find((t) => t.id === topicId);
+    const topic      = topics.find(t => t.id === topicId);
     const planned    = topic?.date;
     const actual     = actualDatesMap[topicId] || topic?.actual_date || topic?.actualdate || planned;
     let daysDiff = 0;
     if (planned && actual) daysDiff = Math.round((new Date(actual) - new Date(planned)) / (1000 * 60 * 60 * 24));
     if (daysDiff !== 0 && !(remarksMap[topicId] || "").trim()) {
-      setBlockedTopics((prev) => ({ ...prev, [topicId]: true }));
+      setBlockedTopics(prev => ({ ...prev, [topicId]: true }));
       showRemarksSnackbar("Without entering remarks, status changes are locked. Please add remarks first.", "warning");
       return;
     }
@@ -898,24 +749,24 @@ function TrainerDashboard({ user, token }) {
   };
 
   const performStatusUpdate = async (topicId, newStatus) => {
-    setTopics((prev) => prev.map((t) => (t.id === topicId ? { ...t, _pending: true } : t)));
+    setTopics(prev => prev.map(t => t.id === topicId ? { ...t, _pending: true } : t));
     try {
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
       const res = await axios.post(`${API_BASE}/api/update-topic-status`, { topic_id: topicId, status: newStatus }, { headers });
       if (res.data && (res.data.success || res.status === 200)) {
-        setTopics((prev) => prev.map((t) => t.id === topicId ? { ...t, topic_status: newStatus, _pending: false } : t));
-        setPendingStatusChanges((prev) => { const c = { ...prev }; delete c[topicId]; return c; });
+        setTopics(prev => prev.map(t => t.id === topicId ? { ...t, topic_status: newStatus, _pending: false } : t));
+        setPendingStatusChanges(prev => { const c = { ...prev }; delete c[topicId]; return c; });
         setMessage("✅ Status updated");
-        const nextAll = allBatchTopics.map((t) => t.id === topicId ? { ...t, topic_status: newStatus } : t);
+        const nextAll = allBatchTopics.map(t => t.id === topicId ? { ...t, topic_status: newStatus } : t);
         setAllBatchTopics(nextAll);
         const ws = {};
-        nextAll.forEach((t) => { const w = Number(t.week_no ?? t.weekno); if (!ws[w]) ws[w] = { hasNotCompleted: false }; if ((t.topic_status ?? t.topicstatus) !== "Completed") ws[w].hasNotCompleted = true; });
-        const cands = Object.keys(ws).map(Number).filter((w) => ws[w].hasNotCompleted);
+        nextAll.forEach(t => { const w = Number(t.week_no ?? t.weekno); if (!ws[w]) ws[w] = { hasNotCompleted: false }; if ((t.topic_status ?? t.topicstatus) !== "Completed") ws[w].hasNotCompleted = true; });
+        const cands = Object.keys(ws).map(Number).filter(w => ws[w].hasNotCompleted);
         setFirstIncompleteWeek(cands.length > 0 ? Math.min(...cands) : null);
       } else throw new Error(res.data?.error || "Update failed");
     } catch {
       setMessage("❌ Error updating status");
-      setTopics((prev) => prev.map((t) => (t.id === topicId ? { ...t, _pending: false } : t)));
+      setTopics(prev => prev.map(t => t.id === topicId ? { ...t, _pending: false } : t));
     }
   };
 
@@ -925,7 +776,7 @@ function TrainerDashboard({ user, token }) {
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
       const res = await axios.post(`${API_BASE}/api/update-remarks`, { topic_id: topicId, remarks: trimmed }, { headers });
       if (res.data?.success) {
-        setBlockedTopics((prev) => { const c = { ...prev }; delete c[topicId]; return c; });
+        setBlockedTopics(prev => { const c = { ...prev }; delete c[topicId]; return c; });
         showSnackbar("✅ Remarks saved", "success");
       }
     } catch { /* silent */ }
@@ -939,35 +790,27 @@ function TrainerDashboard({ user, token }) {
     return { color: grey[700] };
   };
 
-  /* ══ RENDER ══════════════════════════════════════════════════════════════ */
+  /* ── RENDER ── */
   return (
     <Box sx={{ fontFamily: "'DM Sans', sans-serif" }}>
 
-      {/* ── Tabs bar ── */}
+      {/* Tabs bar */}
       <Box sx={{ ...cardSx, px: { xs: 2, md: 3 }, pt: 2, pb: 0, mb: 2.5 }}>
-        <Tabs
-          value={tab}
-          onChange={(_, v) => setTab(v)}
-          sx={{
-            "& .MuiTabs-indicator": { height: 3, borderRadius: "3px 3px 0 0", background: `linear-gradient(90deg, ${T.accent}, ${T.accentDark})` },
-            "& .MuiTab-root": { fontFamily: "'DM Sans', sans-serif", fontWeight: 600, fontSize: 13, color: T.textSub, textTransform: "none", minHeight: 46, px: 2.5 },
-            "& .Mui-selected": { color: `${T.accent} !important`, fontWeight: "800 !important" },
-          }}
-        >
+        <Tabs value={tab} onChange={(_, v) => setTab(v)}
+          sx={{ "& .MuiTabs-indicator": { height: 3, borderRadius: "3px 3px 0 0", background: `linear-gradient(90deg, ${T.accent}, ${T.accentDark})` }, "& .MuiTab-root": { fontFamily: "'DM Sans', sans-serif", fontWeight: 600, fontSize: 13, color: T.textSub, textTransform: "none", minHeight: 46, px: 2.5 }, "& .Mui-selected": { color: `${T.accent} !important`, fontWeight: "800 !important" } }}>
           <Tab label={<Box sx={{ display: "flex", alignItems: "center", gap: 0.7 }}><span>📊</span><span>Progress</span></Box>} />
           <Tab label={<Box sx={{ display: "flex", alignItems: "center", gap: 0.7 }}><span>{isTrainer ? "📅" : "👥"}</span><span>{trainerTabLabel}</span></Box>} />
         </Tabs>
       </Box>
 
-      {/* ── Date change confirmation dialog ── */}
+      {/* Date change confirmation dialog */}
       <Dialog open={dateChangeDialog.open} onClose={() => setDateChangeDialog({ ...dateChangeDialog, open: false })} sx={dialogSx}>
         <DialogTitle sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 800, color: T.text, fontSize: 17, pb: 1 }}>Confirm Date Change</DialogTitle>
         <DialogContent>
           <DialogContentText sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: T.textSub }}>
             Change actual date from{" "}
-            <Box component="strong" sx={{ color: T.text }}>{topics.find((t) => t.id === dateChangeDialog.topicId)?.actual_date || "N/A"}</Box>{" "}
-            to{" "}
-            <Box component="strong" sx={{ color: T.text }}>{dateChangeDialog.newDate}</Box>?
+            <Box component="strong" sx={{ color: T.text }}>{topics.find(t => t.id === dateChangeDialog.topicId)?.actual_date || "N/A"}</Box>{" "}
+            to <Box component="strong" sx={{ color: T.text }}>{dateChangeDialog.newDate}</Box>?
           </DialogContentText>
           {(() => {
             const diff = Math.round((new Date(dateChangeDialog.newDate) - new Date(dateChangeDialog.plannedDate)) / (1000 * 60 * 60 * 24));
@@ -986,7 +829,7 @@ function TrainerDashboard({ user, token }) {
         </DialogActions>
       </Dialog>
 
-      {/* ── Save changes dialog ── */}
+      {/* Save changes dialog */}
       <Dialog open={saveChangesDialog.open} onClose={() => setSaveChangesDialog({ ...saveChangesDialog, open: false })} sx={dialogSx}>
         <DialogTitle sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 800, color: T.text, fontSize: 17, pb: 1 }}>Save Changes</DialogTitle>
         <DialogContent>
@@ -998,27 +841,22 @@ function TrainerDashboard({ user, token }) {
               📝 Remarks are <strong>MANDATORY</strong> when actual date is after planned date.
             </Typography>
           </Box>
-          <TextField
-            autoFocus margin="dense" label="Remarks *" type="text" fullWidth variant="outlined"
+          <TextField autoFocus margin="dense" label="Remarks *" type="text" fullWidth variant="outlined"
             value={saveChangesDialog.remarks || ""}
-            onChange={(e) => setSaveChangesDialog({ ...saveChangesDialog, remarks: e.target.value })}
-            sx={{ mt: 1, ...fieldSx }}
-          />
+            onChange={e => setSaveChangesDialog({ ...saveChangesDialog, remarks: e.target.value })}
+            sx={{ mt: 1, ...fieldSx }} />
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2.5, gap: 1 }}>
           <Button onClick={() => setSaveChangesDialog({ ...saveChangesDialog, open: false })} sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 600, textTransform: "none", borderRadius: "8px", color: T.textSub, border: `1px solid ${T.border}` }}>Cancel</Button>
-          <Button
-            onClick={confirmSaveChanges}
-            variant="contained"
+          <Button onClick={confirmSaveChanges} variant="contained"
             disabled={!saveChangesDialog.remarks?.trim() || savingTopicId === saveChangesDialog.topicId}
-            sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, textTransform: "none", borderRadius: "8px", background: `linear-gradient(135deg, ${T.accent}, ${T.accentDark})`, boxShadow: `0 3px 10px ${T.accent}44`, "&.Mui-disabled": { background: T.border, color: T.textSub, boxShadow: "none" } }}
-          >
+            sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, textTransform: "none", borderRadius: "8px", background: `linear-gradient(135deg, ${T.accent}, ${T.accentDark})`, boxShadow: `0 3px 10px ${T.accent}44`, "&.Mui-disabled": { background: T.border, color: T.textSub, boxShadow: "none" } }}>
             {savingTopicId === saveChangesDialog.topicId ? <CircularProgress size={18} color="inherit" /> : "Save Both"}
           </Button>
         </DialogActions>
       </Dialog>
 
-      {/* ════════════════════ PROGRESS TAB ════════════════════ */}
+      {/* ── PROGRESS TAB ── */}
       {tab === 0 && (
         <Box sx={{ ...cardSx, p: { xs: 2, md: 3 } }}>
 
@@ -1039,32 +877,41 @@ function TrainerDashboard({ user, token }) {
               <FormControl fullWidth size="small">
                 <Select
                   value={selectedBatch}
-                  onChange={(e) => setSelectedBatch(e.target.value)}
+                  onChange={e => setSelectedBatch(e.target.value)}
                   displayEmpty
+                  disabled={loadingBatches}
                   sx={{ borderRadius: "10px", fontFamily: "'DM Sans', sans-serif", fontSize: 13, background: T.surfaceAlt, "& fieldset": { borderColor: T.border }, "&:hover fieldset": { borderColor: T.accent }, "&.Mui-focused fieldset": { borderColor: T.accent } }}
                   MenuProps={{ PaperProps: { sx: { maxHeight: 300, borderRadius: "12px" } } }}
                 >
-                  <MenuItem value="" sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: T.textSub }}><em>Select a batch…</em></MenuItem>
-                  {batches.map((b) => {
+                  <MenuItem value="" sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: T.textSub }}>
+                    <em>{loadingBatches ? "Loading batches…" : "Select a batch…"}</em>
+                  </MenuItem>
+                  {batches.map((b, i) => {
                     const bn = b.batch_no || b.batchno;
                     const sd = b.start_date || b.startdate;
-                    return <MenuItem key={bn} value={bn} sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>{bn}{sd ? ` (${sd})` : ""}</MenuItem>;
+                    return (
+                      <MenuItem key={`${bn}-${i}`} value={bn} sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>
+                        {bn}{sd ? ` (${sd})` : ""}
+                      </MenuItem>
+                    );
                   })}
                 </Select>
               </FormControl>
+              {!loadingBatches && batches.length > 0 && (
+                <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 10, color: T.textSub, mt: 0.3 }}>
+                  {batches.length} batch{batches.length !== 1 ? "es" : ""} available
+                </Typography>
+              )}
             </Grid>
 
             {weeks.length > 0 && (
               <Grid item xs={12} sm={6} md={3}>
                 <Typography sx={{ ...labelSx, mb: 0.8 }}>Week</Typography>
                 <FormControl fullWidth size="small">
-                  <Select
-                    value={selectedWeek}
-                    onChange={(e) => setSelectedWeek(e.target.value)}
+                  <Select value={selectedWeek} onChange={e => setSelectedWeek(e.target.value)}
                     sx={{ borderRadius: "10px", fontFamily: "'DM Sans', sans-serif", fontSize: 13, background: T.surfaceAlt, "& fieldset": { borderColor: T.border }, "&:hover fieldset": { borderColor: T.accent }, "&.Mui-focused fieldset": { borderColor: T.accent } }}
-                    MenuProps={{ PaperProps: { sx: { maxHeight: 250, borderRadius: "12px" } } }}
-                  >
-                    {weeks.map((w) => <MenuItem key={w} value={w} sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Week {w}</MenuItem>)}
+                    MenuProps={{ PaperProps: { sx: { maxHeight: 250, borderRadius: "12px" } } }}>
+                    {weeks.map(w => <MenuItem key={w} value={w} sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Week {w}</MenuItem>)}
                   </Select>
                 </FormControl>
               </Grid>
@@ -1081,7 +928,7 @@ function TrainerDashboard({ user, token }) {
           )}
 
           {/* Topics grouped by date */}
-          {sortedDates.map((dateKey) => {
+          {sortedDates.map(dateKey => {
             const dateTopics   = topicsByDate[dateKey] || [];
             const weekForBlock = dateTopics[0]?.week_no ?? dateTopics[0]?.weekno ?? selectedWeek;
             const weekEditable = canEditWeek(weekForBlock);
@@ -1098,7 +945,7 @@ function TrainerDashboard({ user, token }) {
                   <Table size="small">
                     <TableHead>
                       <TableRow>
-                        {["Topic", "Planned Date", "Actual Date", "Difference", "Status", "Action", "Remarks"].map((h) => (
+                        {["Topic", "Planned Date", "Actual Date", "Difference", "Status", "Action", "Remarks"].map(h => (
                           <TableCell key={h} align={h === "Topic" ? "left" : "center"}
                             sx={{ ...labelSx, background: T.surfaceAlt, borderBottom: `2px solid ${T.border}`, py: 1.2, whiteSpace: "nowrap" }}>
                             {h}
@@ -1107,7 +954,7 @@ function TrainerDashboard({ user, token }) {
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {dateTopics.map((t) => {
+                      {dateTopics.map(t => {
                         const daysDiff        = t.date_difference ?? t.datedifference ?? 0;
                         const confirmedStatus = t.topic_status ?? t.topicstatus;
                         const currentStatus   = getStatusForTopic(t.id, confirmedStatus);
@@ -1121,14 +968,11 @@ function TrainerDashboard({ user, token }) {
                             <TableCell sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 600, fontSize: 13, color: T.accent, minWidth: 160 }}>
                               {t.topic_name || t.topicname || `Topic ${t.id}`}
                             </TableCell>
-                            <TableCell align="center" sx={{ fontFamily: "'DM Mono', monospace", fontSize: 12, color: T.textSub, whiteSpace: "nowrap" }}>
-                              {t.date}
-                            </TableCell>
+                            <TableCell align="center" sx={{ fontFamily: "'DM Mono', monospace", fontSize: 12, color: T.textSub, whiteSpace: "nowrap" }}>{t.date}</TableCell>
                             <TableCell align="center">
-                              <TextField
-                                type="date" size="small"
+                              <TextField type="date" size="small"
                                 value={actualDatesMap[t.id] || ""}
-                                onChange={(e) => handleActualDateChange(t.id, e.target.value, t.date)}
+                                onChange={e => handleActualDateChange(t.id, e.target.value, t.date)}
                                 InputProps={{ style: { ...getDateCellStyle(daysDiff), fontFamily: "'DM Mono', monospace", fontSize: 12 } }}
                                 sx={{ maxWidth: 148, "& .MuiOutlinedInput-root": { borderRadius: "8px", background: T.surfaceAlt, "& fieldset": { borderColor: T.border }, "&:hover fieldset": { borderColor: T.accent }, "&.Mui-focused fieldset": { borderColor: T.accent } } }}
                                 helperText={daysDiff !== 0 ? (daysDiff > 0 ? `Delayed ${daysDiff}d` : `Early ${Math.abs(daysDiff)}d`) : "On time"}
@@ -1139,8 +983,7 @@ function TrainerDashboard({ user, token }) {
                             <TableCell align="center">
                               {daysDiff !== 0 ? (
                                 <Chip label={daysDiff > 0 ? `+${daysDiff}d` : `${daysDiff}d`} size="small"
-                                  sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 11, bgcolor: daysDiff > 2 ? "#fee2e2" : daysDiff > 0 ? "#fef3c7" : "#dcfce7", color: daysDiff > 2 ? "#b91c1c" : daysDiff > 0 ? "#b45309" : "#15803d", border: `1px solid ${daysDiff > 2 ? "#fca5a5" : daysDiff > 0 ? "#fcd34d" : "#86efac"}` }}
-                                />
+                                  sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 11, bgcolor: daysDiff > 2 ? "#fee2e2" : daysDiff > 0 ? "#fef3c7" : "#dcfce7", color: daysDiff > 2 ? "#b91c1c" : daysDiff > 0 ? "#b45309" : "#15803d", border: `1px solid ${daysDiff > 2 ? "#fca5a5" : daysDiff > 0 ? "#fcd34d" : "#86efac"}` }} />
                               ) : (
                                 <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 700, color: "#15803d" }}>On time</Typography>
                               )}
@@ -1156,13 +999,10 @@ function TrainerDashboard({ user, token }) {
                                 <Tooltip title={!weekEditable ? "Complete current week before editing" : frozen ? "Completed topics cannot be changed" : blocked ? "Add remarks to unlock actions" : "Change Status"}>
                                   <span>
                                     <FormControl size="small">
-                                      <Select
-                                        value={currentStatus}
-                                        disabled={!editable || !!t._pending}
-                                        onChange={(e) => handlePendingStatusChange(t.id, e.target.value)}
+                                      <Select value={currentStatus} disabled={!editable || !!t._pending}
+                                        onChange={e => handlePendingStatusChange(t.id, e.target.value)}
                                         sx={{ borderRadius: "8px", fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, minWidth: 132, background: editable ? T.accentLight : T.surfaceAlt, color: editable ? T.accent : T.textSub, "& fieldset": { borderColor: T.border }, "&:hover fieldset": { borderColor: T.accent } }}
-                                        MenuProps={{ PaperProps: { sx: { borderRadius: "12px" } } }}
-                                      >
+                                        MenuProps={{ PaperProps: { sx: { borderRadius: "12px" } } }}>
                                         <MenuItem value="Planned"     sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12 }}>Planned</MenuItem>
                                         <MenuItem value="In Progress" sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12 }}>In Progress</MenuItem>
                                         <MenuItem value="Completed"   sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12 }}>Completed</MenuItem>
@@ -1181,13 +1021,11 @@ function TrainerDashboard({ user, token }) {
                               </Box>
                             </TableCell>
                             <TableCell align="center">
-                              <TextField
-                                size="small"
+                              <TextField size="small"
                                 value={remarksMap[t.id] || ""}
-                                onChange={(e) => setRemarksMap((prev) => ({ ...prev, [t.id]: e.target.value }))}
+                                onChange={e => setRemarksMap(prev => ({ ...prev, [t.id]: e.target.value }))}
                                 onBlur={() => handleRemarksSave(t.id, remarksMap[t.id])}
-                                placeholder="Add remarks…"
-                                variant="outlined"
+                                placeholder="Add remarks…" variant="outlined"
                                 sx={{ "& .MuiOutlinedInput-root": { borderRadius: "8px", fontFamily: "'DM Sans', sans-serif", fontSize: 12, background: T.surfaceAlt, "& fieldset": { borderColor: T.border }, "&:hover fieldset": { borderColor: T.accent }, "&.Mui-focused fieldset": { borderColor: T.accent } } }}
                                 inputProps={{ style: { fontSize: 12, fontFamily: "'DM Sans', sans-serif" } }}
                                 disabled={!weekEditable || frozen}
@@ -1215,7 +1053,7 @@ function TrainerDashboard({ user, token }) {
         </Box>
       )}
 
-      {/* ════════════════════ LEAVE / MANAGEMENT TAB ════════════════════ */}
+      {/* ── LEAVE / MANAGEMENT TAB ── */}
       {tab === 1 && (
         <Box>
           {isTrainer        && <TrainerUnavailabilityForm user={user} token={token} />}
@@ -1229,16 +1067,12 @@ function TrainerDashboard({ user, token }) {
         </Box>
       )}
 
-      {/* ── Snackbars ── */}
+      {/* Snackbars */}
       <Snackbar open={remarksSnackbarOpen} autoHideDuration={6000} onClose={() => setRemarksSnackbarOpen(false)} anchorOrigin={{ vertical: "top", horizontal: "center" }}>
-        <Alert onClose={() => setRemarksSnackbarOpen(false)} severity={remarksSnackbarSeverity} sx={{ width: "100%", fontFamily: "'DM Sans', sans-serif", borderRadius: "10px", fontWeight: 600 }}>
-          {remarksSnackbarMessage}
-        </Alert>
+        <Alert onClose={() => setRemarksSnackbarOpen(false)} severity={remarksSnackbarSeverity} sx={{ width: "100%", fontFamily: "'DM Sans', sans-serif", borderRadius: "10px", fontWeight: 600 }}>{remarksSnackbarMessage}</Alert>
       </Snackbar>
       <Snackbar open={snackbarOpen} autoHideDuration={6000} onClose={() => setSnackbarOpen(false)} anchorOrigin={{ vertical: "top", horizontal: "center" }}>
-        <Alert onClose={() => setSnackbarOpen(false)} severity={snackbarSeverity} sx={{ width: "100%", fontFamily: "'DM Sans', sans-serif", borderRadius: "10px", fontWeight: 600 }}>
-          {snackbarMessage}
-        </Alert>
+        <Alert onClose={() => setSnackbarOpen(false)} severity={snackbarSeverity} sx={{ width: "100%", fontFamily: "'DM Sans', sans-serif", borderRadius: "10px", fontWeight: 600 }}>{snackbarMessage}</Alert>
       </Snackbar>
     </Box>
   );

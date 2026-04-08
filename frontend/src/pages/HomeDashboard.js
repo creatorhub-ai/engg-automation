@@ -8,7 +8,6 @@ import {
   Select,
   InputLabel,
   FormControl,
-  Alert,
   Fade,
   CircularProgress,
   Chip,
@@ -20,11 +19,10 @@ import EmailIcon from '@mui/icons-material/Email';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import SchoolIcon from '@mui/icons-material/School';
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
-import MeetingRoomIcon from '@mui/icons-material/MeetingRoom';
 
 const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 
-/* ─── Design tokens (matches CourseProgress) ─────────────────────────────── */
+/* ─── Design tokens ─────────────────────────────────────────────────────── */
 const TOKENS = {
   bg:          "#d4e0fd",
   surface:     "#ffffff",
@@ -124,17 +122,7 @@ function ResendFailedEmails({ batchNo }) {
         startIcon={loading ? <CircularProgress size={14} /> : <RefreshIcon sx={{ fontSize: 16 }} />}
         onClick={handleResend}
         size="small"
-        sx={{
-          fontFamily: "'DM Sans', sans-serif",
-          fontWeight: 700,
-          fontSize: 12,
-          borderRadius: "10px",
-          borderColor: TOKENS.border,
-          color: TOKENS.textSub,
-          textTransform: "none",
-          px: 2,
-          "&:hover": { borderColor: TOKENS.accent, color: TOKENS.accent, background: TOKENS.accentLight },
-        }}
+        sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 12, borderRadius: "10px", borderColor: TOKENS.border, color: TOKENS.textSub, textTransform: "none", px: 2, "&:hover": { borderColor: TOKENS.accent, color: TOKENS.accent, background: TOKENS.accentLight } }}
       >
         Resend Failed Emails
       </Button>
@@ -179,7 +167,10 @@ export default function HomeDashboard({ user }) {
   const [plannerRows, setPlannerRows] = useState([]);
   const [showPlannerPreview, setShowPlannerPreview] = useState(false);
 
+  // FIX: Store batches as array of objects { batch_no, start_date }
   const [batches, setBatches] = useState([]);
+  const [loadingBatches, setLoadingBatches] = useState(true);
+
   const [selectedBatch, setSelectedBatch] = useState("");
   const [mode, setMode] = useState("Online");
   const [batchType, setBatchType] = useState("");
@@ -189,25 +180,60 @@ export default function HomeDashboard({ user }) {
   const [classRoom, setClassRoom] = useState("");
   const [mockInterviewOffset, setMockInterviewOffset] = useState("7");
 
+  /* ── FIX: Robust batch loading ── */
   useEffect(() => {
-    fetch(`${API_BASE}/api/batches`)
-      .then(res => res.json())
-      .then(data => setBatches(data))
-      .catch(() => setMessage("❌ Failed to fetch batches"));
+    const fetchBatches = async () => {
+      setLoadingBatches(true);
+      try {
+        const res = await fetch(`${API_BASE}/api/batches`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        if (!Array.isArray(data)) {
+          console.warn("/api/batches returned non-array:", data);
+          setBatches([]);
+          return;
+        }
+
+        // Normalize: each item may be a string, or an object with batch_no
+        const normalized = data
+          .map(b => {
+            if (typeof b === "string") return { batch_no: b, start_date: "" };
+            if (b && typeof b === "object" && b.batch_no) return b;
+            return null;
+          })
+          .filter(Boolean)
+          // Sort by batch_no for consistent ordering
+          .sort((a, b) => (a.batch_no || "").localeCompare(b.batch_no || ""));
+
+        console.log(`Loaded ${normalized.length} batches:`, normalized.map(b => b.batch_no));
+        setBatches(normalized);
+      } catch (err) {
+        console.error("Failed to fetch batches:", err);
+        setMessage("❌ Failed to fetch batches");
+        setBatches([]);
+      } finally {
+        setLoadingBatches(false);
+      }
+    };
+    fetchBatches();
   }, []);
 
+  /* ── Auto-fill mode/classroom from planner meta when batch changes ── */
   useEffect(() => {
     const fetchPlannerMeta = async () => {
       if (!selectedBatch) return;
       try {
         const res = await fetch(`${API_BASE}/api/course-planner-meta/${encodeURIComponent(selectedBatch)}`);
-        const data = await res.json();
         if (!res.ok) { setMode("Online"); setBatchType(""); setClassRoom(""); return; }
+        const data = await res.json();
         if (data.mode) setMode(data.mode);
         if (data.classroom_name) setClassRoom(data.classroom_name);
         if (data.mode?.toLowerCase() === "offline" && data.batch_type) setBatchType(data.batch_type);
         else if (data.mode?.toLowerCase() !== "offline") setBatchType("");
-      } catch (err) { console.error("Error fetching planner meta:", err); }
+      } catch (err) {
+        console.error("Error fetching planner meta:", err);
+      }
     };
     fetchPlannerMeta();
   }, [selectedBatch]);
@@ -220,18 +246,18 @@ export default function HomeDashboard({ user }) {
       complete: async (results) => {
         const parsed = results.data.map((r, index) => {
           const row = {
-            name: r.name || r.Name || r['Learner Name'] || '',
-            email: r.email || r.Email || '',
-            phone: r.phone || r.Phone || '',
-            batch_no: r.batch_no || r.Batch || r.batch || '',
-            status: r.status || r.Status || '',
+            name:     r.name     || r.Name     || r['Learner Name'] || '',
+            email:    r.email    || r.Email    || '',
+            phone:    r.phone    || r.Phone    || '',
+            batch_no: r.batch_no || r.Batch    || r.batch           || '',
+            status:   r.status   || r.Status   || '',
             __rowIndex: index + 2,
           };
           const errors = [];
-          if (!row.name) errors.push("Name required");
-          if (!row.batch_no) errors.push("Batch no required");
-          if (!validateEmail(row.email)) errors.push("Invalid email");
-          if (!validatePhone(row.phone)) errors.push("Invalid phone");
+          if (!row.name)                    errors.push("Name required");
+          if (!row.batch_no)                errors.push("Batch no required");
+          if (!validateEmail(row.email))    errors.push("Invalid email");
+          if (!validatePhone(row.phone))    errors.push("Invalid phone");
           return { ...row, __errors: errors, __duplicate: null };
         });
         setLearnerRows(parsed);
@@ -241,15 +267,15 @@ export default function HomeDashboard({ user }) {
           const res = await axios.post(`${API_BASE}/upload-learners`, { learners: validRows });
           const data = res.data || {};
           setUploadMsg(data.message || "✅ Uploaded successfully");
-          const alreadyInDb = data.alreadyInDb || [];
-          const inFileDuplicates = data.inFileDuplicates || [];
+          const alreadyInDb      = data.alreadyInDb      || [];
+          const inFileDuplicates = data.inFileDuplicates  || [];
           const key = (l) => `${(l.name||'').trim().toLowerCase()}|${(l.email||'').trim().toLowerCase()}|${(l.batch_no||'').trim()}`;
-          const alreadySet = new Set(alreadyInDb.map(key));
-          const inFileSet = new Set(inFileDuplicates.map(key));
+          const alreadySet   = new Set(alreadyInDb.map(key));
+          const inFileSet    = new Set(inFileDuplicates.map(key));
           setLearnerRows(prev => prev.map(r => {
             const k = key(r);
             if (alreadySet.has(k)) return { ...r, __duplicate: "Already in database" };
-            if (inFileSet.has(k)) return { ...r, __duplicate: "Duplicate in file" };
+            if (inFileSet.has(k))  return { ...r, __duplicate: "Duplicate in file" };
             return r;
           }));
         } catch (err) { setUploadMsg('❌ Upload failed: ' + (err.response?.data?.error || err.message)); }
@@ -270,18 +296,26 @@ export default function HomeDashboard({ user }) {
       complete: async (results) => {
         const json = results.data.map((r, index) => ({
           classroom_name: r.classroom_name || r.classroom || "",
-          batch_no: r.batch_no || r.Batch || r.batch || "",
-          domain: r.domain || "", mode: r.mode || "",
-          week_no: r.week_no || r.week || "",
-          date: r.date || r.Date || "",
-          start_time: r.start_time || r["start time"] || r.StartTime || "",
-          end_time: r.end_time || "", module_name: r.module_name || "",
-          module_topic: r.module_topic || "", topic_name: r.topic_name || "",
-          trainer_name: r.trainer_name || "", trainer_email: r.trainer_email || "",
-          topic_status: r.topic_status || "", remarks: r.remarks || "",
-          batch_type: r.batch_type || "", actual_date: r.actual_date || "",
-          date_difference: r.date_difference || "", date_changed_by: r.date_changed_by || "",
-          date_changed_at: r.date_changed_at || "", __rowIndex: index + 2,
+          batch_no:       r.batch_no       || r.Batch     || r.batch || "",
+          domain:         r.domain         || "",
+          mode:           r.mode           || "",
+          week_no:        r.week_no        || r.week      || "",
+          date:           r.date           || r.Date      || "",
+          start_time:     r.start_time     || r["start time"] || r.StartTime || "",
+          end_time:       r.end_time       || "",
+          module_name:    r.module_name    || "",
+          module_topic:   r.module_topic   || "",
+          topic_name:     r.topic_name     || "",
+          trainer_name:   r.trainer_name   || "",
+          trainer_email:  r.trainer_email  || "",
+          topic_status:   r.topic_status   || "",
+          remarks:        r.remarks        || "",
+          batch_type:     r.batch_type     || "",
+          actual_date:    r.actual_date    || "",
+          date_difference:  r.date_difference  || "",
+          date_changed_by:  r.date_changed_by  || "",
+          date_changed_at:  r.date_changed_at  || "",
+          __rowIndex: index + 2,
         }));
         setPlannerRows(json);
         try {
@@ -301,7 +335,13 @@ export default function HomeDashboard({ user }) {
     try {
       const res = await fetch(`${API_BASE}/api/schedule-email`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ batch_no: selectedBatch, mode, batch_type: mode === "Offline" ? batchType : null, class_room: classRoom, mock_interview_offset: Number(mockInterviewOffset) || 7 }),
+        body: JSON.stringify({
+          batch_no:              selectedBatch,
+          mode,
+          batch_type:            mode === "Offline" ? batchType : null,
+          class_room:            classRoom,
+          mock_interview_offset: Number(mockInterviewOffset) || 7,
+        }),
       });
       const data = await res.json();
       if (!res.ok) setMessage(`❌ Failed: ${data.error || "Unknown error"}`);
@@ -331,9 +371,8 @@ export default function HomeDashboard({ user }) {
     return role.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
   };
 
-  const roleTitle = getRoleTitle(user?.role);
+  const roleTitle   = getRoleTitle(user?.role);
   const welcomeName = user?.name ? user.name : "User";
-
   const msgIsSuccess = message.startsWith("✅");
   const msgIsWarning = message.startsWith("⚠️");
 
@@ -360,13 +399,7 @@ export default function HomeDashboard({ user }) {
             <SectionHeader icon={<SchoolIcon sx={{ fontSize: 20 }} />} title="Upload Learners" subtitle="CSV format" />
             <Box sx={{ p: 3 }}>
               <Box
-                sx={{
-                  border: `2px dashed ${learnersFile ? TOKENS.accent : TOKENS.border}`,
-                  borderRadius: "12px", p: 2.5, textAlign: "center", cursor: "pointer",
-                  background: learnersFile ? TOKENS.accentLight : TOKENS.surfaceAlt,
-                  transition: "all 0.2s ease", mb: 2,
-                  "&:hover": { borderColor: TOKENS.accent, background: TOKENS.accentLight },
-                }}
+                sx={{ border: `2px dashed ${learnersFile ? TOKENS.accent : TOKENS.border}`, borderRadius: "12px", p: 2.5, textAlign: "center", cursor: "pointer", background: learnersFile ? TOKENS.accentLight : TOKENS.surfaceAlt, transition: "all 0.2s ease", mb: 2, "&:hover": { borderColor: TOKENS.accent, background: TOKENS.accentLight } }}
                 component="label"
               >
                 <input type="file" accept=".csv" hidden onChange={e => setLearnersFile(e.target.files[0])} />
@@ -376,21 +409,12 @@ export default function HomeDashboard({ user }) {
                 </Typography>
               </Box>
               <Box sx={{ display: "flex", gap: 1.5 }}>
-                <Button
-                  variant="contained"
-                  onClick={handleUploadLearners}
-                  size="small"
-                  sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 12, borderRadius: "10px", textTransform: "none", px: 2.5, background: TOKENS.accent, "&:hover": { background: "#2a3fd4" } }}
-                >
+                <Button variant="contained" onClick={handleUploadLearners} size="small"
+                  sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 12, borderRadius: "10px", textTransform: "none", px: 2.5, background: TOKENS.accent, "&:hover": { background: "#2a3fd4" } }}>
                   Upload
                 </Button>
-                <Button
-                  variant="outlined"
-                  onClick={() => setShowLearnerPreview(v => !v)}
-                  disabled={learnerRows.length === 0}
-                  size="small"
-                  sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 12, borderRadius: "10px", textTransform: "none", borderColor: TOKENS.border, color: TOKENS.textSub, "&:hover": { borderColor: TOKENS.accent, color: TOKENS.accent, background: TOKENS.accentLight } }}
-                >
+                <Button variant="outlined" onClick={() => setShowLearnerPreview(v => !v)} disabled={learnerRows.length === 0} size="small"
+                  sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 12, borderRadius: "10px", textTransform: "none", borderColor: TOKENS.border, color: TOKENS.textSub, "&:hover": { borderColor: TOKENS.accent, color: TOKENS.accent, background: TOKENS.accentLight } }}>
                   {showLearnerPreview ? "Hide" : "View"} List
                 </Button>
               </Box>
@@ -409,7 +433,7 @@ export default function HomeDashboard({ user }) {
                   rows={learnerRows}
                   renderRow={(row, idx) => {
                     const hasErrors = row.__errors?.length > 0;
-                    const isDup = !!row.__duplicate;
+                    const isDup     = !!row.__duplicate;
                     return (
                       <Box key={idx} component="tr" sx={{ background: hasErrors ? TOKENS.error.light : isDup ? TOKENS.warning.light : "transparent", "&:hover": { background: TOKENS.surfaceAlt } }}>
                         {[row.__rowIndex, row.name, row.email, row.phone, row.batch_no, row.status].map((val, i) => (
@@ -430,13 +454,7 @@ export default function HomeDashboard({ user }) {
             <SectionHeader icon={<CalendarTodayIcon sx={{ fontSize: 20 }} />} title="Upload Course Planner" subtitle="CSV format" />
             <Box sx={{ p: 3 }}>
               <Box
-                sx={{
-                  border: `2px dashed ${plannerFile ? TOKENS.accent : TOKENS.border}`,
-                  borderRadius: "12px", p: 2.5, textAlign: "center", cursor: "pointer",
-                  background: plannerFile ? TOKENS.accentLight : TOKENS.surfaceAlt,
-                  transition: "all 0.2s ease", mb: 2,
-                  "&:hover": { borderColor: TOKENS.accent, background: TOKENS.accentLight },
-                }}
+                sx={{ border: `2px dashed ${plannerFile ? TOKENS.accent : TOKENS.border}`, borderRadius: "12px", p: 2.5, textAlign: "center", cursor: "pointer", background: plannerFile ? TOKENS.accentLight : TOKENS.surfaceAlt, transition: "all 0.2s ease", mb: 2, "&:hover": { borderColor: TOKENS.accent, background: TOKENS.accentLight } }}
                 component="label"
               >
                 <input type="file" accept=".csv" hidden onChange={handlePlannerFileChange} />
@@ -446,21 +464,12 @@ export default function HomeDashboard({ user }) {
                 </Typography>
               </Box>
               <Box sx={{ display: "flex", gap: 1.5 }}>
-                <Button
-                  variant="contained"
-                  onClick={handleUploadPlanner}
-                  size="small"
-                  sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 12, borderRadius: "10px", textTransform: "none", px: 2.5, background: TOKENS.accent, "&:hover": { background: "#2a3fd4" } }}
-                >
+                <Button variant="contained" onClick={handleUploadPlanner} size="small"
+                  sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 12, borderRadius: "10px", textTransform: "none", px: 2.5, background: TOKENS.accent, "&:hover": { background: "#2a3fd4" } }}>
                   Upload
                 </Button>
-                <Button
-                  variant="outlined"
-                  onClick={() => setShowPlannerPreview(v => !v)}
-                  disabled={plannerRows.length === 0}
-                  size="small"
-                  sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 12, borderRadius: "10px", textTransform: "none", borderColor: TOKENS.border, color: TOKENS.textSub, "&:hover": { borderColor: TOKENS.accent, color: TOKENS.accent, background: TOKENS.accentLight } }}
-                >
+                <Button variant="outlined" onClick={() => setShowPlannerPreview(v => !v)} disabled={plannerRows.length === 0} size="small"
+                  sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 12, borderRadius: "10px", textTransform: "none", borderColor: TOKENS.border, color: TOKENS.textSub, "&:hover": { borderColor: TOKENS.accent, color: TOKENS.accent, background: TOKENS.accentLight } }}>
                   {showPlannerPreview ? "Hide" : "View"} List
                 </Button>
               </Box>
@@ -495,22 +504,39 @@ export default function HomeDashboard({ user }) {
           <SectionHeader icon={<EmailIcon sx={{ fontSize: 20 }} />} title="Schedule Emails" subtitle="Configure and dispatch batch communications" />
           <Box sx={{ p: 3 }}>
             <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 2, mb: 2 }}>
-              {/* Batch */}
+
+              {/* Batch — FIX: show loading state and all batches */}
               <FormControl size="small" fullWidth>
-                <InputLabel sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Select Batch</InputLabel>
-                <Select value={selectedBatch} label="Select Batch" onChange={e => setSelectedBatch(e.target.value)} sx={inputSx}>
+                <InputLabel sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>
+                  {loadingBatches ? "Loading batches…" : "Select Batch"}
+                </InputLabel>
+                <Select
+                  value={selectedBatch}
+                  label={loadingBatches ? "Loading batches…" : "Select Batch"}
+                  onChange={e => setSelectedBatch(e.target.value)}
+                  disabled={loadingBatches}
+                  sx={inputSx}
+                  MenuProps={{ PaperProps: { sx: { maxHeight: 300 } } }}
+                >
                   <MenuItem value="">-- Choose Batch --</MenuItem>
                   {batches.map((b, i) => (
-                    <MenuItem key={i} value={b.batch_no} sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>{b.batch_no} ({b.start_date})</MenuItem>
+                    <MenuItem key={`${b.batch_no}-${i}`} value={b.batch_no} sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>
+                      {b.batch_no}{b.start_date ? ` (${b.start_date})` : ""}
+                    </MenuItem>
                   ))}
                 </Select>
+                {!loadingBatches && (
+                  <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 10, color: TOKENS.textSub, mt: 0.3 }}>
+                    {batches.length} batch{batches.length !== 1 ? "es" : ""} available
+                  </Typography>
+                )}
               </FormControl>
 
               {/* Mode */}
               <FormControl size="small" fullWidth>
                 <InputLabel sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Mode</InputLabel>
                 <Select value={mode} label="Mode" onChange={e => setMode(e.target.value)} sx={inputSx}>
-                  <MenuItem value="Online" sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Online</MenuItem>
+                  <MenuItem value="Online"  sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Online</MenuItem>
                   <MenuItem value="Offline" sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Offline</MenuItem>
                 </Select>
               </FormControl>
@@ -521,7 +547,7 @@ export default function HomeDashboard({ user }) {
                   <InputLabel sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Batch Type</InputLabel>
                   <Select value={batchType} label="Batch Type" onChange={e => setBatchType(e.target.value)} sx={inputSx}>
                     <MenuItem value="">-- Choose Batch Type --</MenuItem>
-                    <MenuItem value="Morning Batch" sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Morning Batch</MenuItem>
+                    <MenuItem value="Morning Batch"   sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Morning Batch</MenuItem>
                     <MenuItem value="Afternoon Batch" sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Afternoon Batch</MenuItem>
                   </Select>
                 </FormControl>
@@ -561,7 +587,7 @@ export default function HomeDashboard({ user }) {
               <Button
                 variant="contained"
                 onClick={handleSchedule}
-                disabled={loading}
+                disabled={loading || !selectedBatch}
                 startIcon={loading ? <CircularProgress size={14} color="inherit" /> : <EmailIcon sx={{ fontSize: 16 }} />}
                 sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 13, borderRadius: "10px", textTransform: "none", px: 3, py: 1, background: TOKENS.accent, "&:hover": { background: "#2a3fd4" } }}
               >
