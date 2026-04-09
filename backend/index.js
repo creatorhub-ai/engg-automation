@@ -1070,7 +1070,7 @@ app.get("/api/marks/window-status", async (req, res) => {
   }
 });
 
-// 2) POST /api/marks/:assessmentType
+// 2) GET /api/marks/:assessmentType — load existing marks
 app.get("/api/marks/:assessmentType", async (req, res) => {
   const { assessmentType } = req.params;
   const { batch_no, course_planner_id, assessment_date } = req.query;
@@ -1081,31 +1081,20 @@ app.get("/api/marks/:assessmentType", async (req, res) => {
     return res.status(400).json({ error: "batch_no and assessment_date are required" });
 
   try {
-    let query;
-    let values;
+    let query = supabase
+      .from(table)
+      .select("learner_id, out_off, points, percentage, assessment_name")
+      .eq("batch_no", batch_no)
+      .eq("assessment_date", assessment_date);
 
     if (course_planner_id) {
-      query = `
-        SELECT learner_id, out_off, points, percentage, assessment_name
-        FROM ${table}
-        WHERE batch_no = $1
-          AND course_planner_id = $2
-          AND assessment_date = $3
-      `;
-      values = [batch_no, Number(course_planner_id), assessment_date];
-    } else {
-      // Auto-date assessments (final_project, viva) — no planner id
-      query = `
-        SELECT learner_id, out_off, points, percentage, assessment_name
-        FROM ${table}
-        WHERE batch_no = $1
-          AND assessment_date = $2
-      `;
-      values = [batch_no, assessment_date];
+      query = query.eq("course_planner_id", Number(course_planner_id));
     }
 
-    const result = await pool.query(query, values);
-    return res.json(result.rows);
+    const { data, error } = await query;
+
+    if (error) throw error;
+    return res.json(data || []);
   } catch (err) {
     console.error("GET marks error:", err);
     return res.status(500).json({ error: err.message });
@@ -5559,11 +5548,6 @@ app.get("/api/assessment-dates", async (req, res) => {
 
 // Add or update Weekly Assessment Score
 app.post("/api/marks/weekly-assessment", async (req, res) => {
-  if (!isWindowOpen("weekly-assessment", req.body.assessment_date)) {
-    return res.status(403).json({
-      error: "Marks entry window closed",
-    });
-  }
   try {
     const {
       learner_id,
@@ -5572,12 +5556,19 @@ app.post("/api/marks/weekly-assessment", async (req, res) => {
       assessment_date,
       out_off,
       points,
-      percentage
+      percentage,
+      course_planner_id
     } = req.body;
 
-    const planner = await getPlannerByBatchAndDate(batch_no, assessment_date);
-    if (!planner) {
-      return res.status(409).json({ error: "Planner not found" });
+    // Use course_planner_id from frontend if provided, otherwise look it up
+    let plannerId = course_planner_id ? Number(course_planner_id) : null;
+
+    if (!plannerId) {
+      const planner = await getPlannerByBatchAndDate(batch_no, assessment_date);
+      if (!planner) {
+        return res.status(409).json({ error: "Planner not found" });
+      }
+      plannerId = planner.id;
     }
 
     const { error } = await supabase
@@ -5585,7 +5576,7 @@ app.post("/api/marks/weekly-assessment", async (req, res) => {
       .upsert(
         {
           learner_id,
-          course_planner_id: planner.id,
+          course_planner_id: plannerId,
           batch_no,
           week_no,
           assessment_date,
@@ -5609,11 +5600,6 @@ app.post("/api/marks/weekly-assessment", async (req, res) => {
 
 //save the intermediate assessment marks
 app.post("/api/marks/intermediate-assessment", async (req, res) => {
-  if (!isWindowOpen("intermediate-assessment", req.body.assessment_date)) {
-    return res.status(403).json({
-      error: "Marks entry window closed",
-    });
-  }
   try {
     const {
       learner_id,
@@ -5623,23 +5609,30 @@ app.post("/api/marks/intermediate-assessment", async (req, res) => {
       assessment_name,
       out_off,
       points,
-      percentage
+      percentage,
+      course_planner_id
     } = req.body;
 
     if (!week_no) {
       return res.status(400).json({ error: "week_no is required" });
     }
 
-    const { data: planner, error: plannerError } = await supabase
-      .from("course_planner_data")
-      .select("id")
-      .eq("batch_no", batch_no)
-      .eq("date", assessment_date)
-      .limit(1)
-      .single();
+    // Use course_planner_id from frontend if provided, otherwise look it up
+    let plannerId = course_planner_id ? Number(course_planner_id) : null;
 
-    if (plannerError || !planner) {
-      return res.status(409).json({ error: "Planner not found" });
+    if (!plannerId) {
+      const { data: planner, error: plannerError } = await supabase
+        .from("course_planner_data")
+        .select("id")
+        .eq("batch_no", batch_no)
+        .eq("date", assessment_date)
+        .limit(1)
+        .single();
+
+      if (plannerError || !planner) {
+        return res.status(409).json({ error: "Planner not found for this batch and date" });
+      }
+      plannerId = planner.id;
     }
 
     const { error } = await supabase
@@ -5647,7 +5640,7 @@ app.post("/api/marks/intermediate-assessment", async (req, res) => {
       .upsert(
         {
           learner_id,
-          course_planner_id: planner.id,
+          course_planner_id: plannerId,
           batch_no,
           week_no,
           assessment_date,
@@ -5658,7 +5651,6 @@ app.post("/api/marks/intermediate-assessment", async (req, res) => {
           marked_at: new Date()
         },
         {
-          // ✅ MUST MATCH TABLE PRIMARY KEY
           onConflict: "learner_id,course_planner_id,week_no,assessment_date"
         }
       );
@@ -5676,11 +5668,6 @@ app.post("/api/marks/intermediate-assessment", async (req, res) => {
 
 //save the module level assessment marks
 app.post("/api/marks/module-level-assessment", async (req, res) => {
-  if (!isWindowOpen("module-level-assessment", req.body.assessment_date)) {
-    return res.status(403).json({
-      error: "Marks entry window closed",
-    });
-  }
   try {
     const {
       learner_id,
@@ -5690,23 +5677,30 @@ app.post("/api/marks/module-level-assessment", async (req, res) => {
       assessment_name,
       out_off,
       points,
-      percentage
+      percentage,
+      course_planner_id
     } = req.body;
 
     if (!module_no) {
       return res.status(400).json({ error: "module_no is required" });
     }
 
-    const { data: planner, error: plannerError } = await supabase
-      .from("course_planner_data")
-      .select("id")
-      .eq("batch_no", batch_no)
-      .eq("date", assessment_date)
-      .limit(1)
-      .single();
+    // Use course_planner_id from frontend if provided, otherwise look it up
+    let plannerId = course_planner_id ? Number(course_planner_id) : null;
 
-    if (plannerError || !planner) {
-      return res.status(409).json({ error: "Planner not found" });
+    if (!plannerId) {
+      const { data: planner, error: plannerError } = await supabase
+        .from("course_planner_data")
+        .select("id")
+        .eq("batch_no", batch_no)
+        .eq("date", assessment_date)
+        .limit(1)
+        .single();
+
+      if (plannerError || !planner) {
+        return res.status(409).json({ error: "Planner not found" });
+      }
+      plannerId = planner.id;
     }
 
     const { error } = await supabase
@@ -5714,7 +5708,7 @@ app.post("/api/marks/module-level-assessment", async (req, res) => {
       .upsert(
         {
           learner_id,
-          course_planner_id: planner.id,
+          course_planner_id: plannerId,
           batch_no,
           module_no,
           assessment_date,
@@ -5747,11 +5741,6 @@ app.post("/api/marks/module-level-assessment", async (req, res) => {
 // because the unique key is (learner_id, course_planner_id, week_no, assessment_date).
 // ==============================
 app.post("/api/marks/final-assessment", async (req, res) => {
-  if (!isWindowOpen("final-assessment", req.body.assessment_date)) {
-    return res.status(403).json({
-      error: "Marks entry window closed",
-    });
-  }
   try {
     const {
       learner_id,
@@ -5974,31 +5963,20 @@ app.post("/api/marks/update-out-of", async (req, res) => {
   if (!table) return res.status(400).json({ error: "Invalid assessment type" });
 
   try {
-    let query;
-    let values;
+    let query = supabase
+      .from(table)
+      .update({ out_off: Number(out_off) })
+      .eq("batch_no", batch_no)
+      .eq("assessment_date", assessment_date);
 
     if (course_planner_id) {
-      query = `
-        UPDATE ${table}
-        SET out_off = $1
-        WHERE batch_no = $2
-          AND course_planner_id = $3
-          AND assessment_date = $4
-      `;
-      values = [Number(out_off), batch_no, Number(course_planner_id), assessment_date];
-    } else {
-      // Auto-date assessments
-      query = `
-        UPDATE ${table}
-        SET out_off = $1
-        WHERE batch_no = $2
-          AND assessment_date = $3
-      `;
-      values = [Number(out_off), batch_no, assessment_date];
+      query = query.eq("course_planner_id", Number(course_planner_id));
     }
 
-    const result = await pool.query(query, values);
-    return res.json({ updated: result.rowCount });
+    const { error, count } = await query;
+
+    if (error) throw error;
+    return res.json({ updated: count ?? 0 });
   } catch (err) {
     console.error("Update out_off error:", err);
     return res.status(500).json({ error: err.message });
