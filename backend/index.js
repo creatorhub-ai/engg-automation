@@ -1080,10 +1080,16 @@ app.get("/api/marks/:assessmentType", async (req, res) => {
   if (!batch_no || !assessment_date)
     return res.status(400).json({ error: "batch_no and assessment_date are required" });
 
+  // weekly_assessment_scores does not have assessment_name column
+  const hasAssessmentName = assessmentType !== "weekly-assessment";
+  const selectCols = hasAssessmentName
+    ? "learner_id, out_off, points, percentage, assessment_name"
+    : "learner_id, out_off, points, percentage";
+
   try {
     let query = supabase
       .from(table)
-      .select("learner_id, out_off, points, percentage, assessment_name")
+      .select(selectCols)
       .eq("batch_no", batch_no)
       .eq("assessment_date", assessment_date);
 
