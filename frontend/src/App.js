@@ -92,6 +92,7 @@ const roleMenus = {
     { text: "Course Progress", path: "/course-progress" },
     { text: "Trainer Dashboards", path: "/trainer-dashboard" },
     { text: "Users Management", path: "/users" },
+    { text: "Announcement", path: "/announcement" }, 
   ],
 };
 

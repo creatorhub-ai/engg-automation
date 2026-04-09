@@ -155,12 +155,14 @@ function getCurrentUser() {
 /* ─── Role hook (reads from localStorage — no server call needed) ────────── */
 function useCurrentUserRole() {
   const localUser = getCurrentUser();
-  const role = localUser?.role || "";
+  // Role is stored lowercase by the login endpoint
+  const role = (localUser?.role || "").toLowerCase();
   return {
     role,
     loading: false,
-    isAdminOrManager: role === "Admin" || role === "Manager",
-    isAdminOrCoordinator: role === "Admin" || role === "Coordinator",
+    isAdminOrManager: role === "admin" || role === "manager",
+    isAdminOrCoordinator: role === "admin" || role === "coordinator",
+    isTrainer: role === "trainer",
   };
 }
 
@@ -246,7 +248,7 @@ function OutOfOverrideBadge() {
 
 /* ─── Main Component ─────────────────────────────────────────────────────── */
 function MarkSheet() {
-  const { isAdminOrManager, isAdminOrCoordinator, loading: roleLoading } = useCurrentUserRole();
+  const { isAdminOrManager, isAdminOrCoordinator, isTrainer, loading: roleLoading } = useCurrentUserRole();
 
   const [batchNo,                 setBatchNo]                 = useState("");
   const [assessmentType,          setAssessmentType]          = useState("weekly");
@@ -282,7 +284,8 @@ function MarkSheet() {
     ? false
     : isAutoOutOfType && isFixedOutOfBatch;
 
-  // Admin and Coordinator can edit already-saved marks; others see read-only
+  // Admin and Coordinator can edit already-saved marks
+  // Trainer can only enter marks for the first time; after save they become read-only
   const canEditSavedMarks = isAdminOrCoordinator;
   const marksEditDisabled = marksAlreadySaved && !canEditSavedMarks;
 
@@ -358,6 +361,13 @@ function MarkSheet() {
     setWindowCloseDate(close.toLocaleDateString("en-GB"));
   }, [selectedDate, assessmentType, isAutoDateAssessment]);
 
+  /* ── Auto-load existing marks for auto-date assessments (final_project, viva) ── */
+  useEffect(() => {
+    if (!isAutoDateAssessment || !batchNo || !selectedDate) return;
+    loadExistingMarks(null, selectedDate, outOff);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [batchNo, selectedDate, isAutoDateAssessment]);
+
   /* ── Load existing marks ── */
   const loadExistingMarks = useCallback(async (plannerId, date, currentOutOff) => {
     if (!batchNo || !date) return;
@@ -374,6 +384,7 @@ function MarkSheet() {
       const res = await fetch(url);
       if (!res.ok) {
         console.warn("Failed to load existing marks:", res.status);
+        setMarksAlreadySaved(false);
         setLoadingMarks(false);
         return;
       }
@@ -422,6 +433,7 @@ function MarkSheet() {
     } catch (e) {
       console.error("Failed to load existing marks:", e);
       setMarks({});
+      setMarksAlreadySaved(false);
     } finally {
       setLoadingMarks(false);
     }

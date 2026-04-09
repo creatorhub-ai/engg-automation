@@ -1080,8 +1080,9 @@ app.get("/api/marks/:assessmentType", async (req, res) => {
   if (!batch_no || !assessment_date)
     return res.status(400).json({ error: "batch_no and assessment_date are required" });
 
-  // weekly_assessment_scores does not have assessment_name column
-  const hasAssessmentName = assessmentType !== "weekly-assessment";
+  // Only intermediate, module-level, and final assessment tables have assessment_name column
+  const typesWithAssessmentName = ["intermediate-assessment", "module-level-assessment", "final-assessment"];
+  const hasAssessmentName = typesWithAssessmentName.includes(assessmentType);
   const selectCols = hasAssessmentName
     ? "learner_id, out_off, points, percentage, assessment_name"
     : "learner_id, out_off, points, percentage";
