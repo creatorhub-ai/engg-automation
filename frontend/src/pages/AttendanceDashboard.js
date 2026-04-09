@@ -142,10 +142,11 @@ export default function AttendanceDashboard({ token }) {
           newAttendance[learner.email] = { [today]: {} };
           for (let session = 1; session <= sessionsPerDay; session++) {
             const serverCell = serverAttendance[learner.email]?.[today]?.[session];
-            if (serverCell) {
-              newAttendance[learner.email][today][session] = { status: serverCell.status, locked: true };
-            } else if (learner.status === "Disabled") {
+            if (learner.status === "Disabled") {
               newAttendance[learner.email][today][session] = { status: "NA", locked: true };
+            } else if (serverCell) {
+              // Today's attendance loaded from server — keep the value but allow editing
+              newAttendance[learner.email][today][session] = { status: serverCell.status, locked: false };
             } else {
               newAttendance[learner.email][today][session] = { status: "", locked: false };
             }
@@ -164,7 +165,7 @@ export default function AttendanceDashboard({ token }) {
     fetchBatchDetails();
   }, [batchNo]);
 
-  /* ── Mark P / A / L ── */
+  /* ── Mark P / A / L — stays unlocked so user can change before saving ── */
   function markAttendance(learnerEmail, session, status) {
     setAttendance((prev) => ({
       ...prev,
@@ -172,7 +173,7 @@ export default function AttendanceDashboard({ token }) {
         ...prev[learnerEmail],
         [todayDate]: {
           ...prev[learnerEmail]?.[todayDate],
-          [session]: { status, locked: true },
+          [session]: { status, locked: false },
         },
       },
     }));
@@ -219,25 +220,29 @@ export default function AttendanceDashboard({ token }) {
       );
     }
 
-    /* Unlocked → three clickable tiles */
+    /* Unlocked → three clickable tiles (highlight currently selected) */
     return (
       <Box sx={{ display: "flex", gap: 0.6, justifyContent: "center" }}>
         {["P", "A", "L"].map((key) => {
           const cfg = SESSION_CFG[key];
+          const isSelected = cell.status === key;
           return (
             <Box
               key={key}
               onClick={() => markAttendance(learner.email, session, key)}
               sx={{
                 width: 30, height: 30, borderRadius: "8px",
-                background:     cfg.bg,
+                background:     isSelected ? cfg.hov : cfg.bg,
                 display:        "flex", alignItems: "center", justifyContent: "center",
                 cursor:         "pointer",
                 fontFamily:     "'DM Mono', monospace",
-                fontSize:       12, fontWeight: 800, color: cfg.text,
+                fontSize:       12, fontWeight: 800,
+                color:          isSelected ? "#fff" : cfg.text,
                 border:         `1.5px solid ${cfg.border}`,
                 transition:     "all 0.15s",
                 userSelect:     "none",
+                transform:      isSelected ? "scale(1.1)" : "scale(1)",
+                boxShadow:      isSelected ? `0 2px 8px ${cfg.hov}66` : "none",
                 "&:hover": { background: cfg.hov, color: "#fff", transform: "scale(1.12)", boxShadow: `0 2px 8px ${cfg.hov}66` },
               }}
             >

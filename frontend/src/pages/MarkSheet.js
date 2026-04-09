@@ -156,7 +156,12 @@ function getCurrentUser() {
 function useCurrentUserRole() {
   const localUser = getCurrentUser();
   const role = localUser?.role || "";
-  return { role, loading: false, isAdminOrManager: role === "Admin" || role === "Manager" };
+  return {
+    role,
+    loading: false,
+    isAdminOrManager: role === "Admin" || role === "Manager",
+    isAdminOrCoordinator: role === "Admin" || role === "Coordinator",
+  };
 }
 
 function deduplicatePeriods(data) {
@@ -241,7 +246,7 @@ function OutOfOverrideBadge() {
 
 /* ─── Main Component ─────────────────────────────────────────────────────── */
 function MarkSheet() {
-  const { isAdminOrManager, loading: roleLoading } = useCurrentUserRole();
+  const { isAdminOrManager, isAdminOrCoordinator, loading: roleLoading } = useCurrentUserRole();
 
   const [batchNo,                 setBatchNo]                 = useState("");
   const [assessmentType,          setAssessmentType]          = useState("weekly");
@@ -276,6 +281,10 @@ function MarkSheet() {
   const outOfLocked = isAdminOrManager
     ? false
     : isAutoOutOfType && isFixedOutOfBatch;
+
+  // Admin and Coordinator can edit already-saved marks; others see read-only
+  const canEditSavedMarks = isAdminOrCoordinator;
+  const marksEditDisabled = marksAlreadySaved && !canEditSavedMarks;
 
   const marksEnteredCount = learners.filter(l => marks[l.id]?.points && marks[l.id].points.trim() !== "").length;
 
@@ -817,8 +826,8 @@ function MarkSheet() {
                               <TextField size="small"
                                 value={points}
                                 onChange={e => handleMarksInput(l.id, e.target.value)}
-                                placeholder={marksAlreadySaved ? "" : "e.g. 10.5 or AB"}
-                                disabled={marksAlreadySaved}
+                                placeholder={marksEditDisabled ? "" : "e.g. 10.5 or AB"}
+                                disabled={marksEditDisabled}
                                 inputProps={{
                                   style: {
                                     fontFamily: "'DM Mono', monospace",
@@ -831,7 +840,7 @@ function MarkSheet() {
                                   width: 110,
                                   "& .MuiInputBase-root": {
                                     borderRadius: "8px",
-                                    background: marksAlreadySaved
+                                    background: marksEditDisabled
                                       ? TOKENS.surfaceAlt
                                       : hasMarks
                                         ? (isAbsent ? "#fef3c7" : TOKENS.accentLight)
@@ -842,7 +851,7 @@ function MarkSheet() {
                                         : TOKENS.border
                                     },
                                     "&:hover .MuiOutlinedInput-notchedOutline": {
-                                      borderColor: marksAlreadySaved ? TOKENS.border : TOKENS.accent
+                                      borderColor: marksEditDisabled ? TOKENS.border : TOKENS.accent
                                     },
                                   }
                                 }}
@@ -874,11 +883,12 @@ function MarkSheet() {
 
                 {/* Save Button */}
                 <Box sx={{ mt: 3, display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
-                  {marksAlreadySaved ? (
+                  {marksEditDisabled ? (
+                    /* Read-only: non-Admin/Coordinator viewing saved marks */
                     <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2.5, py: 1.2, borderRadius: "10px", background: TOKENS.success.light, border: `1px solid ${TOKENS.success.fill}44` }}>
                       <LockIcon sx={{ fontSize: 16, color: TOKENS.success.fill }} />
                       <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: TOKENS.success.text }}>
-                        Marks already saved — editing is disabled
+                        Marks already saved — only Admin or Coordinator can edit
                       </Typography>
                     </Box>
                   ) : (
@@ -887,7 +897,7 @@ function MarkSheet() {
                         disabled={saving || !batchNo || !selectedDate || !outOff || (!isAutoDateAssessment && !selectedCoursePlannerId)}
                         startIcon={saving ? <CircularProgress size={16} color="inherit" /> : <SaveIcon sx={{ fontSize: 18 }} />}
                         sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 13, borderRadius: "10px", textTransform: "none", px: 3, py: 1.2, background: TOKENS.accent, "&:hover": { background: "#2a3fd4" }, "&:disabled": { opacity: 0.5 } }}>
-                        {saving ? "Saving…" : `Save Marks${marksEnteredCount > 0 ? ` (${marksEnteredCount})` : ""}`}
+                        {saving ? "Saving…" : `${marksAlreadySaved ? "Update" : "Save"} Marks${marksEnteredCount > 0 ? ` (${marksEnteredCount})` : ""}`}
                       </Button>
 
                       {/* Info about AB */}
@@ -897,6 +907,15 @@ function MarkSheet() {
                           Enter <strong>AB</strong> for absent · decimals like <strong>10.5</strong> are supported
                         </Typography>
                       </Box>
+
+                      {marksAlreadySaved && (
+                        <Box sx={{ display: "flex", alignItems: "center", gap: 0.8, px: 2, py: 0.8, borderRadius: "10px", background: TOKENS.warning.light, border: `1px solid ${TOKENS.warning.fill}55` }}>
+                          <InfoOutlinedIcon sx={{ fontSize: 14, color: TOKENS.warning.fill }} />
+                          <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, color: TOKENS.warning.text }}>
+                            Editing saved marks
+                          </Typography>
+                        </Box>
+                      )}
                     </>
                   )}
                 </Box>
