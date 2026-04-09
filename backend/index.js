@@ -1071,39 +1071,54 @@ app.get("/api/marks/window-status", async (req, res) => {
 });
 
 // 2) GET /api/marks/:assessmentType — load existing marks
-app.get("/api/marks/:assessmentType", async (req, res) => {
+app.get("/api/marks/:assessmentType", async (req, res, next) => {
   const { assessmentType } = req.params;
   const { batch_no, course_planner_id, assessment_date } = req.query;
 
+  // Skip non-assessment routes so they fall through to their own handlers
   const table = ASSESSMENT_TABLE_MAP[assessmentType];
-  if (!table) return res.status(400).json({ error: "Invalid assessment type" });
+  if (!table) return next();
+
   if (!batch_no || !assessment_date)
     return res.status(400).json({ error: "batch_no and assessment_date are required" });
 
-  // Only intermediate, module-level, and final assessment tables have assessment_name column
-  const typesWithAssessmentName = ["intermediate-assessment", "module-level-assessment", "final-assessment"];
-  const hasAssessmentName = typesWithAssessmentName.includes(assessmentType);
-  const selectCols = hasAssessmentName
-    ? "learner_id, out_off, points, percentage, assessment_name"
-    : "learner_id, out_off, points, percentage";
+  // Tables that do NOT have course_planner_id column
+  const noPlannerIdTypes = ["final-project", "viva"];
+  const hasPlannerCol = !noPlannerIdTypes.includes(assessmentType);
 
   try {
+    // Use wildcard select — each table has different columns;
+    // the frontend only reads learner_id, out_off, points, percentage, assessment_name
     let query = supabase
       .from(table)
-      .select(selectCols)
+      .select("*")
       .eq("batch_no", batch_no)
       .eq("assessment_date", assessment_date);
 
-    if (course_planner_id) {
+    // Only filter by course_planner_id if the table has that column AND it was provided
+    if (course_planner_id && hasPlannerCol) {
       query = query.eq("course_planner_id", Number(course_planner_id));
     }
 
     const { data, error } = await query;
 
-    if (error) throw error;
-    return res.json(data || []);
+    if (error) {
+      console.error("GET marks Supabase error:", error);
+      throw error;
+    }
+
+    // Normalize response — return only the fields the frontend needs
+    const normalized = (data || []).map(row => ({
+      learner_id:      row.learner_id,
+      out_off:         row.out_off,
+      points:          row.points,
+      percentage:      row.percentage,
+      assessment_name: row.assessment_name || null,
+    }));
+
+    return res.json(normalized);
   } catch (err) {
-    console.error("GET marks error:", err);
+    console.error("GET marks error:", err.message);
     return res.status(500).json({ error: err.message });
   }
 });
@@ -5908,22 +5923,6 @@ app.post("/api/marks/viva", async (req, res) => {
     console.error("Viva Save Error:", err);
     res.status(500).json({ error: err.message });
   }
-});
-
-//load existing marks
-app.get("/api/marks/:type", async (req, res) => {
-  const { batch_no, assessment_date, course_planner_id } = req.query;
-
-  const result = await pool.query(
-    `SELECT learner_id, points, out_off
-     FROM final_assessment_scores
-     WHERE batch_no=$1
-     AND assessment_date=$2
-     AND course_planner_id=$3`,
-    [batch_no, assessment_date, course_planner_id]
-  );
-
-  res.json(result.rows);
 });
 
 //save out of API
