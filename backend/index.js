@@ -1082,18 +1082,24 @@ app.get("/api/marks/:assessmentType", async (req, res, next) => {
   if (!batch_no || !assessment_date)
     return res.status(400).json({ error: "batch_no and assessment_date are required" });
 
+  // Normalize assessment_date to ISO YYYY-MM-DD for reliable date column matching
+  // The date from course_planner_data may arrive as M/D/YYYY, DD-MMM-YYYY, etc.
+  // Use dayjs for timezone-safe parsing (avoids UTC shift from Date constructor)
+  const parsedDate = dayjs(assessment_date);
+  const normalizedDate = parsedDate.isValid() ? parsedDate.format("YYYY-MM-DD") : null;
+
   // Tables that do NOT have course_planner_id column
   const noPlannerIdTypes = ["final-project", "viva"];
   const hasPlannerCol = !noPlannerIdTypes.includes(assessmentType);
 
   try {
-    // Use wildcard select — each table has different columns;
-    // the frontend only reads learner_id, out_off, points, percentage, assessment_name
     let query = supabase
       .from(table)
       .select("*")
-      .eq("batch_no", batch_no)
-      .eq("assessment_date", assessment_date);
+      .eq("batch_no", batch_no);
+
+    // Use normalized ISO date if parseable, otherwise fall back to raw value
+    query = query.eq("assessment_date", normalizedDate || assessment_date);
 
     // Only filter by course_planner_id if the table has that column AND it was provided
     if (course_planner_id && hasPlannerCol) {
@@ -5582,6 +5588,9 @@ app.post("/api/marks/weekly-assessment", async (req, res) => {
       course_planner_id
     } = req.body;
 
+    // Normalize date to YYYY-MM-DD
+    const isoDate = dayjs(assessment_date).isValid() ? dayjs(assessment_date).format("YYYY-MM-DD") : assessment_date;
+
     // Use course_planner_id from frontend if provided, otherwise look it up
     let plannerId = course_planner_id ? Number(course_planner_id) : null;
 
@@ -5601,7 +5610,7 @@ app.post("/api/marks/weekly-assessment", async (req, res) => {
           course_planner_id: plannerId,
           batch_no,
           week_no,
-          assessment_date,
+          assessment_date: isoDate,
           out_off,
           points,
           percentage,
@@ -5639,6 +5648,9 @@ app.post("/api/marks/intermediate-assessment", async (req, res) => {
       return res.status(400).json({ error: "week_no is required" });
     }
 
+    // Normalize date to YYYY-MM-DD
+    const isoDate = dayjs(assessment_date).isValid() ? dayjs(assessment_date).format("YYYY-MM-DD") : assessment_date;
+
     // Use course_planner_id from frontend if provided, otherwise look it up
     let plannerId = course_planner_id ? Number(course_planner_id) : null;
 
@@ -5665,7 +5677,7 @@ app.post("/api/marks/intermediate-assessment", async (req, res) => {
           course_planner_id: plannerId,
           batch_no,
           week_no,
-          assessment_date,
+          assessment_date: isoDate,
           assessment_name,
           out_off,
           points,
@@ -5707,6 +5719,9 @@ app.post("/api/marks/module-level-assessment", async (req, res) => {
       return res.status(400).json({ error: "module_no is required" });
     }
 
+    // Normalize date to YYYY-MM-DD
+    const isoDate = dayjs(assessment_date).isValid() ? dayjs(assessment_date).format("YYYY-MM-DD") : assessment_date;
+
     // Use course_planner_id from frontend if provided, otherwise look it up
     let plannerId = course_planner_id ? Number(course_planner_id) : null;
 
@@ -5733,7 +5748,7 @@ app.post("/api/marks/module-level-assessment", async (req, res) => {
           course_planner_id: plannerId,
           batch_no,
           module_no,
-          assessment_date,
+          assessment_date: isoDate,
           assessment_name,
           out_off,
           points,
@@ -5773,21 +5788,19 @@ app.post("/api/marks/final-assessment", async (req, res) => {
       out_off,
       points,
       percentage,
-      course_planner_id, // ← sent directly from the frontend now
+      course_planner_id,
     } = req.body;
 
     if (!week_no) {
       return res.status(400).json({ error: "week_no is required" });
     }
 
-    // Resolve course_planner_id:
-    // 1. Use the one sent from the frontend (preferred — uniquely identifies the assessment slot).
-    // 2. Fall back to a DB lookup only if not provided (backward-compatible).
+    // Normalize date to YYYY-MM-DD
+    const isoDate = dayjs(assessment_date).isValid() ? dayjs(assessment_date).format("YYYY-MM-DD") : assessment_date;
+
     let plannerId = course_planner_id ? Number(course_planner_id) : null;
 
     if (!plannerId) {
-      // Fallback: look up by batch_no + date + assessment_name so we at least try
-      // to match the correct row rather than just taking the first on that date.
       const matchName = assessment_name || "";
       let query = supabase
         .from("course_planner_data")
@@ -5809,10 +5822,6 @@ app.post("/api/marks/final-assessment", async (req, res) => {
       plannerId = plannerRows[0].id;
     }
 
-    // Upsert using the full unique key:
-    // (learner_id, course_planner_id, week_no, assessment_date)
-    // Two assessments on the same date have different course_planner_ids,
-    // so they will be stored as separate rows — no overwriting.
     const { error } = await supabase
       .from("final_assessment_scores")
       .upsert(
@@ -5821,7 +5830,7 @@ app.post("/api/marks/final-assessment", async (req, res) => {
           course_planner_id: plannerId,
           batch_no,
           week_no:           Number(week_no),
-          assessment_date,
+          assessment_date:   isoDate,
           assessment_name:   assessment_name || null,
           out_off:           Number(out_off),
           points:            Number(points),

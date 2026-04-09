@@ -147,6 +147,34 @@ function getFixedOutOf(topicName, assessmentType, batchNo) {
 
 const todayDate = new Date().toISOString().split("T")[0];
 
+/* Normalize any date string to YYYY-MM-DD (handles M/D/YYYY, DD-MMM-YYYY, etc.) */
+function normalizeDate(dateStr) {
+  if (!dateStr) return "";
+  // Already in YYYY-MM-DD format
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+  // Parse and reformat — use Date with explicit parts to avoid timezone shift
+  const parts = dateStr.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+  if (parts) {
+    // Assume M/D/YYYY or D/M/YYYY — JS Date constructor treats M/D/YYYY as local
+    const d = new Date(dateStr);
+    if (!isNaN(d.getTime())) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    }
+  }
+  // Fallback: try generic parse
+  const d = new Date(dateStr);
+  if (!isNaN(d.getTime())) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }
+  return dateStr; // return as-is if unparseable
+}
+
 function getCurrentUser() {
   try { return JSON.parse(localStorage.getItem("user") || "{}"); }
   catch { return {}; }
@@ -445,9 +473,10 @@ function MarkSheet() {
     setPeriodValue(val);
     const [plannerId, weekPart, datePart, ...topicParts] = val.split("::");
     const topic = topicParts.join("::");
+    const isoDate = normalizeDate(datePart);
     setSelectedCoursePlannerId(plannerId || "");
     setSelectedWeekNo(weekPart || "");
-    setSelectedDate(datePart || "");
+    setSelectedDate(isoDate);
     setTopicName(topic);
     setMarks({});
     setMarksAlreadySaved(false);
@@ -456,10 +485,10 @@ function MarkSheet() {
     const fixed = getFixedOutOf(topic, assessmentType, batchNo);
     const newOutOff = fixed !== null ? String(fixed) : "";
     setOutOff(newOutOff);
-    
+
     // Load existing marks for this period
-    if (datePart) {
-      loadExistingMarks(plannerId, datePart, newOutOff);
+    if (isoDate) {
+      loadExistingMarks(plannerId, isoDate, newOutOff);
     }
   };
 
