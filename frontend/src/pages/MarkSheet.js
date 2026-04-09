@@ -188,8 +188,8 @@ function useCurrentUserRole() {
   return {
     role,
     loading: false,
-    isAdminOrManager: role === "admin" || role === "manager",
-    isAdminOrCoordinator: role === "admin" || role === "coordinator",
+    isAdminOrManager: role === "Admin" || role === "Manager",
+    isAdminOrCoordinator: role === "Admin" || role === "Coordinator",
     isTrainer: role === "trainer",
   };
 }
