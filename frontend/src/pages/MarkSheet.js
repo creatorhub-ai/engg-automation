@@ -53,7 +53,6 @@ const cardSx = {
   boxShadow:    "0 2px 12px rgba(0,0,0,0.06)",
   overflow:     "hidden",
 };
-
 const labelSx = {
   fontFamily:    "'DM Sans', sans-serif",
   fontSize:      11,
@@ -62,7 +61,6 @@ const labelSx = {
   textTransform: "uppercase",
   color:         TOKENS.textSub,
 };
-
 const inputSx = {
   fontFamily: "'DM Sans', sans-serif",
   fontSize: 13,
@@ -71,7 +69,6 @@ const inputSx = {
   "&:hover .MuiOutlinedInput-notchedOutline": { borderColor: TOKENS.accent },
   "&.Mui-focused .MuiOutlinedInput-notchedOutline": { borderColor: TOKENS.accent },
 };
-
 const tableHeadSx = {
   ...labelSx,
   background:   TOKENS.surfaceAlt,
@@ -79,7 +76,6 @@ const tableHeadSx = {
   py:           1.2,
   whiteSpace:   "nowrap",
 };
-
 const tableCellSx = {
   fontFamily:   "'DM Sans', sans-serif",
   fontSize:     13,
@@ -147,15 +143,12 @@ function getFixedOutOf(topicName, assessmentType, batchNo) {
 
 const todayDate = new Date().toISOString().split("T")[0];
 
-/* Normalize any date string to YYYY-MM-DD (handles M/D/YYYY, DD-MMM-YYYY, etc.) */
+/* Normalize any date string to YYYY-MM-DD */
 function normalizeDate(dateStr) {
   if (!dateStr) return "";
-  // Already in YYYY-MM-DD format
   if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
-  // Parse and reformat — use Date with explicit parts to avoid timezone shift
   const parts = dateStr.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
   if (parts) {
-    // Assume M/D/YYYY or D/M/YYYY — JS Date constructor treats M/D/YYYY as local
     const d = new Date(dateStr);
     if (!isNaN(d.getTime())) {
       const y = d.getFullYear();
@@ -164,7 +157,6 @@ function normalizeDate(dateStr) {
       return `${y}-${m}-${day}`;
     }
   }
-  // Fallback: try generic parse
   const d = new Date(dateStr);
   if (!isNaN(d.getTime())) {
     const y = d.getFullYear();
@@ -172,7 +164,7 @@ function normalizeDate(dateStr) {
     const day = String(d.getDate()).padStart(2, "0");
     return `${y}-${m}-${day}`;
   }
-  return dateStr; // return as-is if unparseable
+  return dateStr;
 }
 
 function getCurrentUser() {
@@ -180,17 +172,27 @@ function getCurrentUser() {
   catch { return {}; }
 }
 
-/* ─── Role hook (reads from localStorage — no server call needed) ────────── */
+/* ─── Role hook ──────────────────────────────────────────────────────────────
+ * Reads the role stored in localStorage by the login endpoint.
+ * The internal_users table stores roles with exact casing:
+ *   "Admin", "Coordinator", "Manager", "trainer" (etc.)
+ * We compare using case-insensitive checks so minor casing differences
+ * in the login response do not break permission logic.
+ * ─────────────────────────────────────────────────────────────────────────── */
 function useCurrentUserRole() {
   const localUser = getCurrentUser();
-  // Role is stored lowercase by the login endpoint
-  const role = (localUser?.role || "").toLowerCase();
+  // Preserve original casing for display; use lowercase for comparisons
+  const roleRaw  = localUser?.role || "";
+  const roleLower = roleRaw.toLowerCase();
+
   return {
-    role,
+    role: roleRaw,
     loading: false,
-    isAdminOrManager: role === "Admin" || role === "Manager",
-    isAdminOrCoordinator: role === "Admin" || role === "Coordinator",
-    isTrainer: role === "trainer",
+    // "Admin" or "Manager" — can override fixed Out-Of values
+    isAdminOrManager: roleLower === "admin" || roleLower === "manager",
+    // "Admin" or "Coordinator" — can edit already-saved marks
+    isAdminOrCoordinator: roleLower === "admin" || roleLower === "coordinator",
+    isTrainer: roleLower === "trainer",
   };
 }
 
@@ -274,9 +276,33 @@ function OutOfOverrideBadge() {
   );
 }
 
+/* ─── Role Badge — shown in marks table header ───────────────────────────── */
+function RoleBadge({ canEdit }) {
+  return (
+    <Box sx={{
+      display: "inline-flex", alignItems: "center", gap: 0.8,
+      px: 1.8, py: 0.8, borderRadius: "10px",
+      background: canEdit ? TOKENS.accentLight : TOKENS.surfaceAlt,
+      border: `1px solid ${canEdit ? TOKENS.accent + "44" : TOKENS.border}`,
+    }}>
+      {canEdit
+        ? <LockOpenIcon sx={{ fontSize: 12, color: TOKENS.accent }} />
+        : <LockIcon     sx={{ fontSize: 12, color: TOKENS.textSub }} />}
+      <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700, color: canEdit ? TOKENS.accent : TOKENS.textSub }}>
+        {canEdit ? "Edit enabled" : "View only"}
+      </Typography>
+    </Box>
+  );
+}
+
 /* ─── Main Component ─────────────────────────────────────────────────────── */
 function MarkSheet() {
-  const { isAdminOrManager, isAdminOrCoordinator, isTrainer, loading: roleLoading } = useCurrentUserRole();
+  const {
+    isAdminOrManager,
+    isAdminOrCoordinator,
+    isTrainer,
+    loading: roleLoading,
+  } = useCurrentUserRole();
 
   const [batchNo,                 setBatchNo]                 = useState("");
   const [assessmentType,          setAssessmentType]          = useState("weekly");
@@ -308,27 +334,34 @@ function MarkSheet() {
 
   const effectiveWindowOpen = true;
 
+  // Out-Of is locked for non-Admin/Manager on fixed-batch assessments
   const outOfLocked = isAdminOrManager
     ? false
     : isAutoOutOfType && isFixedOutOfBatch;
 
-  // Admin and Coordinator can edit already-saved marks
-  // Trainer can only enter marks for the first time; after save they become read-only
+  /* ── Edit permission for already-saved marks ──────────────────────────────
+   * Only "Admin" and "Coordinator" roles (from internal_users.role) may edit
+   * marks that have already been saved to the database.
+   * Trainers and all other roles see saved marks as read-only.
+   * ───────────────────────────────────────────────────────────────────────── */
   const canEditSavedMarks = isAdminOrCoordinator;
+
+  // Marks input is disabled when marks are already saved AND the current user
+  // does not have Admin or Coordinator role.
   const marksEditDisabled = marksAlreadySaved && !canEditSavedMarks;
 
-  const marksEnteredCount = learners.filter(l => marks[l.id]?.points && marks[l.id].points.trim() !== "").length;
+  const marksEnteredCount = learners.filter(
+    l => marks[l.id]?.points && marks[l.id].points.trim() !== ""
+  ).length;
 
   /* ── Load batches ── */
   useEffect(() => {
     fetch(`${API_BASE}/api/batches`)
       .then(r => r.json())
       .then(data => {
-        // FIX: handle both array of strings and array of objects
         const batchList = Array.isArray(data)
           ? data.map(b => (typeof b === "string" ? b : b.batch_no)).filter(Boolean)
           : [];
-        // Deduplicate
         setAvailableBatches([...new Set(batchList)]);
       })
       .catch(() => setAvailableBatches([]))
@@ -339,7 +372,6 @@ function MarkSheet() {
   useEffect(() => {
     if (!batchNo) return setLearners([]);
     setLoadingLearners(true);
-    // Use the correct endpoint that returns learner id, name, email
     fetch(`${API_BASE}/apigetlearners?batchno=${batchNo}`)
       .then(r => r.json())
       .then(data => setLearners(Array.isArray(data) ? data : []))
@@ -389,26 +421,22 @@ function MarkSheet() {
     setWindowCloseDate(close.toLocaleDateString("en-GB"));
   }, [selectedDate, assessmentType, isAutoDateAssessment]);
 
-  /* ── Auto-load existing marks for auto-date assessments (final_project, viva) ── */
+  /* ── Auto-load existing marks for auto-date assessments ── */
   useEffect(() => {
     if (!isAutoDateAssessment || !batchNo || !selectedDate) return;
     loadExistingMarks(null, selectedDate, outOff);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [batchNo, selectedDate, isAutoDateAssessment]);
 
-  /* ── Load existing marks ── */
+  /* ── Load existing marks from DB ── */
   const loadExistingMarks = useCallback(async (plannerId, date, currentOutOff) => {
     if (!batchNo || !date) return;
     setLoadingMarks(true);
     try {
       const cfg = ASSESSMENT_MAP[assessmentType];
-      
-      // Build query URL with or without course_planner_id
       let url = `${API_BASE}/api/marks/${cfg.api}?batch_no=${batchNo}&assessment_date=${date}`;
-      if (plannerId) {
-        url += `&course_planner_id=${plannerId}`;
-      }
-      
+      if (plannerId) url += `&course_planner_id=${plannerId}`;
+
       const res = await fetch(url);
       if (!res.ok) {
         console.warn("Failed to load existing marks:", res.status);
@@ -416,23 +444,22 @@ function MarkSheet() {
         setLoadingMarks(false);
         return;
       }
-      
+
       const data = await res.json();
-      
+
       if (Array.isArray(data) && data.length > 0) {
-        // Marks exist in DB — mark as already saved (read-only)
+        // Marks exist — set as already saved
         setMarksAlreadySaved(true);
 
-        // Load out_off from saved data if not already set from fixed rules
+        // Restore out_off from saved data (unless locked for this role)
         const savedOutOf = data[0]?.out_off;
         if (savedOutOf != null && savedOutOf !== undefined) {
-          // Only override if not locked (fixed batch rule) or if admin
           if (!outOfLocked || isAdminOrManager) {
             setOutOff(String(savedOutOf));
           }
         }
 
-        // Build marks map from saved data
+        // Build marks map from saved rows
         const marksMap = {};
         data.forEach(row => {
           if (row.learner_id != null) {
@@ -443,17 +470,12 @@ function MarkSheet() {
               : (pointsVal && outOfVal > 0 && pointsVal !== "AB"
                   ? String(Math.round((parseFloat(pointsVal) / outOfVal) * 100))
                   : "");
-            
-            marksMap[row.learner_id] = {
-              points:     pointsVal,
-              percentage: pctVal,
-            };
+            marksMap[row.learner_id] = { points: pointsVal, percentage: pctVal };
           }
         });
         setMarks(marksMap);
         console.log(`Loaded ${Object.keys(marksMap).length} existing mark records`);
       } else {
-        // No saved marks — clear the marks map, allow editing
         setMarks({});
         setMarksAlreadySaved(false);
         console.log("No existing marks found for this assessment");
@@ -472,7 +494,7 @@ function MarkSheet() {
     const val = e.target.value;
     setPeriodValue(val);
     const [plannerId, weekPart, datePart, ...topicParts] = val.split("::");
-    const topic = topicParts.join("::");
+    const topic   = topicParts.join("::");
     const isoDate = normalizeDate(datePart);
     setSelectedCoursePlannerId(plannerId || "");
     setSelectedWeekNo(weekPart || "");
@@ -480,44 +502,28 @@ function MarkSheet() {
     setTopicName(topic);
     setMarks({});
     setMarksAlreadySaved(false);
-
-    // Set fixed out-of first
-    const fixed = getFixedOutOf(topic, assessmentType, batchNo);
+    const fixed     = getFixedOutOf(topic, assessmentType, batchNo);
     const newOutOff = fixed !== null ? String(fixed) : "";
     setOutOff(newOutOff);
-
-    // Load existing marks for this period
-    if (isoDate) {
-      loadExistingMarks(plannerId, isoDate, newOutOff);
-    }
+    if (isoDate) loadExistingMarks(plannerId, isoDate, newOutOff);
   };
 
-  /* ── Marks input handler - allows decimals and absent codes ── */
+  /* ── Marks input handler ── */
   const handleMarksInput = (id, val) => {
-    // Allow: digits, single decimal point, and "AB" for absent
-    // Strip any character that is not a digit, dot, A, or B
     let cleaned = val.toUpperCase().replace(/[^0-9.AB]/g, "");
-    
-    // Prevent multiple dots
     const dotCount = (cleaned.match(/\./g) || []).length;
     if (dotCount > 1) {
-      // Keep only up to first dot
       const firstDot = cleaned.indexOf(".");
       cleaned = cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, "");
     }
-    
     setMarks(prev => ({
       ...prev,
-      [id]: {
-        points: cleaned,
-        percentage: calculatePercentage(cleaned, outOff),
-      },
+      [id]: { points: cleaned, percentage: calculatePercentage(cleaned, outOff) },
     }));
   };
 
-  /* ── Helper function to calculate percentage ── */
   const calculatePercentage = (points, outOf) => {
-    if (!points || !outOf || points === "AB") return points === "AB" ? "" : "";
+    if (!points || !outOf || points === "AB") return "";
     const pointsNum = parseFloat(points);
     const outOfNum  = parseFloat(outOf);
     if (isNaN(pointsNum) || isNaN(outOfNum) || outOfNum === 0) return "";
@@ -526,7 +532,6 @@ function MarkSheet() {
 
   /* ── Out Of change ── */
   const handleOutOfChange = (v) => {
-    // Allow only digits and single decimal point
     let val = v.replace(/[^0-9.]/g, "");
     const dotCount = (val.match(/\./g) || []).length;
     if (dotCount > 1) {
@@ -572,7 +577,9 @@ function MarkSheet() {
 
   /* ── Save Marks ── */
   const handleSave = async () => {
-    if (!batchNo || !selectedDate || !outOff) { setMessage("❌ Please complete all required fields."); return; }
+    if (!batchNo || !selectedDate || !outOff) {
+      setMessage("❌ Please complete all required fields."); return;
+    }
     if (!isAutoDateAssessment && !selectedCoursePlannerId) {
       setMessage("❌ Please select an assessment date from the dropdown."); return;
     }
@@ -580,15 +587,15 @@ function MarkSheet() {
       setMessage("❌ Please enter the assessment date."); return;
     }
     const cfg = ASSESSMENT_MAP[assessmentType];
-    const learnersWithMarks = learners.filter(l => marks[l.id]?.points && marks[l.id].points.trim() !== "");
+    const learnersWithMarks = learners.filter(
+      l => marks[l.id]?.points && marks[l.id].points.trim() !== ""
+    );
     if (learnersWithMarks.length === 0) { setMessage("❌ No marks entered."); return; }
     setSaving(true); setMessage("");
     let savedCount = 0, failCount = 0;
     try {
       for (const l of learnersWithMarks) {
         const pointsStr = marks[l.id].points.trim();
-        // Convert "AB" to a numeric 0 or keep as-is depending on your backend
-        // Here we pass as-is; backend should handle "AB" or numeric strings
         const payload = {
           learner_id:        l.id,
           batch_no:          batchNo,
@@ -614,6 +621,7 @@ function MarkSheet() {
       setMessage(failCount === 0
         ? `✅ Marks saved successfully for ${savedCount} learner(s).`
         : `⚠️ Saved ${savedCount} record(s). ${failCount} failed — check console.`);
+      if (failCount === 0) setMarksAlreadySaved(true);
     } finally { setSaving(false); setTimeout(() => setMessage(""), 5000); }
   };
 
@@ -754,7 +762,10 @@ function MarkSheet() {
                       helperText={isFixedOutOfBatch && outOff && isAutoOutOfType ? (isAdminOrManager ? "Override" : "Fixed") : ""}
                       sx={{
                         width: 110,
-                        "& .MuiInputBase-root": { ...inputSx, fontFamily: "'DM Sans', sans-serif", fontSize: 13, background: isAdminOrManager && isFixedOutOfBatch && isAutoOutOfType ? "#fef3c7" : "transparent" },
+                        "& .MuiInputBase-root": {
+                          ...inputSx, fontFamily: "'DM Sans', sans-serif", fontSize: 13,
+                          background: isAdminOrManager && isFixedOutOfBatch && isAutoOutOfType ? "#fef3c7" : "transparent",
+                        },
                         "& .MuiInputLabel-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 13 },
                         "& .MuiFormHelperText-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 10 },
                       }}
@@ -799,6 +810,10 @@ function MarkSheet() {
             right={
               learners.length > 0 && (
                 <Box sx={{ display: "flex", gap: 1.5, alignItems: "center" }}>
+                  {/* Show current user's edit capability */}
+                  {marksAlreadySaved && (
+                    <RoleBadge canEdit={canEditSavedMarks} />
+                  )}
                   <Chip label={`${learners.length} learners`} size="small"
                     sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 11, background: TOKENS.accentLight, color: TOKENS.accent, border: `1px solid ${TOKENS.accent}33` }} />
                   {marksEnteredCount > 0 && (
@@ -829,8 +844,14 @@ function MarkSheet() {
                         <TableCell sx={{ ...tableHeadSx, width: 150 }}>
                           <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
                             Marks{outOff ? ` / ${outOff}` : ""}
-                            <Tooltip title="Enter numbers (e.g. 10 or 10.5) or AB for absent">
-                              <InfoOutlinedIcon sx={{ fontSize: 14, color: TOKENS.textSub }} />
+                            <Tooltip title={
+                              marksEditDisabled
+                                ? "Marks are locked. Only Admin or Coordinator can edit saved marks."
+                                : "Enter numbers (e.g. 10 or 10.5) or AB for absent"
+                            }>
+                              {marksEditDisabled
+                                ? <LockIcon sx={{ fontSize: 14, color: TOKENS.textSub }} />
+                                : <InfoOutlinedIcon sx={{ fontSize: 14, color: TOKENS.textSub }} />}
                             </Tooltip>
                           </Box>
                         </TableCell>
@@ -851,52 +872,59 @@ function MarkSheet() {
                           pctNum >= 75            ? TOKENS.success.fill :
                           pctNum >= 50            ? TOKENS.warning.fill :
                                                     TOKENS.error.fill;
-
                         return (
                           <TableRow key={l.id}
                             sx={{
                               "&:nth-of-type(even)": { background: TOKENS.surfaceAlt },
                               "&:hover": { background: TOKENS.accentLight + "66", transition: "background 0.15s" },
-                              // Highlight rows with saved marks
                               ...(hasMarks ? { borderLeft: `3px solid ${isAbsent ? TOKENS.warning.fill : TOKENS.accent}44` } : {}),
                             }}>
                             <TableCell sx={{ ...tableCellSx, color: TOKENS.textSub, fontFamily: "'DM Mono', monospace", fontSize: 11 }}>{idx + 1}</TableCell>
                             <TableCell sx={{ ...tableCellSx, fontWeight: 600 }}>{l.name}</TableCell>
                             <TableCell sx={{ ...tableCellSx, color: TOKENS.textSub, fontSize: 12 }}>{l.email}</TableCell>
                             <TableCell sx={{ ...tableCellSx, py: 0.5 }}>
-                              <TextField size="small"
-                                value={points}
-                                onChange={e => handleMarksInput(l.id, e.target.value)}
-                                placeholder={marksEditDisabled ? "" : "e.g. 10.5 or AB"}
-                                disabled={marksEditDisabled}
-                                inputProps={{
-                                  style: {
-                                    fontFamily: "'DM Mono', monospace",
-                                    fontSize: 13,
-                                    fontWeight: 700,
-                                    textTransform: "uppercase",
-                                  }
-                                }}
-                                sx={{
-                                  width: 110,
-                                  "& .MuiInputBase-root": {
-                                    borderRadius: "8px",
-                                    background: marksEditDisabled
-                                      ? TOKENS.surfaceAlt
-                                      : hasMarks
-                                        ? (isAbsent ? "#fef3c7" : TOKENS.accentLight)
-                                        : "transparent",
-                                    "& .MuiOutlinedInput-notchedOutline": {
-                                      borderColor: hasMarks
-                                        ? (isAbsent ? TOKENS.warning.fill + "66" : TOKENS.accent + "44")
-                                        : TOKENS.border
-                                    },
-                                    "&:hover .MuiOutlinedInput-notchedOutline": {
-                                      borderColor: marksEditDisabled ? TOKENS.border : TOKENS.accent
-                                    },
-                                  }
-                                }}
-                              />
+                              <Tooltip
+                                title={marksEditDisabled ? "Only Admin or Coordinator can edit saved marks" : ""}
+                                placement="top"
+                              >
+                                <span>
+                                  <TextField size="small"
+                                    value={points}
+                                    onChange={e => handleMarksInput(l.id, e.target.value)}
+                                    placeholder={marksEditDisabled ? "" : "e.g. 10.5 or AB"}
+                                    disabled={marksEditDisabled}
+                                    inputProps={{
+                                      style: {
+                                        fontFamily: "'DM Mono', monospace",
+                                        fontSize: 13,
+                                        fontWeight: 700,
+                                        textTransform: "uppercase",
+                                      }
+                                    }}
+                                    sx={{
+                                      width: 110,
+                                      "& .MuiInputBase-root": {
+                                        borderRadius: "8px",
+                                        background: marksEditDisabled
+                                          ? TOKENS.surfaceAlt
+                                          : hasMarks
+                                            ? (isAbsent ? "#fef3c7" : TOKENS.accentLight)
+                                            : "transparent",
+                                        "& .MuiOutlinedInput-notchedOutline": {
+                                          borderColor: marksEditDisabled
+                                            ? TOKENS.border
+                                            : hasMarks
+                                              ? (isAbsent ? TOKENS.warning.fill + "66" : TOKENS.accent + "44")
+                                              : TOKENS.border,
+                                        },
+                                        "&:hover .MuiOutlinedInput-notchedOutline": {
+                                          borderColor: marksEditDisabled ? TOKENS.border : TOKENS.accent,
+                                        },
+                                      }
+                                    }}
+                                  />
+                                </span>
+                              </Tooltip>
                             </TableCell>
                             <TableCell sx={{ ...tableCellSx }}>
                               {hasMarks ? (
@@ -922,14 +950,14 @@ function MarkSheet() {
                   </Table>
                 </Box>
 
-                {/* Save Button */}
+                {/* Save Button Area */}
                 <Box sx={{ mt: 3, display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
                   {marksEditDisabled ? (
-                    /* Read-only: non-Admin/Coordinator viewing saved marks */
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2.5, py: 1.2, borderRadius: "10px", background: TOKENS.success.light, border: `1px solid ${TOKENS.success.fill}44` }}>
-                      <LockIcon sx={{ fontSize: 16, color: TOKENS.success.fill }} />
-                      <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: TOKENS.success.text }}>
-                        Marks already saved — only Admin or Coordinator can edit
+                    /* Read-only notice for non-Admin/Coordinator */
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2.5, py: 1.2, borderRadius: "10px", background: TOKENS.surfaceAlt, border: `1px solid ${TOKENS.border}` }}>
+                      <LockIcon sx={{ fontSize: 16, color: TOKENS.textSub }} />
+                      <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: TOKENS.textSub }}>
+                        Marks are saved — only <strong>Admin</strong> or <strong>Coordinator</strong> can edit
                       </Typography>
                     </Box>
                   ) : (
@@ -941,7 +969,6 @@ function MarkSheet() {
                         {saving ? "Saving…" : `${marksAlreadySaved ? "Update" : "Save"} Marks${marksEnteredCount > 0 ? ` (${marksEnteredCount})` : ""}`}
                       </Button>
 
-                      {/* Info about AB */}
                       <Box sx={{ display: "flex", alignItems: "center", gap: 0.8, px: 2, py: 0.8, borderRadius: "10px", background: TOKENS.surfaceAlt, border: `1px solid ${TOKENS.border}` }}>
                         <InfoOutlinedIcon sx={{ fontSize: 14, color: TOKENS.textSub }} />
                         <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: TOKENS.textSub }}>
@@ -967,22 +994,24 @@ function MarkSheet() {
               batchNo ? (
                 <Box sx={{ textAlign: "center", py: 6 }}>
                   <GroupIcon sx={{ fontSize: 40, color: TOKENS.border, mb: 1 }} />
-                  <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TOKENS.textSub }}>No learners found for batch {batchNo}.</Typography>
+                  <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TOKENS.textSub }}>
+                    No learners found for batch {batchNo}.
+                  </Typography>
                 </Box>
               ) : (
                 <Box sx={{ textAlign: "center", py: 6 }}>
                   <AssignmentIcon sx={{ fontSize: 40, color: TOKENS.border, mb: 1 }} />
-                  <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TOKENS.textSub }}>Select a batch above to load learners.</Typography>
+                  <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TOKENS.textSub }}>
+                    Select a batch above to load learners.
+                  </Typography>
                 </Box>
               )
             )}
           </Box>
         </Box>
-
       </Box>
     </Box>
   );
 }
-
 
 export default MarkSheet;
