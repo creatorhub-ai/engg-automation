@@ -3562,8 +3562,18 @@ app.post('/api/login', async (req, res) => {
       });
     }
 
-    // 3) Check password (plain text - replace with bcrypt in production)
-    if (password !== user.password_hash) {
+    // 3) Check password (supports both plain text and bcrypt-hashed passwords)
+    let passwordMatch = false;
+    if (user.password_hash) {
+      if (user.password_hash.startsWith('$2b$') || user.password_hash.startsWith('$2a$')) {
+        // Password is bcrypt-hashed
+        passwordMatch = await bcrypt.compare(password, user.password_hash);
+      } else {
+        // Password is plain text
+        passwordMatch = (password === user.password_hash);
+      }
+    }
+    if (!passwordMatch) {
       console.log('Login failed: wrong password for', lookupEmail);
       return res.status(401).json({
         success: false,
@@ -9490,7 +9500,7 @@ app.put("/api/tutors/:id", async (req, res) => {
     if (typeof is_active === "boolean") patch.is_active = is_active;
     if (domain !== undefined) patch.domain = domain ? String(domain).trim() : null;
 
-    if (password) patch.password = await bcrypt.hash(password, 10);
+    if (password) patch.password_hash = password;
 
     const { data, error } = await supabase
       .from("internal_users")
