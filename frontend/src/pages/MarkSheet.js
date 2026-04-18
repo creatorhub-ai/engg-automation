@@ -27,10 +27,8 @@ import CalendarTodayIcon  from "@mui/icons-material/CalendarToday";
 import CheckCircleIcon    from "@mui/icons-material/CheckCircle";
 import ErrorIcon          from "@mui/icons-material/Error";
 import InfoOutlinedIcon   from "@mui/icons-material/InfoOutlined";
-
 const API_BASE =
   process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
-
 /* ─── Design tokens ─────────────────────────────────────────────────────── */
 const TOKENS = {
   bg:          "#d4e0fd",
@@ -45,7 +43,6 @@ const TOKENS = {
   warning:     { fill: "#f59e0b", light: "#fef3c7", text: "#92400e" },
   error:       { fill: "#ef4444", light: "#fee2e2", text: "#991b1b" },
 };
-
 const cardSx = {
   background:   TOKENS.surface,
   border:       `1px solid ${TOKENS.border}`,
@@ -82,7 +79,6 @@ const tableCellSx = {
   color:        TOKENS.text,
   borderBottom: `1px solid ${TOKENS.border}`,
 };
-
 /* ─── Assessment config ──────────────────────────────────────────────────── */
 const ASSESSMENT_MAP = {
   weekly:        { api: "weekly-assessment",      label: "Weekly Assessment",      type: "weekly" },
@@ -92,9 +88,7 @@ const ASSESSMENT_MAP = {
   final_project: { api: "final-project",           label: "Final Project",           autoDate: true },
   viva:          { api: "viva",                    label: "Viva",                    autoDate: true },
 };
-
 const AUTO_OUT_OF_TYPES = ["intermediate", "final", "final_project", "viva"];
-
 /* ─── PDFT Out Of Rules ──────────────────────────────────────────────────── */
 const PDFT_OUT_OF_RULES = [
   { keywords: ["intermediate"],    outOf: 30  },
@@ -105,7 +99,6 @@ const PDFT_OUT_OF_RULES = [
   { keywords: ["final project"],   outOf: 100 },
   { keywords: ["viva"],            outOf: 25  },
 ];
-
 /* ─── DVFT Out Of Rules ──────────────────────────────────────────────────── */
 const DVFT_OUT_OF_RULES = [
   { keywords: ["intermediate"],    outOf: 25  },
@@ -117,14 +110,12 @@ const DVFT_OUT_OF_RULES = [
   { keywords: ["final project"],   outOf: 100 },
   { keywords: ["viva"],            outOf: 25  },
 ];
-
 /* ─── Batch type detectors ───────────────────────────────────────────────── */
 function isPdftBatch(batchNo) { return (batchNo || "").toUpperCase().includes("PDFT"); }
 function isDvftBatch(batchNo) {
   const up = (batchNo || "").toUpperCase();
   return up.includes("DVFT") || (up.startsWith("DV") && !up.includes("PDFT"));
 }
-
 function getFixedOutOf(topicName, assessmentType, batchNo) {
   if (!AUTO_OUT_OF_TYPES.includes(assessmentType)) return null;
   const combined = `${topicName || ""} ${ASSESSMENT_MAP[assessmentType]?.label || ""}`.toLowerCase();
@@ -140,9 +131,7 @@ function getFixedOutOf(topicName, assessmentType, batchNo) {
   }
   return null;
 }
-
 const todayDate = new Date().toISOString().split("T")[0];
-
 /* Normalize any date string to YYYY-MM-DD */
 function normalizeDate(dateStr) {
   if (!dateStr) return "";
@@ -166,36 +155,22 @@ function normalizeDate(dateStr) {
   }
   return dateStr;
 }
-
 function getCurrentUser() {
   try { return JSON.parse(localStorage.getItem("user") || "{}"); }
   catch { return {}; }
 }
-
-/* ─── Role hook ──────────────────────────────────────────────────────────────
- * Reads the role stored in localStorage by the login endpoint.
- * The internal_users table stores roles with exact casing:
- *   "Admin", "Coordinator", "Manager", "trainer" (etc.)
- * We compare using case-insensitive checks so minor casing differences
- * in the login response do not break permission logic.
- * ─────────────────────────────────────────────────────────────────────────── */
 function useCurrentUserRole() {
   const localUser = getCurrentUser();
-  // Preserve original casing for display; use lowercase for comparisons
   const roleRaw  = localUser?.role || "";
   const roleLower = roleRaw.toLowerCase();
-
   return {
     role: roleRaw,
     loading: false,
-    // "Admin" or "Manager" — can override fixed Out-Of values
     isAdminOrManager: roleLower === "admin" || roleLower === "manager",
-    // "Admin" or "Coordinator" — can edit already-saved marks
     isAdminOrCoordinator: roleLower === "admin" || roleLower === "coordinator",
     isTrainer: roleLower === "trainer",
   };
 }
-
 function deduplicatePeriods(data) {
   const seen = new Map();
   (data || []).forEach(item => {
@@ -204,7 +179,6 @@ function deduplicatePeriods(data) {
   });
   return Array.from(seen.values());
 }
-
 /* ─── Section Header ─────────────────────────────────────────────────────── */
 function SectionHeader({ icon, title, subtitle, right }) {
   return (
@@ -220,7 +194,6 @@ function SectionHeader({ icon, title, subtitle, right }) {
     </Box>
   );
 }
-
 /* ─── StatPill ───────────────────────────────────────────────────────────── */
 function StatPill({ icon, label, value, accent }) {
   return (
@@ -233,7 +206,6 @@ function StatPill({ icon, label, value, accent }) {
     </Box>
   );
 }
-
 /* ─── StatusBanner ───────────────────────────────────────────────────────── */
 function StatusBanner({ message }) {
   if (!message) return null;
@@ -250,7 +222,6 @@ function StatusBanner({ message }) {
     </Fade>
   );
 }
-
 /* ─── Batch badge ────────────────────────────────────────────────────────── */
 function BatchBadge({ batchNo }) {
   if (!batchNo) return null;
@@ -265,7 +236,6 @@ function BatchBadge({ batchNo }) {
     </Box>
   );
 }
-
 /* ─── OutOf Override Badge ───────────────────────────────────────────────── */
 function OutOfOverrideBadge() {
   return (
@@ -275,7 +245,6 @@ function OutOfOverrideBadge() {
     </Box>
   );
 }
-
 /* ─── Role Badge — shown in marks table header ───────────────────────────── */
 function RoleBadge({ canEdit }) {
   return (
@@ -294,7 +263,6 @@ function RoleBadge({ canEdit }) {
     </Box>
   );
 }
-
 /* ─── Main Component ─────────────────────────────────────────────────────── */
 function MarkSheet() {
   const {
@@ -303,7 +271,6 @@ function MarkSheet() {
     isTrainer,
     loading: roleLoading,
   } = useCurrentUserRole();
-
   const [batchNo,                 setBatchNo]                 = useState("");
   const [assessmentType,          setAssessmentType]          = useState("weekly");
   const [availableBatches,        setAvailableBatches]        = useState([]);
@@ -325,35 +292,26 @@ function MarkSheet() {
   const [loadingMarks,            setLoadingMarks]            = useState(false);
   const [marksAlreadySaved,       setMarksAlreadySaved]       = useState(false);
 
+  // ── FIX: A counter that we increment whenever we want to force a marks
+  // reload for auto-date assessments even if batchNo/selectedDate haven't
+  // changed (e.g. switching between final_project and viva with same batch).
+  const [autoLoadTrigger,         setAutoLoadTrigger]         = useState(0);
+
   const isPdft            = isPdftBatch(batchNo);
   const isDvft            = isDvftBatch(batchNo);
   const isFixedOutOfBatch = isPdft || isDvft;
   const isAutoDateAssessment = assessmentType === "final_project" || assessmentType === "viva";
   const isAutoOutOfType      = AUTO_OUT_OF_TYPES.includes(assessmentType);
   const isDvftAutoDateType   = isDvft && isAutoDateAssessment;
-
   const effectiveWindowOpen = true;
-
-  // Out-Of is locked for non-Admin/Manager on fixed-batch assessments
   const outOfLocked = isAdminOrManager
     ? false
     : isAutoOutOfType && isFixedOutOfBatch;
-
-  /* ── Edit permission for already-saved marks ──────────────────────────────
-   * Only "Admin" and "Coordinator" roles (from internal_users.role) may edit
-   * marks that have already been saved to the database.
-   * Trainers and all other roles see saved marks as read-only.
-   * ───────────────────────────────────────────────────────────────────────── */
   const canEditSavedMarks = isAdminOrCoordinator;
-
-  // Marks input is disabled when marks are already saved AND the current user
-  // does not have Admin or Coordinator role.
   const marksEditDisabled = marksAlreadySaved && !canEditSavedMarks;
-
   const marksEnteredCount = learners.filter(
     l => marks[l.id]?.points && marks[l.id].points.trim() !== ""
   ).length;
-
   /* ── Load batches ── */
   useEffect(() => {
     fetch(`${API_BASE}/api/batches`)
@@ -367,7 +325,6 @@ function MarkSheet() {
       .catch(() => setAvailableBatches([]))
       .finally(() => setLoadingBatches(false));
   }, []);
-
   /* ── Load learners ── */
   useEffect(() => {
     if (!batchNo) return setLearners([]);
@@ -379,18 +336,36 @@ function MarkSheet() {
       .finally(() => setLoadingLearners(false));
   }, [batchNo]);
 
-  /* ── Load periods ── */
+  /* ── Load periods / init auto-date assessments ── */
   useEffect(() => {
     if (!batchNo) return;
     if (isAutoDateAssessment) {
-      setSelectedDate(isDvft ? "" : todayDate);
-      setSelectedCoursePlannerId(""); setSelectedWeekNo("");
+      // Reset marks and saved state first so old data doesn't flash
+      setMarks({});
+      setMarksAlreadySaved(false);
+      setSelectedCoursePlannerId("");
+      setSelectedWeekNo("");
       setTopicName(ASSESSMENT_MAP[assessmentType].label);
       setPeriods([]);
+
       const fixed = getFixedOutOf("", assessmentType, batchNo);
       if (fixed !== null) setOutOff(String(fixed));
+
+      if (isDvft) {
+        // DVFT: user must pick a date — clear it so the auto-load
+        // effect waits for a valid date input.
+        setSelectedDate("");
+      } else {
+        // Non-DVFT: always use today's date.
+        // Explicitly set it (even if it already equals todayDate) then
+        // bump the trigger so the auto-load effect always fires.
+        setSelectedDate(todayDate);
+        setAutoLoadTrigger(prev => prev + 1);
+      }
       return;
     }
+
+    // Non-auto-date assessment types
     const apiType = ASSESSMENT_MAP[assessmentType].api;
     fetch(`${API_BASE}/apiperiods/${batchNo}/${apiType}`)
       .then(r => r.json())
@@ -405,6 +380,8 @@ function MarkSheet() {
       .catch(() => setPeriods([]));
     setPeriodValue(""); setSelectedDate(""); setSelectedCoursePlannerId("");
     setSelectedWeekNo(""); setTopicName(""); setMarks({}); setOutOff("");
+    setMarksAlreadySaved(false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [batchNo, assessmentType]);
 
   /* ── Window close date — informational only ── */
@@ -421,12 +398,27 @@ function MarkSheet() {
     setWindowCloseDate(close.toLocaleDateString("en-GB"));
   }, [selectedDate, assessmentType, isAutoDateAssessment]);
 
-  /* ── Auto-load existing marks for auto-date assessments ── */
+  /* ── Auto-load existing marks for auto-date assessments ──────────────────
+   *
+   * FIX: We now depend on `autoLoadTrigger` in addition to batchNo and
+   * selectedDate. This ensures the effect re-fires whenever the assessment
+   * type switches between final_project / viva for the same batch on the
+   * same date (where batchNo and selectedDate wouldn't change, so React
+   * would otherwise skip re-running this effect).
+   *
+   * The periods useEffect above increments `autoLoadTrigger` each time an
+   * auto-date type is selected for a non-DVFT batch, guaranteeing a fresh
+   * load on every type switch.
+   * ───────────────────────────────────────────────────────────────────────── */
   useEffect(() => {
-    if (!isAutoDateAssessment || !batchNo || !selectedDate) return;
-    loadExistingMarks(null, selectedDate, outOff);
+    if (!isAutoDateAssessment || !batchNo) return;
+
+    const dateToUse = isDvft ? selectedDate : todayDate;
+    if (!dateToUse) return; // DVFT: wait for user to pick a date
+
+    loadExistingMarks(null, dateToUse, outOff);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [batchNo, selectedDate, isAutoDateAssessment]);
+  }, [batchNo, selectedDate, isAutoDateAssessment, autoLoadTrigger]);
 
   /* ── Load existing marks from DB ── */
   const loadExistingMarks = useCallback(async (plannerId, date, currentOutOff) => {
@@ -436,7 +428,6 @@ function MarkSheet() {
       const cfg = ASSESSMENT_MAP[assessmentType];
       let url = `${API_BASE}/api/marks/${cfg.api}?batch_no=${batchNo}&assessment_date=${date}`;
       if (plannerId) url += `&course_planner_id=${plannerId}`;
-
       const res = await fetch(url);
       if (!res.ok) {
         console.warn("Failed to load existing marks:", res.status);
@@ -444,22 +435,15 @@ function MarkSheet() {
         setLoadingMarks(false);
         return;
       }
-
       const data = await res.json();
-
       if (Array.isArray(data) && data.length > 0) {
-        // Marks exist — set as already saved
         setMarksAlreadySaved(true);
-
-        // Restore out_off from saved data (unless locked for this role)
         const savedOutOf = data[0]?.out_off;
         if (savedOutOf != null && savedOutOf !== undefined) {
           if (!outOfLocked || isAdminOrManager) {
             setOutOff(String(savedOutOf));
           }
         }
-
-        // Build marks map from saved rows
         const marksMap = {};
         data.forEach(row => {
           if (row.learner_id != null) {
@@ -507,7 +491,6 @@ function MarkSheet() {
     setOutOff(newOutOff);
     if (isoDate) loadExistingMarks(plannerId, isoDate, newOutOff);
   };
-
   /* ── Marks input handler ── */
   const handleMarksInput = (id, val) => {
     let cleaned = val.toUpperCase().replace(/[^0-9.AB]/g, "");
@@ -521,7 +504,6 @@ function MarkSheet() {
       [id]: { points: cleaned, percentage: calculatePercentage(cleaned, outOff) },
     }));
   };
-
   const calculatePercentage = (points, outOf) => {
     if (!points || !outOf || points === "AB") return "";
     const pointsNum = parseFloat(points);
@@ -529,7 +511,6 @@ function MarkSheet() {
     if (isNaN(pointsNum) || isNaN(outOfNum) || outOfNum === 0) return "";
     return Math.round((pointsNum / outOfNum) * 100).toString();
   };
-
   /* ── Out Of change ── */
   const handleOutOfChange = (v) => {
     let val = v.replace(/[^0-9.]/g, "");
@@ -549,7 +530,6 @@ function MarkSheet() {
       return updated;
     });
   };
-
   /* ── Save Out Of ── */
   const handleSaveOutOf = async () => {
     if (!outOff || !batchNo) return;
@@ -574,7 +554,6 @@ function MarkSheet() {
     } catch { setMessage("❌ Network error while updating Out Of."); }
     finally   { setSavingOutOf(false); setTimeout(() => setMessage(""), 4000); }
   };
-
   /* ── Save Marks ── */
   const handleSave = async () => {
     if (!batchNo || !selectedDate || !outOff) {
@@ -624,14 +603,12 @@ function MarkSheet() {
       if (failCount === 0) setMarksAlreadySaved(true);
     } finally { setSaving(false); setTimeout(() => setMessage(""), 5000); }
   };
-
   /* ── Reset ── */
   const resetSelections = () => {
     setPeriodValue(""); setSelectedDate(""); setSelectedCoursePlannerId("");
     setSelectedWeekNo(""); setTopicName(""); setMarks({}); setOutOff("");
     setMarksAlreadySaved(false);
   };
-
   /* ── Loading state ── */
   if (loadingBatches || roleLoading) return (
     <Box sx={{ minHeight: "100vh", background: TOKENS.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -643,13 +620,11 @@ function MarkSheet() {
       </Box>
     </Box>
   );
-
   /* ── Render ── */
   return (
     <Box sx={{ minHeight: "100vh", background: TOKENS.bg, p: { xs: 2, md: 4 }, fontFamily: "'DM Sans', sans-serif" }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');`}</style>
       <Box sx={{ maxWidth: 1200, mx: "auto" }}>
-
         {/* ── Page Header ── */}
         <Box sx={{ mb: 4 }}>
           <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: { xs: 24, md: 30 }, fontWeight: 800, color: TOKENS.text, letterSpacing: "-0.03em", mb: 0.5 }}>
@@ -659,7 +634,6 @@ function MarkSheet() {
             Record and manage learner assessment scores
           </Typography>
         </Box>
-
         {/* ── Filters Card ── */}
         <Box sx={{ ...cardSx, mb: 3 }}>
           <SectionHeader
@@ -693,7 +667,6 @@ function MarkSheet() {
                   ))}
                 </Select>
               </FormControl>
-
               {/* Batch */}
               <FormControl size="small" sx={{ minWidth: 160 }}>
                 <InputLabel sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Batch</InputLabel>
@@ -704,7 +677,6 @@ function MarkSheet() {
                   ))}
                 </Select>
               </FormControl>
-
               {/* Period picker — non-auto types */}
               {!isAutoDateAssessment && (
                 <FormControl size="small" sx={{ minWidth: 380 }}>
@@ -732,7 +704,6 @@ function MarkSheet() {
                   </Select>
                 </FormControl>
               )}
-
               {/* Date input for auto-date types */}
               {isAutoDateAssessment && (
                 isDvft ? (
@@ -744,7 +715,6 @@ function MarkSheet() {
                     sx={{ width: 160, "& .MuiInputBase-root": { ...inputSx, fontFamily: "'DM Sans', sans-serif", fontSize: 13 }, "& .MuiInputLabel-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 13 } }} />
                 )
               )}
-
               {/* Out Of + Save Out Of */}
               <Box sx={{ display: "flex", alignItems: "flex-end", gap: 1.5, flexWrap: "wrap" }}>
                 <Tooltip title={
@@ -772,7 +742,6 @@ function MarkSheet() {
                     />
                   </span>
                 </Tooltip>
-
                 {/* Save Out Of — Admin/Manager only */}
                 {isAdminOrManager && selectedDate && (
                   <Button variant="outlined" size="small" onClick={handleSaveOutOf}
@@ -784,7 +753,6 @@ function MarkSheet() {
                 )}
               </Box>
             </Box>
-
             {/* Assessment Info Pills */}
             {(topicName || isAutoDateAssessment) && (
               <Fade in>
@@ -800,7 +768,6 @@ function MarkSheet() {
             )}
           </Box>
         </Box>
-
         {/* ── Learners / Marks Card ── */}
         <Box sx={{ ...cardSx }}>
           <SectionHeader
@@ -810,7 +777,6 @@ function MarkSheet() {
             right={
               learners.length > 0 && (
                 <Box sx={{ display: "flex", gap: 1.5, alignItems: "center" }}>
-                  {/* Show current user's edit capability */}
                   {marksAlreadySaved && (
                     <RoleBadge canEdit={canEditSavedMarks} />
                   )}
@@ -949,11 +915,9 @@ function MarkSheet() {
                     </TableBody>
                   </Table>
                 </Box>
-
                 {/* Save Button Area */}
                 <Box sx={{ mt: 3, display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
                   {marksEditDisabled ? (
-                    /* Read-only notice for non-Admin/Coordinator */
                     <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2.5, py: 1.2, borderRadius: "10px", background: TOKENS.surfaceAlt, border: `1px solid ${TOKENS.border}` }}>
                       <LockIcon sx={{ fontSize: 16, color: TOKENS.textSub }} />
                       <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: TOKENS.textSub }}>
@@ -968,14 +932,12 @@ function MarkSheet() {
                         sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 13, borderRadius: "10px", textTransform: "none", px: 3, py: 1.2, background: TOKENS.accent, "&:hover": { background: "#2a3fd4" }, "&:disabled": { opacity: 0.5 } }}>
                         {saving ? "Saving…" : `${marksAlreadySaved ? "Update" : "Save"} Marks${marksEnteredCount > 0 ? ` (${marksEnteredCount})` : ""}`}
                       </Button>
-
                       <Box sx={{ display: "flex", alignItems: "center", gap: 0.8, px: 2, py: 0.8, borderRadius: "10px", background: TOKENS.surfaceAlt, border: `1px solid ${TOKENS.border}` }}>
                         <InfoOutlinedIcon sx={{ fontSize: 14, color: TOKENS.textSub }} />
                         <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: TOKENS.textSub }}>
                           Enter <strong>AB</strong> for absent · decimals like <strong>10.5</strong> are supported
                         </Typography>
                       </Box>
-
                       {marksAlreadySaved && (
                         <Box sx={{ display: "flex", alignItems: "center", gap: 0.8, px: 2, py: 0.8, borderRadius: "10px", background: TOKENS.warning.light, border: `1px solid ${TOKENS.warning.fill}55` }}>
                           <InfoOutlinedIcon sx={{ fontSize: 14, color: TOKENS.warning.fill }} />
@@ -987,7 +949,6 @@ function MarkSheet() {
                     </>
                   )}
                 </Box>
-
                 <StatusBanner message={message} />
               </>
             ) : (
@@ -1013,5 +974,4 @@ function MarkSheet() {
     </Box>
   );
 }
-
 export default MarkSheet;
