@@ -29,7 +29,6 @@ import ErrorIcon          from "@mui/icons-material/Error";
 import InfoOutlinedIcon   from "@mui/icons-material/InfoOutlined";
 const API_BASE =
   process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
-/* ─── Design tokens ─────────────────────────────────────────────────────── */
 const TOKENS = {
   bg:          "#d4e0fd",
   surface:     "#ffffff",
@@ -79,7 +78,6 @@ const tableCellSx = {
   color:        TOKENS.text,
   borderBottom: `1px solid ${TOKENS.border}`,
 };
-/* ─── Assessment config ──────────────────────────────────────────────────── */
 const ASSESSMENT_MAP = {
   weekly:        { api: "weekly-assessment",      label: "Weekly Assessment",      type: "weekly" },
   intermediate:  { api: "intermediate-assessment", label: "Intermediate Assessment", type: "mid"   },
@@ -89,7 +87,6 @@ const ASSESSMENT_MAP = {
   viva:          { api: "viva",                    label: "Viva",                    autoDate: true },
 };
 const AUTO_OUT_OF_TYPES = ["intermediate", "final", "final_project", "viva"];
-/* ─── PDFT Out Of Rules ──────────────────────────────────────────────────── */
 const PDFT_OUT_OF_RULES = [
   { keywords: ["intermediate"],    outOf: 30  },
   { keywords: ["digital design"],  outOf: 25  },
@@ -99,7 +96,6 @@ const PDFT_OUT_OF_RULES = [
   { keywords: ["final project"],   outOf: 100 },
   { keywords: ["viva"],            outOf: 25  },
 ];
-/* ─── DVFT Out Of Rules ──────────────────────────────────────────────────── */
 const DVFT_OUT_OF_RULES = [
   { keywords: ["intermediate"],    outOf: 25  },
   { keywords: ["python"],          outOf: 15  },
@@ -110,7 +106,6 @@ const DVFT_OUT_OF_RULES = [
   { keywords: ["final project"],   outOf: 100 },
   { keywords: ["viva"],            outOf: 25  },
 ];
-/* ─── Batch type detectors ───────────────────────────────────────────────── */
 function isPdftBatch(batchNo) { return (batchNo || "").toUpperCase().includes("PDFT"); }
 function isDvftBatch(batchNo) {
   const up = (batchNo || "").toUpperCase();
@@ -132,7 +127,6 @@ function getFixedOutOf(topicName, assessmentType, batchNo) {
   return null;
 }
 const todayDate = new Date().toISOString().split("T")[0];
-/* Normalize any date string to YYYY-MM-DD */
 function normalizeDate(dateStr) {
   if (!dateStr) return "";
   if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
@@ -140,18 +134,12 @@ function normalizeDate(dateStr) {
   if (parts) {
     const d = new Date(dateStr);
     if (!isNaN(d.getTime())) {
-      const y = d.getFullYear();
-      const m = String(d.getMonth() + 1).padStart(2, "0");
-      const day = String(d.getDate()).padStart(2, "0");
-      return `${y}-${m}-${day}`;
+      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
     }
   }
   const d = new Date(dateStr);
   if (!isNaN(d.getTime())) {
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
-    return `${y}-${m}-${day}`;
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
   }
   return dateStr;
 }
@@ -161,14 +149,14 @@ function getCurrentUser() {
 }
 function useCurrentUserRole() {
   const localUser = getCurrentUser();
-  const roleRaw  = localUser?.role || "";
+  const roleRaw   = localUser?.role || "";
   const roleLower = roleRaw.toLowerCase();
   return {
     role: roleRaw,
     loading: false,
-    isAdminOrManager: roleLower === "admin" || roleLower === "manager",
+    isAdminOrManager:     roleLower === "admin" || roleLower === "manager",
     isAdminOrCoordinator: roleLower === "admin" || roleLower === "coordinator",
-    isTrainer: roleLower === "trainer",
+    isTrainer:            roleLower === "trainer",
   };
 }
 function deduplicatePeriods(data) {
@@ -179,7 +167,6 @@ function deduplicatePeriods(data) {
   });
   return Array.from(seen.values());
 }
-/* ─── Section Header ─────────────────────────────────────────────────────── */
 function SectionHeader({ icon, title, subtitle, right }) {
   return (
     <Box sx={{ px: 3, py: 2.5, background: `linear-gradient(135deg, ${TOKENS.accent}0d 0%, ${TOKENS.accentLight} 100%)`, borderBottom: `1px solid ${TOKENS.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1.5, flexWrap: "wrap" }}>
@@ -194,7 +181,6 @@ function SectionHeader({ icon, title, subtitle, right }) {
     </Box>
   );
 }
-/* ─── StatPill ───────────────────────────────────────────────────────────── */
 function StatPill({ icon, label, value, accent }) {
   return (
     <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2, py: 1, borderRadius: "10px", background: accent ? TOKENS.accentLight : TOKENS.surfaceAlt, border: `1px solid ${accent ? TOKENS.accent + "33" : TOKENS.border}` }}>
@@ -206,7 +192,6 @@ function StatPill({ icon, label, value, accent }) {
     </Box>
   );
 }
-/* ─── StatusBanner ───────────────────────────────────────────────────────── */
 function StatusBanner({ message }) {
   if (!message) return null;
   const isSuccess = message.startsWith("✅");
@@ -222,7 +207,6 @@ function StatusBanner({ message }) {
     </Fade>
   );
 }
-/* ─── Batch badge ────────────────────────────────────────────────────────── */
 function BatchBadge({ batchNo }) {
   if (!batchNo) return null;
   const p = isPdftBatch(batchNo), d = isDvftBatch(batchNo);
@@ -236,7 +220,6 @@ function BatchBadge({ batchNo }) {
     </Box>
   );
 }
-/* ─── OutOf Override Badge ───────────────────────────────────────────────── */
 function OutOfOverrideBadge() {
   return (
     <Box sx={{ display: "inline-flex", alignItems: "center", gap: 0.8, px: 1.8, py: 0.8, borderRadius: "10px", background: "#fef3c7", border: "1px solid #f59e0b55" }}>
@@ -245,32 +228,19 @@ function OutOfOverrideBadge() {
     </Box>
   );
 }
-/* ─── Role Badge — shown in marks table header ───────────────────────────── */
 function RoleBadge({ canEdit }) {
   return (
-    <Box sx={{
-      display: "inline-flex", alignItems: "center", gap: 0.8,
-      px: 1.8, py: 0.8, borderRadius: "10px",
-      background: canEdit ? TOKENS.accentLight : TOKENS.surfaceAlt,
-      border: `1px solid ${canEdit ? TOKENS.accent + "44" : TOKENS.border}`,
-    }}>
-      {canEdit
-        ? <LockOpenIcon sx={{ fontSize: 12, color: TOKENS.accent }} />
-        : <LockIcon     sx={{ fontSize: 12, color: TOKENS.textSub }} />}
+    <Box sx={{ display: "inline-flex", alignItems: "center", gap: 0.8, px: 1.8, py: 0.8, borderRadius: "10px", background: canEdit ? TOKENS.accentLight : TOKENS.surfaceAlt, border: `1px solid ${canEdit ? TOKENS.accent + "44" : TOKENS.border}` }}>
+      {canEdit ? <LockOpenIcon sx={{ fontSize: 12, color: TOKENS.accent }} /> : <LockIcon sx={{ fontSize: 12, color: TOKENS.textSub }} />}
       <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700, color: canEdit ? TOKENS.accent : TOKENS.textSub }}>
         {canEdit ? "Edit enabled" : "View only"}
       </Typography>
     </Box>
   );
 }
-/* ─── Main Component ─────────────────────────────────────────────────────── */
+
 function MarkSheet() {
-  const {
-    isAdminOrManager,
-    isAdminOrCoordinator,
-    isTrainer,
-    loading: roleLoading,
-  } = useCurrentUserRole();
+  const { isAdminOrManager, isAdminOrCoordinator, loading: roleLoading } = useCurrentUserRole();
   const [batchNo,                 setBatchNo]                 = useState("");
   const [assessmentType,          setAssessmentType]          = useState("weekly");
   const [availableBatches,        setAvailableBatches]        = useState([]);
@@ -291,40 +261,35 @@ function MarkSheet() {
   const [savingOutOf,             setSavingOutOf]             = useState(false);
   const [loadingMarks,            setLoadingMarks]            = useState(false);
   const [marksAlreadySaved,       setMarksAlreadySaved]       = useState(false);
-
-  // ── FIX: A counter that we increment whenever we want to force a marks
-  // reload for auto-date assessments even if batchNo/selectedDate haven't
-  // changed (e.g. switching between final_project and viva with same batch).
+  // Incremented to force re-load when switching between final_project/viva
+  // on the same batch+date (where no other dependency changes).
   const [autoLoadTrigger,         setAutoLoadTrigger]         = useState(0);
 
-  const isPdft            = isPdftBatch(batchNo);
-  const isDvft            = isDvftBatch(batchNo);
-  const isFixedOutOfBatch = isPdft || isDvft;
+  const isPdft               = isPdftBatch(batchNo);
+  const isDvft               = isDvftBatch(batchNo);
+  const isFixedOutOfBatch    = isPdft || isDvft;
   const isAutoDateAssessment = assessmentType === "final_project" || assessmentType === "viva";
   const isAutoOutOfType      = AUTO_OUT_OF_TYPES.includes(assessmentType);
   const isDvftAutoDateType   = isDvft && isAutoDateAssessment;
-  const effectiveWindowOpen = true;
-  const outOfLocked = isAdminOrManager
-    ? false
-    : isAutoOutOfType && isFixedOutOfBatch;
-  const canEditSavedMarks = isAdminOrCoordinator;
-  const marksEditDisabled = marksAlreadySaved && !canEditSavedMarks;
-  const marksEnteredCount = learners.filter(
-    l => marks[l.id]?.points && marks[l.id].points.trim() !== ""
-  ).length;
+  const outOfLocked          = isAdminOrManager ? false : isAutoOutOfType && isFixedOutOfBatch;
+  const canEditSavedMarks    = isAdminOrCoordinator;
+  const marksEditDisabled    = marksAlreadySaved && !canEditSavedMarks;
+  const marksEnteredCount    = learners.filter(l => marks[l.id]?.points && marks[l.id].points.trim() !== "").length;
+
   /* ── Load batches ── */
   useEffect(() => {
     fetch(`${API_BASE}/api/batches`)
       .then(r => r.json())
       .then(data => {
-        const batchList = Array.isArray(data)
+        const list = Array.isArray(data)
           ? data.map(b => (typeof b === "string" ? b : b.batch_no)).filter(Boolean)
           : [];
-        setAvailableBatches([...new Set(batchList)]);
+        setAvailableBatches([...new Set(list)]);
       })
       .catch(() => setAvailableBatches([]))
       .finally(() => setLoadingBatches(false));
   }, []);
+
   /* ── Load learners ── */
   useEffect(() => {
     if (!batchNo) return setLearners([]);
@@ -336,36 +301,36 @@ function MarkSheet() {
       .finally(() => setLoadingLearners(false));
   }, [batchNo]);
 
-  /* ── Load periods / init auto-date assessments ── */
+  /* ── Load periods / init auto-date assessments ─────────────────────────
+   *
+   * For final_project / viva (auto-date types):
+   *   - Clear stale marks immediately so old data doesn't flash.
+   *   - For non-DVFT batches: set selectedDate to todayDate AND bump
+   *     autoLoadTrigger so the auto-load effect always fires even when
+   *     selectedDate hasn't changed (e.g. switching from final_project
+   *     to viva — both use todayDate, so selectedDate stays the same
+   *     and the auto-load effect wouldn't re-run without this trigger).
+   *   - For DVFT batches: clear selectedDate and wait for user input.
+   * ─────────────────────────────────────────────────────────────────── */
   useEffect(() => {
     if (!batchNo) return;
     if (isAutoDateAssessment) {
-      // Reset marks and saved state first so old data doesn't flash
       setMarks({});
       setMarksAlreadySaved(false);
       setSelectedCoursePlannerId("");
       setSelectedWeekNo("");
       setTopicName(ASSESSMENT_MAP[assessmentType].label);
       setPeriods([]);
-
       const fixed = getFixedOutOf("", assessmentType, batchNo);
       if (fixed !== null) setOutOff(String(fixed));
-
       if (isDvft) {
-        // DVFT: user must pick a date — clear it so the auto-load
-        // effect waits for a valid date input.
         setSelectedDate("");
       } else {
-        // Non-DVFT: always use today's date.
-        // Explicitly set it (even if it already equals todayDate) then
-        // bump the trigger so the auto-load effect always fires.
         setSelectedDate(todayDate);
         setAutoLoadTrigger(prev => prev + 1);
       }
       return;
     }
-
-    // Non-auto-date assessment types
     const apiType = ASSESSMENT_MAP[assessmentType].api;
     fetch(`${API_BASE}/apiperiods/${batchNo}/${apiType}`)
       .then(r => r.json())
@@ -384,12 +349,12 @@ function MarkSheet() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [batchNo, assessmentType]);
 
-  /* ── Window close date — informational only ── */
+  /* ── Window close date ── */
   useEffect(() => {
     if (isAutoDateAssessment || !selectedDate) return;
-    const assessmentDate = new Date(selectedDate + "T00:00:00");
-    if (!assessmentDate) return;
-    let close = new Date(assessmentDate);
+    const d = new Date(selectedDate + "T00:00:00");
+    if (isNaN(d.getTime())) return;
+    const close = new Date(d);
     const type = ASSESSMENT_MAP[assessmentType]?.type;
     if (type === "weekly")     close.setDate(close.getDate() + 3);
     else if (type === "mid")   close.setDate(close.getDate() + 5);
@@ -398,24 +363,20 @@ function MarkSheet() {
     setWindowCloseDate(close.toLocaleDateString("en-GB"));
   }, [selectedDate, assessmentType, isAutoDateAssessment]);
 
-  /* ── Auto-load existing marks for auto-date assessments ──────────────────
+  /* ── Auto-load marks for final_project / viva ───────────────────────────
    *
-   * FIX: We now depend on `autoLoadTrigger` in addition to batchNo and
-   * selectedDate. This ensures the effect re-fires whenever the assessment
-   * type switches between final_project / viva for the same batch on the
-   * same date (where batchNo and selectedDate wouldn't change, so React
-   * would otherwise skip re-running this effect).
-   *
-   * The periods useEffect above increments `autoLoadTrigger` each time an
-   * auto-date type is selected for a non-DVFT batch, guaranteeing a fresh
-   * load on every type switch.
-   * ───────────────────────────────────────────────────────────────────────── */
+   * Key dependencies:
+   *   batchNo          — switches batch
+   *   selectedDate     — DVFT user picks a date; or reacts to todayDate set above
+   *   isAutoDateAssessment — type changed to/from auto-date category
+   *   autoLoadTrigger  — bumped every time non-DVFT auto-date type is
+   *                       selected, ensuring a fresh fetch even when
+   *                       batchNo and selectedDate are unchanged
+   * ─────────────────────────────────────────────────────────────────── */
   useEffect(() => {
     if (!isAutoDateAssessment || !batchNo) return;
-
     const dateToUse = isDvft ? selectedDate : todayDate;
-    if (!dateToUse) return; // DVFT: wait for user to pick a date
-
+    if (!dateToUse) return;
     loadExistingMarks(null, dateToUse, outOff);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [batchNo, selectedDate, isAutoDateAssessment, autoLoadTrigger]);
@@ -429,20 +390,13 @@ function MarkSheet() {
       let url = `${API_BASE}/api/marks/${cfg.api}?batch_no=${batchNo}&assessment_date=${date}`;
       if (plannerId) url += `&course_planner_id=${plannerId}`;
       const res = await fetch(url);
-      if (!res.ok) {
-        console.warn("Failed to load existing marks:", res.status);
-        setMarksAlreadySaved(false);
-        setLoadingMarks(false);
-        return;
-      }
+      if (!res.ok) { setMarksAlreadySaved(false); return; }
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
         setMarksAlreadySaved(true);
         const savedOutOf = data[0]?.out_off;
-        if (savedOutOf != null && savedOutOf !== undefined) {
-          if (!outOfLocked || isAdminOrManager) {
-            setOutOff(String(savedOutOf));
-          }
+        if (savedOutOf != null && (!outOfLocked || isAdminOrManager)) {
+          setOutOff(String(savedOutOf));
         }
         const marksMap = {};
         data.forEach(row => {
@@ -458,11 +412,9 @@ function MarkSheet() {
           }
         });
         setMarks(marksMap);
-        console.log(`Loaded ${Object.keys(marksMap).length} existing mark records`);
       } else {
         setMarks({});
         setMarksAlreadySaved(false);
-        console.log("No existing marks found for this assessment");
       }
     } catch (e) {
       console.error("Failed to load existing marks:", e);
@@ -491,7 +443,7 @@ function MarkSheet() {
     setOutOff(newOutOff);
     if (isoDate) loadExistingMarks(plannerId, isoDate, newOutOff);
   };
-  /* ── Marks input handler ── */
+
   const handleMarksInput = (id, val) => {
     let cleaned = val.toUpperCase().replace(/[^0-9.AB]/g, "");
     const dotCount = (cleaned.match(/\./g) || []).length;
@@ -499,38 +451,30 @@ function MarkSheet() {
       const firstDot = cleaned.indexOf(".");
       cleaned = cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, "");
     }
-    setMarks(prev => ({
-      ...prev,
-      [id]: { points: cleaned, percentage: calculatePercentage(cleaned, outOff) },
-    }));
+    setMarks(prev => ({ ...prev, [id]: { points: cleaned, percentage: calculatePercentage(cleaned, outOff) } }));
   };
+
   const calculatePercentage = (points, outOf) => {
     if (!points || !outOf || points === "AB") return "";
-    const pointsNum = parseFloat(points);
-    const outOfNum  = parseFloat(outOf);
-    if (isNaN(pointsNum) || isNaN(outOfNum) || outOfNum === 0) return "";
-    return Math.round((pointsNum / outOfNum) * 100).toString();
+    const pn = parseFloat(points), on = parseFloat(outOf);
+    if (isNaN(pn) || isNaN(on) || on === 0) return "";
+    return Math.round((pn / on) * 100).toString();
   };
-  /* ── Out Of change ── */
+
   const handleOutOfChange = (v) => {
     let val = v.replace(/[^0-9.]/g, "");
-    const dotCount = (val.match(/\./g) || []).length;
-    if (dotCount > 1) {
-      const firstDot = val.indexOf(".");
-      val = val.slice(0, firstDot + 1) + val.slice(firstDot + 1).replace(/\./g, "");
-    }
+    const dc = (val.match(/\./g) || []).length;
+    if (dc > 1) { const fd = val.indexOf("."); val = val.slice(0, fd + 1) + val.slice(fd + 1).replace(/\./g, ""); }
     setOutOff(val);
     setMarks(prev => {
       const updated = { ...prev };
       Object.keys(updated).forEach(id => {
-        if (updated[id]?.points) {
-          updated[id] = { ...updated[id], percentage: calculatePercentage(updated[id].points, val) };
-        }
+        if (updated[id]?.points) updated[id] = { ...updated[id], percentage: calculatePercentage(updated[id].points, val) };
       });
       return updated;
     });
   };
-  /* ── Save Out Of ── */
+
   const handleSaveOutOf = async () => {
     if (!outOff || !batchNo) return;
     setSavingOutOf(true);
@@ -538,37 +482,28 @@ function MarkSheet() {
       const cfg = ASSESSMENT_MAP[assessmentType];
       const res = await fetch(`${API_BASE}/api/marks/update-out-of`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          batch_no:          batchNo,
-          assessment_type:   cfg.api,
-          course_planner_id: selectedCoursePlannerId ? Number(selectedCoursePlannerId) : undefined,
-          assessment_date:   selectedDate,
-          out_off:           Number(outOff),
-        }),
+        body: JSON.stringify({ batch_no: batchNo, assessment_type: cfg.api, course_planner_id: selectedCoursePlannerId ? Number(selectedCoursePlannerId) : undefined, assessment_date: selectedDate, out_off: Number(outOff) }),
       });
-      setMessage(res.status === 403
-        ? "❌ Permission denied — only Admin or Manager can update Out Of."
-        : res.ok
-          ? "✅ Out Of updated successfully."
-          : `❌ Failed to update Out Of: ${(await res.json().catch(() => ({}))).error || "Unknown error"}`);
-    } catch { setMessage("❌ Network error while updating Out Of."); }
-    finally   { setSavingOutOf(false); setTimeout(() => setMessage(""), 4000); }
+      setMessage(res.status === 403 ? "❌ Permission denied." : res.ok ? "✅ Out Of updated successfully." : `❌ Failed: ${(await res.json().catch(() => ({}))).error || "Unknown"}`);
+    } catch { setMessage("❌ Network error."); }
+    finally { setSavingOutOf(false); setTimeout(() => setMessage(""), 4000); }
   };
-  /* ── Save Marks ── */
+
+  /* ── Save Marks ─────────────────────────────────────────────────────────
+   *
+   * IMPORTANT: assessment_date is always included in the payload.
+   * For final_project and viva, the old backend code was ignoring this
+   * and substituting server-time new Date() — meaning the saved date
+   * could differ from the date the frontend queries.  The fixed backend
+   * endpoints now read assessment_date from req.body, so GET and POST
+   * will always agree on the date.
+   * ─────────────────────────────────────────────────────────────────── */
   const handleSave = async () => {
-    if (!batchNo || !selectedDate || !outOff) {
-      setMessage("❌ Please complete all required fields."); return;
-    }
-    if (!isAutoDateAssessment && !selectedCoursePlannerId) {
-      setMessage("❌ Please select an assessment date from the dropdown."); return;
-    }
-    if (isDvftAutoDateType && !selectedDate) {
-      setMessage("❌ Please enter the assessment date."); return;
-    }
+    if (!batchNo || !selectedDate || !outOff) { setMessage("❌ Please complete all required fields."); return; }
+    if (!isAutoDateAssessment && !selectedCoursePlannerId) { setMessage("❌ Please select an assessment date from the dropdown."); return; }
+    if (isDvftAutoDateType && !selectedDate) { setMessage("❌ Please enter the assessment date."); return; }
     const cfg = ASSESSMENT_MAP[assessmentType];
-    const learnersWithMarks = learners.filter(
-      l => marks[l.id]?.points && marks[l.id].points.trim() !== ""
-    );
+    const learnersWithMarks = learners.filter(l => marks[l.id]?.points && marks[l.id].points.trim() !== "");
     if (learnersWithMarks.length === 0) { setMessage("❌ No marks entered."); return; }
     setSaving(true); setMessage("");
     let savedCount = 0, failCount = 0;
@@ -578,7 +513,7 @@ function MarkSheet() {
         const payload = {
           learner_id:        l.id,
           batch_no:          batchNo,
-          assessment_date:   selectedDate,
+          assessment_date:   selectedDate,   // ← always sent; backend must use this
           assessment_name:   topicName || cfg.label,
           out_off:           parseFloat(outOff),
           points:            pointsStr === "AB" ? 0 : parseFloat(pointsStr) || 0,
@@ -599,17 +534,17 @@ function MarkSheet() {
       }
       setMessage(failCount === 0
         ? `✅ Marks saved successfully for ${savedCount} learner(s).`
-        : `⚠️ Saved ${savedCount} record(s). ${failCount} failed — check console.`);
+        : `⚠️ Saved ${savedCount} record(s). ${failCount} failed.`);
       if (failCount === 0) setMarksAlreadySaved(true);
     } finally { setSaving(false); setTimeout(() => setMessage(""), 5000); }
   };
-  /* ── Reset ── */
+
   const resetSelections = () => {
     setPeriodValue(""); setSelectedDate(""); setSelectedCoursePlannerId("");
     setSelectedWeekNo(""); setTopicName(""); setMarks({}); setOutOff("");
     setMarksAlreadySaved(false);
   };
-  /* ── Loading state ── */
+
   if (loadingBatches || roleLoading) return (
     <Box sx={{ minHeight: "100vh", background: TOKENS.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
       <Box sx={{ textAlign: "center" }}>
@@ -620,12 +555,11 @@ function MarkSheet() {
       </Box>
     </Box>
   );
-  /* ── Render ── */
+
   return (
     <Box sx={{ minHeight: "100vh", background: TOKENS.bg, p: { xs: 2, md: 4 }, fontFamily: "'DM Sans', sans-serif" }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');`}</style>
       <Box sx={{ maxWidth: 1200, mx: "auto" }}>
-        {/* ── Page Header ── */}
         <Box sx={{ mb: 4 }}>
           <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: { xs: 24, md: 30 }, fontWeight: 800, color: TOKENS.text, letterSpacing: "-0.03em", mb: 0.5 }}>
             Assessment Marks Entry
@@ -646,9 +580,7 @@ function MarkSheet() {
                   <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2, py: 0.8, borderRadius: "10px", background: TOKENS.success.light, border: `1px solid ${TOKENS.success.fill}44` }}>
                     <LockOpenIcon sx={{ fontSize: 14, color: TOKENS.success.fill }} />
                     <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700, color: TOKENS.success.text }}>
-                      {!isAutoDateAssessment && windowCloseDate
-                        ? `Window open · standard close ${windowCloseDate}`
-                        : "Window open"}
+                      {!isAutoDateAssessment && windowCloseDate ? `Window open · standard close ${windowCloseDate}` : "Window open"}
                     </Typography>
                   </Box>
                 </Box>
@@ -657,7 +589,6 @@ function MarkSheet() {
           />
           <Box sx={{ p: 3 }}>
             <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap", alignItems: "flex-end" }}>
-              {/* Assessment Type */}
               <FormControl size="small" sx={{ minWidth: 220 }}>
                 <InputLabel sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Assessment Type</InputLabel>
                 <Select value={assessmentType} label="Assessment Type"
@@ -667,7 +598,6 @@ function MarkSheet() {
                   ))}
                 </Select>
               </FormControl>
-              {/* Batch */}
               <FormControl size="small" sx={{ minWidth: 160 }}>
                 <InputLabel sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Batch</InputLabel>
                 <Select value={batchNo} label="Batch"
@@ -677,7 +607,6 @@ function MarkSheet() {
                   ))}
                 </Select>
               </FormControl>
-              {/* Period picker — non-auto types */}
               {!isAutoDateAssessment && (
                 <FormControl size="small" sx={{ minWidth: 380 }}>
                   <InputLabel sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Assessment Date / Topic</InputLabel>
@@ -704,7 +633,6 @@ function MarkSheet() {
                   </Select>
                 </FormControl>
               )}
-              {/* Date input for auto-date types */}
               {isAutoDateAssessment && (
                 isDvft ? (
                   <TextField label="Assessment Date" type="date" size="small" value={selectedDate}
@@ -715,34 +643,17 @@ function MarkSheet() {
                     sx={{ width: 160, "& .MuiInputBase-root": { ...inputSx, fontFamily: "'DM Sans', sans-serif", fontSize: 13 }, "& .MuiInputLabel-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 13 } }} />
                 )
               )}
-              {/* Out Of + Save Out Of */}
               <Box sx={{ display: "flex", alignItems: "flex-end", gap: 1.5, flexWrap: "wrap" }}>
-                <Tooltip title={
-                  outOfLocked
-                    ? `Out Of is fixed for ${isPdft ? "PDFT" : "DVFT"} batches. Contact Admin or Manager to override.`
-                    : isAdminOrManager && isFixedOutOfBatch && isAutoOutOfType
-                      ? "Admin/Manager override — fixed Out Of is editable for you."
-                      : ""
-                }>
+                <Tooltip title={outOfLocked ? `Out Of is fixed for ${isPdft ? "PDFT" : "DVFT"} batches.` : ""}>
                   <span>
-                    <TextField
-                      label="Out Of" value={outOff} disabled={outOfLocked} size="small"
+                    <TextField label="Out Of" value={outOff} disabled={outOfLocked} size="small"
                       onChange={e => handleOutOfChange(e.target.value)}
                       inputProps={{ inputMode: "decimal" }}
                       helperText={isFixedOutOfBatch && outOff && isAutoOutOfType ? (isAdminOrManager ? "Override" : "Fixed") : ""}
-                      sx={{
-                        width: 110,
-                        "& .MuiInputBase-root": {
-                          ...inputSx, fontFamily: "'DM Sans', sans-serif", fontSize: 13,
-                          background: isAdminOrManager && isFixedOutOfBatch && isAutoOutOfType ? "#fef3c7" : "transparent",
-                        },
-                        "& .MuiInputLabel-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 13 },
-                        "& .MuiFormHelperText-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 10 },
-                      }}
+                      sx={{ width: 110, "& .MuiInputBase-root": { ...inputSx, fontFamily: "'DM Sans', sans-serif", fontSize: 13, background: isAdminOrManager && isFixedOutOfBatch && isAutoOutOfType ? "#fef3c7" : "transparent" }, "& .MuiInputLabel-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 13 }, "& .MuiFormHelperText-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 10 } }}
                     />
                   </span>
                 </Tooltip>
-                {/* Save Out Of — Admin/Manager only */}
                 {isAdminOrManager && selectedDate && (
                   <Button variant="outlined" size="small" onClick={handleSaveOutOf}
                     disabled={savingOutOf || !outOff}
@@ -753,7 +664,6 @@ function MarkSheet() {
                 )}
               </Box>
             </Box>
-            {/* Assessment Info Pills */}
             {(topicName || isAutoDateAssessment) && (
               <Fade in>
                 <Box sx={{ mt: 2.5, display: "flex", flexWrap: "wrap", gap: 1.5, alignItems: "center" }}>
@@ -777,9 +687,7 @@ function MarkSheet() {
             right={
               learners.length > 0 && (
                 <Box sx={{ display: "flex", gap: 1.5, alignItems: "center" }}>
-                  {marksAlreadySaved && (
-                    <RoleBadge canEdit={canEditSavedMarks} />
-                  )}
+                  {marksAlreadySaved && <RoleBadge canEdit={canEditSavedMarks} />}
                   <Chip label={`${learners.length} learners`} size="small"
                     sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 11, background: TOKENS.accentLight, color: TOKENS.accent, border: `1px solid ${TOKENS.accent}33` }} />
                   {marksEnteredCount > 0 && (
@@ -810,14 +718,8 @@ function MarkSheet() {
                         <TableCell sx={{ ...tableHeadSx, width: 150 }}>
                           <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
                             Marks{outOff ? ` / ${outOff}` : ""}
-                            <Tooltip title={
-                              marksEditDisabled
-                                ? "Marks are locked. Only Admin or Coordinator can edit saved marks."
-                                : "Enter numbers (e.g. 10 or 10.5) or AB for absent"
-                            }>
-                              {marksEditDisabled
-                                ? <LockIcon sx={{ fontSize: 14, color: TOKENS.textSub }} />
-                                : <InfoOutlinedIcon sx={{ fontSize: 14, color: TOKENS.textSub }} />}
+                            <Tooltip title={marksEditDisabled ? "Marks are locked. Only Admin or Coordinator can edit saved marks." : "Enter numbers (e.g. 10 or 10.5) or AB for absent"}>
+                              {marksEditDisabled ? <LockIcon sx={{ fontSize: 14, color: TOKENS.textSub }} /> : <InfoOutlinedIcon sx={{ fontSize: 14, color: TOKENS.textSub }} />}
                             </Tooltip>
                           </Box>
                         </TableCell>
@@ -832,62 +734,21 @@ function MarkSheet() {
                         const pct      = markData?.percentage;
                         const pctNum   = pct ? parseFloat(pct) : 0;
                         const isAbsent = points === "AB";
-                        const pctColor =
-                          !hasMarks || pct === "" ? TOKENS.textSub :
-                          isAbsent                ? TOKENS.warning.fill :
-                          pctNum >= 75            ? TOKENS.success.fill :
-                          pctNum >= 50            ? TOKENS.warning.fill :
-                                                    TOKENS.error.fill;
+                        const pctColor = !hasMarks || pct === "" ? TOKENS.textSub : isAbsent ? TOKENS.warning.fill : pctNum >= 75 ? TOKENS.success.fill : pctNum >= 50 ? TOKENS.warning.fill : TOKENS.error.fill;
                         return (
-                          <TableRow key={l.id}
-                            sx={{
-                              "&:nth-of-type(even)": { background: TOKENS.surfaceAlt },
-                              "&:hover": { background: TOKENS.accentLight + "66", transition: "background 0.15s" },
-                              ...(hasMarks ? { borderLeft: `3px solid ${isAbsent ? TOKENS.warning.fill : TOKENS.accent}44` } : {}),
-                            }}>
+                          <TableRow key={l.id} sx={{ "&:nth-of-type(even)": { background: TOKENS.surfaceAlt }, "&:hover": { background: TOKENS.accentLight + "66", transition: "background 0.15s" }, ...(hasMarks ? { borderLeft: `3px solid ${isAbsent ? TOKENS.warning.fill : TOKENS.accent}44` } : {}) }}>
                             <TableCell sx={{ ...tableCellSx, color: TOKENS.textSub, fontFamily: "'DM Mono', monospace", fontSize: 11 }}>{idx + 1}</TableCell>
                             <TableCell sx={{ ...tableCellSx, fontWeight: 600 }}>{l.name}</TableCell>
                             <TableCell sx={{ ...tableCellSx, color: TOKENS.textSub, fontSize: 12 }}>{l.email}</TableCell>
                             <TableCell sx={{ ...tableCellSx, py: 0.5 }}>
-                              <Tooltip
-                                title={marksEditDisabled ? "Only Admin or Coordinator can edit saved marks" : ""}
-                                placement="top"
-                              >
+                              <Tooltip title={marksEditDisabled ? "Only Admin or Coordinator can edit saved marks" : ""} placement="top">
                                 <span>
-                                  <TextField size="small"
-                                    value={points}
+                                  <TextField size="small" value={points}
                                     onChange={e => handleMarksInput(l.id, e.target.value)}
                                     placeholder={marksEditDisabled ? "" : "e.g. 10.5 or AB"}
                                     disabled={marksEditDisabled}
-                                    inputProps={{
-                                      style: {
-                                        fontFamily: "'DM Mono', monospace",
-                                        fontSize: 13,
-                                        fontWeight: 700,
-                                        textTransform: "uppercase",
-                                      }
-                                    }}
-                                    sx={{
-                                      width: 110,
-                                      "& .MuiInputBase-root": {
-                                        borderRadius: "8px",
-                                        background: marksEditDisabled
-                                          ? TOKENS.surfaceAlt
-                                          : hasMarks
-                                            ? (isAbsent ? "#fef3c7" : TOKENS.accentLight)
-                                            : "transparent",
-                                        "& .MuiOutlinedInput-notchedOutline": {
-                                          borderColor: marksEditDisabled
-                                            ? TOKENS.border
-                                            : hasMarks
-                                              ? (isAbsent ? TOKENS.warning.fill + "66" : TOKENS.accent + "44")
-                                              : TOKENS.border,
-                                        },
-                                        "&:hover .MuiOutlinedInput-notchedOutline": {
-                                          borderColor: marksEditDisabled ? TOKENS.border : TOKENS.accent,
-                                        },
-                                      }
-                                    }}
+                                    inputProps={{ style: { fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 700, textTransform: "uppercase" } }}
+                                    sx={{ width: 110, "& .MuiInputBase-root": { borderRadius: "8px", background: marksEditDisabled ? TOKENS.surfaceAlt : hasMarks ? (isAbsent ? "#fef3c7" : TOKENS.accentLight) : "transparent", "& .MuiOutlinedInput-notchedOutline": { borderColor: marksEditDisabled ? TOKENS.border : hasMarks ? (isAbsent ? TOKENS.warning.fill + "66" : TOKENS.accent + "44") : TOKENS.border }, "&:hover .MuiOutlinedInput-notchedOutline": { borderColor: marksEditDisabled ? TOKENS.border : TOKENS.accent } } }}
                                   />
                                 </span>
                               </Tooltip>
@@ -915,7 +776,6 @@ function MarkSheet() {
                     </TableBody>
                   </Table>
                 </Box>
-                {/* Save Button Area */}
                 <Box sx={{ mt: 3, display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
                   {marksEditDisabled ? (
                     <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2.5, py: 1.2, borderRadius: "10px", background: TOKENS.surfaceAlt, border: `1px solid ${TOKENS.border}` }}>
@@ -941,9 +801,7 @@ function MarkSheet() {
                       {marksAlreadySaved && (
                         <Box sx={{ display: "flex", alignItems: "center", gap: 0.8, px: 2, py: 0.8, borderRadius: "10px", background: TOKENS.warning.light, border: `1px solid ${TOKENS.warning.fill}55` }}>
                           <InfoOutlinedIcon sx={{ fontSize: 14, color: TOKENS.warning.fill }} />
-                          <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, color: TOKENS.warning.text }}>
-                            Editing saved marks
-                          </Typography>
+                          <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, color: TOKENS.warning.text }}>Editing saved marks</Typography>
                         </Box>
                       )}
                     </>
@@ -955,16 +813,12 @@ function MarkSheet() {
               batchNo ? (
                 <Box sx={{ textAlign: "center", py: 6 }}>
                   <GroupIcon sx={{ fontSize: 40, color: TOKENS.border, mb: 1 }} />
-                  <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TOKENS.textSub }}>
-                    No learners found for batch {batchNo}.
-                  </Typography>
+                  <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TOKENS.textSub }}>No learners found for batch {batchNo}.</Typography>
                 </Box>
               ) : (
                 <Box sx={{ textAlign: "center", py: 6 }}>
                   <AssignmentIcon sx={{ fontSize: 40, color: TOKENS.border, mb: 1 }} />
-                  <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TOKENS.textSub }}>
-                    Select a batch above to load learners.
-                  </Typography>
+                  <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TOKENS.textSub }}>Select a batch above to load learners.</Typography>
                 </Box>
               )
             )}

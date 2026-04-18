@@ -5870,34 +5870,25 @@ app.post("/api/marks/final-project", async (req, res) => {
     const {
       learner_id,
       batch_no,
+      assessment_date: rawDate,   // ← FIXED: accept date from frontend
       out_off,
       points,
       percentage
     } = req.body;
 
-    const assessment_date = new Date().toISOString().split("T")[0];
+    // Use date sent by frontend; fall back to today only if absent
+    const assessment_date = rawDate
+      ? dayjs(rawDate).format("YYYY-MM-DD")
+      : new Date().toISOString().split("T")[0];
 
     const { error } = await supabase
       .from("final_project_scores")
       .upsert(
-        {
-          learner_id,
-          batch_no,
-          assessment_date,
-          out_off,
-          points,
-          percentage,
-          marked_at: new Date()
-        },
-        {
-          onConflict: "learner_id,batch_no,assessment_date"
-        }
+        { learner_id, batch_no, assessment_date, out_off, points, percentage, marked_at: new Date() },
+        { onConflict: "learner_id,batch_no,assessment_date" }
       );
-
     if (error) throw error;
-
     res.json({ success: true });
-
   } catch (err) {
     console.error("Final Project Save Error:", err);
     res.status(500).json({ error: err.message });
@@ -5910,34 +5901,24 @@ app.post("/api/marks/viva", async (req, res) => {
     const {
       learner_id,
       batch_no,
+      assessment_date: rawDate,   // ← FIXED: accept date from frontend
       out_off,
       points,
       percentage
     } = req.body;
 
-    const assessment_date = new Date().toISOString().split("T")[0];
+    const assessment_date = rawDate
+      ? dayjs(rawDate).format("YYYY-MM-DD")
+      : new Date().toISOString().split("T")[0];
 
     const { error } = await supabase
       .from("viva_scores")
       .upsert(
-        {
-          learner_id,
-          batch_no,
-          assessment_date,
-          out_off,
-          points,
-          percentage,
-          marked_at: new Date()
-        },
-        {
-          onConflict: "learner_id,batch_no,assessment_date"
-        }
+        { learner_id, batch_no, assessment_date, out_off, points, percentage, marked_at: new Date() },
+        { onConflict: "learner_id,batch_no,assessment_date" }
       );
-
     if (error) throw error;
-
     res.json({ success: true });
-
   } catch (err) {
     console.error("Viva Save Error:", err);
     res.status(500).json({ error: err.message });
