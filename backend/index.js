@@ -1079,18 +1079,15 @@ app.get("/api/marks/:assessmentType", async (req, res, next) => {
   const table = ASSESSMENT_TABLE_MAP[assessmentType];
   if (!table) return next();
 
-  if (!batch_no || !assessment_date)
-    return res.status(400).json({ error: "batch_no and assessment_date are required" });
-
-  // Normalize assessment_date to ISO YYYY-MM-DD for reliable date column matching
-  // The date from course_planner_data may arrive as M/D/YYYY, DD-MMM-YYYY, etc.
-  // Use dayjs for timezone-safe parsing (avoids UTC shift from Date constructor)
-  const parsedDate = dayjs(assessment_date);
-  const normalizedDate = parsedDate.isValid() ? parsedDate.format("YYYY-MM-DD") : null;
-
-  // Tables that do NOT have course_planner_id column
+  // final-project / viva are one-per-batch assessments with no course_planner_id
+  // column, so assessment_date is optional — callers may fetch by batch alone.
   const noPlannerIdTypes = ["final-project", "viva"];
   const hasPlannerCol = !noPlannerIdTypes.includes(assessmentType);
+
+  if (!batch_no)
+    return res.status(400).json({ error: "batch_no is required" });
+  if (!assessment_date && hasPlannerCol)
+    return res.status(400).json({ error: "assessment_date is required" });
 
   try {
     let query = supabase
@@ -1098,8 +1095,12 @@ app.get("/api/marks/:assessmentType", async (req, res, next) => {
       .select("*")
       .eq("batch_no", batch_no);
 
-    // Use normalized ISO date if parseable, otherwise fall back to raw value
-    query = query.eq("assessment_date", normalizedDate || assessment_date);
+    if (assessment_date) {
+      // Normalize assessment_date to ISO YYYY-MM-DD for reliable date column matching
+      const parsedDate = dayjs(assessment_date);
+      const normalizedDate = parsedDate.isValid() ? parsedDate.format("YYYY-MM-DD") : null;
+      query = query.eq("assessment_date", normalizedDate || assessment_date);
+    }
 
     // Only filter by course_planner_id if the table has that column AND it was provided
     if (course_planner_id && hasPlannerCol) {
@@ -1113,13 +1114,15 @@ app.get("/api/marks/:assessmentType", async (req, res, next) => {
       throw error;
     }
 
-    // Normalize response — return only the fields the frontend needs
+    // Normalize response — include assessment_date so callers (final-project /
+    // viva) that fetched without a date filter can recover the saved date.
     const normalized = (data || []).map(row => ({
       learner_id:      row.learner_id,
       out_off:         row.out_off,
       points:          row.points,
       percentage:      row.percentage,
       assessment_name: row.assessment_name || null,
+      assessment_date: row.assessment_date || null,
     }));
 
     return res.json(normalized);

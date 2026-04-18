@@ -305,12 +305,12 @@ function MarkSheet() {
    *
    * For final_project / viva (auto-date types):
    *   - Clear stale marks immediately so old data doesn't flash.
-   *   - For non-DVFT batches: set selectedDate to todayDate AND bump
-   *     autoLoadTrigger so the auto-load effect always fires even when
-   *     selectedDate hasn't changed (e.g. switching from final_project
-   *     to viva — both use todayDate, so selectedDate stays the same
-   *     and the auto-load effect wouldn't re-run without this trigger).
-   *   - For DVFT batches: clear selectedDate and wait for user input.
+   *   - Clear selectedDate; the auto-load effect below fetches any saved
+   *     record and populates selectedDate from its stored date, or falls
+   *     back to todayDate (non-DVFT) / empty (DVFT) when none exists.
+   *   - Bump autoLoadTrigger so the fetch always fires, even when the
+   *     dependencies otherwise wouldn't change (e.g. switching between
+   *     final_project and viva).
    * ─────────────────────────────────────────────────────────────────── */
   useEffect(() => {
     if (!batchNo) return;
@@ -323,12 +323,8 @@ function MarkSheet() {
       setPeriods([]);
       const fixed = getFixedOutOf("", assessmentType, batchNo);
       if (fixed !== null) setOutOff(String(fixed));
-      if (isDvft) {
-        setSelectedDate("");
-      } else {
-        setSelectedDate(todayDate);
-        setAutoLoadTrigger(prev => prev + 1);
-      }
+      setSelectedDate("");
+      setAutoLoadTrigger(prev => prev + 1);
       return;
     }
     const apiType = ASSESSMENT_MAP[assessmentType].api;
@@ -365,21 +361,66 @@ function MarkSheet() {
 
   /* ── Auto-load marks for final_project / viva ───────────────────────────
    *
-   * Key dependencies:
-   *   batchNo          — switches batch
-   *   selectedDate     — DVFT user picks a date; or reacts to todayDate set above
-   *   isAutoDateAssessment — type changed to/from auto-date category
-   *   autoLoadTrigger  — bumped every time non-DVFT auto-date type is
-   *                       selected, ensuring a fresh fetch even when
-   *                       batchNo and selectedDate are unchanged
+   * These are one-per-batch assessments, so fetch without a date filter.
+   * Backend returns the saved record(s) for this batch+type regardless of
+   * date; we use the returned assessment_date to populate selectedDate so
+   * the user sees exactly when the marks were saved. If no record exists,
+   * default selectedDate to today (non-DVFT) or leave empty (DVFT).
    * ─────────────────────────────────────────────────────────────────── */
   useEffect(() => {
     if (!isAutoDateAssessment || !batchNo) return;
-    const dateToUse = isDvft ? selectedDate : todayDate;
-    if (!dateToUse) return;
-    loadExistingMarks(null, dateToUse, outOff);
+    let cancelled = false;
+    (async () => {
+      setLoadingMarks(true);
+      try {
+        const cfg = ASSESSMENT_MAP[assessmentType];
+        const res = await fetch(
+          `${API_BASE}/api/marks/${cfg.api}?batch_no=${batchNo}`
+        );
+        if (cancelled) return;
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            const savedDate = data[0]?.assessment_date;
+            if (savedDate) setSelectedDate(normalizeDate(savedDate));
+            setMarksAlreadySaved(true);
+            const savedOutOf = data[0]?.out_off;
+            if (savedOutOf != null && (!outOfLocked || isAdminOrManager)) {
+              setOutOff(String(savedOutOf));
+            }
+            const marksMap = {};
+            data.forEach(row => {
+              if (row.learner_id != null) {
+                const pointsVal = row.points != null ? String(row.points) : "";
+                const outOfVal  = row.out_off != null ? Number(row.out_off) : 0;
+                const pctVal    = row.percentage != null
+                  ? String(row.percentage)
+                  : (pointsVal && outOfVal > 0 && pointsVal !== "AB"
+                      ? String(Math.round((parseFloat(pointsVal) / outOfVal) * 100))
+                      : "");
+                marksMap[row.learner_id] = { points: pointsVal, percentage: pctVal };
+              }
+            });
+            setMarks(marksMap);
+            return;
+          }
+        }
+        setMarks({});
+        setMarksAlreadySaved(false);
+        if (!isDvft) setSelectedDate(todayDate);
+      } catch (e) {
+        console.error("Failed to auto-load marks:", e);
+        if (!cancelled) {
+          setMarks({});
+          setMarksAlreadySaved(false);
+        }
+      } finally {
+        if (!cancelled) setLoadingMarks(false);
+      }
+    })();
+    return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [batchNo, selectedDate, isAutoDateAssessment, autoLoadTrigger]);
+  }, [batchNo, isAutoDateAssessment, assessmentType, autoLoadTrigger]);
 
   /* ── Load existing marks from DB ── */
   const loadExistingMarks = useCallback(async (plannerId, date, currentOutOff) => {
@@ -639,7 +680,7 @@ function MarkSheet() {
                     onChange={e => setSelectedDate(e.target.value)} InputLabelProps={{ shrink: true }}
                     sx={{ width: 180, "& .MuiInputBase-root": { ...inputSx, fontFamily: "'DM Sans', sans-serif", fontSize: 13 }, "& .MuiInputLabel-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 13 } }} />
                 ) : (
-                  <TextField label="Assessment Date" value={todayDate} disabled size="small"
+                  <TextField label="Assessment Date" value={selectedDate || todayDate} disabled size="small"
                     sx={{ width: 160, "& .MuiInputBase-root": { ...inputSx, fontFamily: "'DM Sans', sans-serif", fontSize: 13 }, "& .MuiInputLabel-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 13 } }} />
                 )
               )}
