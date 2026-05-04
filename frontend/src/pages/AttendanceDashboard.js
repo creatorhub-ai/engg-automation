@@ -168,27 +168,40 @@ export default function AttendanceDashboard({ token }) {
          * ─────────────────────────────────────────────────────────────────── */
         const newAttendance = {};
 
+        /* Tolerate both server response shapes:
+         *   new: serverAttendance[email][date][session] = { status }
+         *   old: serverAttendance[email][date]          = { status }   ← single status per day
+         * If the old shape is returned, apply that status to all 3 sessions so the
+         * saved data is still visibly reflected in the dashboard. */
+        const readSavedStatus = (email, session) => {
+          const dateNode = serverAttendance[email]?.[today];
+          if (!dateNode) return "";
+          const sessionCell = dateNode[session];
+          if (sessionCell && typeof sessionCell === "object" && sessionCell.status) return sessionCell.status;
+          if (typeof sessionCell === "string" && sessionCell) return sessionCell;
+          if (typeof dateNode.status === "string" && dateNode.status) return dateNode.status; // old per-day shape
+          return "";
+        };
+
         filteredLearners.forEach((learner) => {
           newAttendance[learner.email] = { [today]: {} };
 
           for (let session = 1; session <= sessionsPerDay; session++) {
-            const serverCell = serverAttendance[learner.email]?.[today]?.[session];
-
             if (learner.status === "Disabled") {
               newAttendance[learner.email][today][session] = {
                 status:      "NA",
                 savedStatus: "NA",
-                locked:      true,   // Disabled learners are always locked
+                locked:      true,
               };
-            } else {
-              /* Pre-fill with saved value if it exists, but always keep editable */
-              const savedVal = serverCell?.status ?? (typeof serverCell === "string" ? serverCell : "");
-              newAttendance[learner.email][today][session] = {
-                status:      savedVal,
-                savedStatus: savedVal,
-                locked:      false,   // Always editable for today
-              };
+              continue;
             }
+
+            const savedVal = readSavedStatus(learner.email, session);
+            newAttendance[learner.email][today][session] = {
+              status:      savedVal,    // pre-fill UI with saved value
+              savedStatus: savedVal,    // remember what was saved
+              locked:      false,
+            };
           }
         });
 
@@ -311,13 +324,15 @@ export default function AttendanceDashboard({ token }) {
       );
     }
 
-    /* All other learners → always show three clickable P / A / L tiles */
+    /* All other learners → always show three clickable P / A / L tiles.
+     * Saved cells get a thicker border + a "✓ saved" sub-label for clear visibility. */
+    const cellIsSaved = !!cell.savedStatus && cell.savedStatus !== "NA";
+
     return (
       <Box sx={{ display: "flex", gap: 0.6, justifyContent: "center", alignItems: "center" }}>
         {["P", "A", "L"].map((key) => {
           const cfg        = SESSION_CFG[key];
           const isSelected = cell.status === key;
-          /* Show a small dot under the tile if this value was previously saved */
           const isSaved    = cell.savedStatus === key;
 
           return (
@@ -325,8 +340,9 @@ export default function AttendanceDashboard({ token }) {
               <Box
                 onClick={() => markAttendance(learner.email, session, key)}
                 sx={{
-                  width:      30,
-                  height:     30,
+                  position:     "relative",
+                  width:        32,
+                  height:       32,
                   borderRadius: "8px",
                   background:   isSelected ? cfg.hov : cfg.bg,
                   display:      "flex",
@@ -337,7 +353,9 @@ export default function AttendanceDashboard({ token }) {
                   fontSize:     12,
                   fontWeight:   800,
                   color:        isSelected ? "#fff" : cfg.text,
-                  border:       `1.5px solid ${isSelected ? cfg.hov : cfg.border}`,
+                  border:       isSaved
+                    ? `2.5px solid ${cfg.hov}`
+                    : `1.5px solid ${isSelected ? cfg.hov : cfg.border}`,
                   transition:   "all 0.15s",
                   userSelect:   "none",
                   transform:    isSelected ? "scale(1.1)" : "scale(1)",
@@ -351,22 +369,61 @@ export default function AttendanceDashboard({ token }) {
                 }}
               >
                 {key}
+                {isSaved && (
+                  <Box
+                    sx={{
+                      position:     "absolute",
+                      top:          -5,
+                      right:        -5,
+                      width:        14,
+                      height:       14,
+                      borderRadius: "50%",
+                      background:   "#16a34a",
+                      color:        "#fff",
+                      fontSize:     9,
+                      fontWeight:   900,
+                      display:      "flex",
+                      alignItems:   "center",
+                      justifyContent: "center",
+                      border:       "2px solid #fff",
+                      lineHeight:   1,
+                    }}
+                  >
+                    ✓
+                  </Box>
+                )}
               </Box>
-              {/* Saved-state dot: only visible when this tile matches the last saved value */}
-              <Box
-                sx={{
-                  width:        5,
-                  height:       5,
-                  borderRadius: "50%",
-                  background:   isSaved ? cfg.hov : "transparent",
-                  transition:   "background 0.2s",
-                }}
-              />
             </Box>
           );
         })}
+        {cellIsSaved && (
+          <Typography
+            sx={{
+              ml: 0.5,
+              fontFamily: "'DM Sans', sans-serif",
+              fontSize:   9,
+              fontWeight: 700,
+              color:      "#15803d",
+              letterSpacing: "0.05em",
+              textTransform: "uppercase",
+            }}
+          >
+            saved
+          </Typography>
+        )}
       </Box>
     );
+  }
+
+  /* Per-learner saved-sessions count for "Saved" column */
+  function getSavedCount(learnerEmail) {
+    const sessions = attendance[learnerEmail]?.[todayDate] || {};
+    let n = 0;
+    for (let s = 1; s <= sessionsPerDay; s++) {
+      const v = sessions[s]?.savedStatus;
+      if (v && v !== "" && v !== "NA") n += 1;
+    }
+    return n;
   }
 
   /* ── Summary stats ── */
@@ -538,8 +595,16 @@ export default function AttendanceDashboard({ token }) {
               );
             })}
             <Box sx={{ display: "flex", alignItems: "center", gap: 0.8 }}>
-              <Box sx={{ width: 5, height: 5, borderRadius: "50%", background: T.accent }} />
-              <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, color: T.textSub }}>Dot = already saved</Typography>
+              <Box sx={{
+                width: 14, height: 14, borderRadius: "50%",
+                background: "#16a34a", color: "#fff",
+                fontSize: 9, fontWeight: 900,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                border: "2px solid #fff", boxShadow: "0 0 0 1px #16a34a",
+              }}>✓</Box>
+              <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, color: T.textSub }}>
+                Green check + thicker border = saved in DB
+              </Typography>
             </Box>
           </Box>
 
@@ -547,7 +612,13 @@ export default function AttendanceDashboard({ token }) {
             <Table size="small">
               <TableHead>
                 <TableRow>
-                  {["#", "Learner Name", "Email", ...Array.from({ length: sessionsPerDay }, (_, i) => `Session ${i + 1}`)].map((h) => (
+                  {[
+                    "#",
+                    "Learner Name",
+                    "Email",
+                    ...Array.from({ length: sessionsPerDay }, (_, i) => `Session ${i + 1}`),
+                    "Saved",
+                  ].map((h) => (
                     <TableCell
                       key={h}
                       align={["Learner Name", "Email", "#"].includes(h) ? "left" : "center"}
@@ -560,15 +631,23 @@ export default function AttendanceDashboard({ token }) {
               </TableHead>
               <TableBody>
                 {learners.map((learner, idx) => {
-                  const isDirty = dirtyEmails.has(learner.email);
+                  const isDirty       = dirtyEmails.has(learner.email);
+                  const isDisabled    = learner.status === "Disabled";
+                  const savedSessions = isDisabled ? 0 : getSavedCount(learner.email);
+                  const fullySaved    = !isDisabled && savedSessions === sessionsPerDay;
                   return (
                     <TableRow
                       key={learner.email}
                       sx={{
                         "&:nth-of-type(even)": { background: T.surfaceAlt },
                         "&:hover":             { background: T.accentLight, transition: "background 0.15s" },
-                        /* Subtle left border highlight for rows with unsaved changes */
-                        ...(isDirty ? { borderLeft: `3px solid #f59e0b` } : {}),
+                        ...(isDirty
+                          ? { borderLeft: `3px solid #f59e0b` }
+                          : fullySaved
+                            ? { borderLeft: `3px solid #16a34a`, background: "#f0fdf4 !important" }
+                            : savedSessions > 0
+                              ? { borderLeft: `3px solid #86efac` }
+                              : {}),
                       }}
                     >
                       <TableCell sx={{ fontFamily: "'DM Mono', monospace", fontSize: 11, color: T.textSub, width: 36 }}>
@@ -580,6 +659,16 @@ export default function AttendanceDashboard({ token }) {
                           {isDirty && (
                             <Box sx={{ width: 6, height: 6, borderRadius: "50%", background: "#f59e0b", flexShrink: 0 }} title="Unsaved changes" />
                           )}
+                          {fullySaved && (
+                            <Box sx={{
+                              px: 0.8, py: 0.2, borderRadius: "8px",
+                              background: "#dcfce7", border: "1px solid #86efac",
+                              fontFamily: "'DM Sans', sans-serif", fontSize: 9, fontWeight: 800,
+                              color: "#15803d", letterSpacing: "0.05em",
+                            }}>
+                              ALL SAVED
+                            </Box>
+                          )}
                         </Box>
                       </TableCell>
                       <TableCell sx={{ fontFamily: "'DM Mono', monospace", fontSize: 11, color: T.textSub, maxWidth: 220, wordBreak: "break-all" }}>
@@ -590,6 +679,40 @@ export default function AttendanceDashboard({ token }) {
                           {renderSessionCell(learner, i + 1)}
                         </TableCell>
                       ))}
+                      <TableCell align="center" sx={{ py: 1 }}>
+                        {isDisabled ? (
+                          <Typography sx={{ fontFamily: "'DM Mono', monospace", fontSize: 11, color: T.textSub }}>—</Typography>
+                        ) : (
+                          <Box
+                            sx={{
+                              display:      "inline-flex",
+                              alignItems:   "center",
+                              gap:          0.5,
+                              px:           1.2,
+                              py:           0.4,
+                              borderRadius: "12px",
+                              background:   savedSessions === 0
+                                ? "#f3f4f6"
+                                : fullySaved
+                                  ? "#16a34a"
+                                  : "#dcfce7",
+                              border: `1px solid ${
+                                savedSessions === 0 ? "#d1d5db" : fullySaved ? "#15803d" : "#86efac"
+                              }`,
+                              color: savedSessions === 0
+                                ? "#6b7280"
+                                : fullySaved
+                                  ? "#fff"
+                                  : "#15803d",
+                              fontFamily: "'DM Mono', monospace",
+                              fontSize:   11,
+                              fontWeight: 800,
+                            }}
+                          >
+                            {savedSessions}/{sessionsPerDay}
+                          </Box>
+                        )}
+                      </TableCell>
                     </TableRow>
                   );
                 })}
