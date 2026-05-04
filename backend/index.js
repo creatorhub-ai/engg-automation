@@ -4489,13 +4489,45 @@ const UI_TO_DB_STATUS = { P: "present", A: "absent", L: "late" };
 const DB_TO_UI_STATUS = { present: "P", absent: "A", late: "L" };
 
 async function resolveBatchId(batch_no) {
-  const { data, error } = await supabase
-    .from("batches")
-    .select("id")
-    .eq("batch_no", batch_no)
-    .maybeSingle();
-  if (error) throw error;
-  return data?.id || null;
+  if (batch_no === null || batch_no === undefined || batch_no === "") return null;
+
+  /* 1. Try batches.batch_no (string match) */
+  try {
+    const { data, error } = await supabase
+      .from("batches")
+      .select("id")
+      .eq("batch_no", batch_no)
+      .maybeSingle();
+    if (!error && data?.id) return data.id;
+  } catch (_) { /* column may not exist — fall through */ }
+
+  /* 2. Try course_planner_data.batch_no → batches.id */
+  try {
+    const { data, error } = await supabase
+      .from("course_planner_data")
+      .select("batch_id")
+      .eq("batch_no", batch_no)
+      .not("batch_id", "is", null)
+      .limit(1)
+      .maybeSingle();
+    if (!error && data?.batch_id) return data.batch_id;
+  } catch (_) { /* table or column may not exist — fall through */ }
+
+  /* 3. If batch_no itself is numeric, treat it as batches.id */
+  const asNum = Number(batch_no);
+  if (Number.isInteger(asNum) && asNum > 0) {
+    try {
+      const { data, error } = await supabase
+        .from("batches")
+        .select("id")
+        .eq("id", asNum)
+        .maybeSingle();
+      if (!error && data?.id) return data.id;
+    } catch (_) { /* ignore */ }
+    return asNum;
+  }
+
+  return null;
 }
 
 async function resolveTrainerId(req) {
