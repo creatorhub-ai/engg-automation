@@ -4481,6 +4481,131 @@ app.post("/api/save_attendance_ui", async (req, res) => {
   }
 });
 
+/* ─────────────────────────────────────────────────────────────────────────────
+ * New endpoints backed by public.attendance (one row per learner/batch/date)
+ * ────────────────────────────────────────────────────────────────────────── */
+
+const UI_TO_DB_STATUS = { P: "present", A: "absent", L: "late" };
+const DB_TO_UI_STATUS = { present: "P", absent: "A", late: "L" };
+
+async function resolveBatchId(batch_no) {
+  const { data, error } = await supabase
+    .from("batches")
+    .select("id")
+    .eq("batch_no", batch_no)
+    .maybeSingle();
+  if (error) throw error;
+  return data?.id || null;
+}
+
+app.get("/api/get_attendance_table", async (req, res) => {
+  try {
+    const batch_no = req.query.batch_no;
+    if (!batch_no) return res.status(400).json({ error: "Missing batch_no" });
+
+    const batch_id = await resolveBatchId(batch_no);
+    if (!batch_id) return res.json({});
+
+    const { data: rows, error } = await supabase
+      .from("attendance")
+      .select("learner_id, date, status")
+      .eq("batch_id", batch_id);
+    if (error) throw error;
+
+    const learnerIds = [...new Set((rows || []).map((r) => r.learner_id))];
+    let idToEmail = {};
+    if (learnerIds.length) {
+      const { data: learners, error: lErr } = await supabase
+        .from("learners")
+        .select("id, email")
+        .in("id", learnerIds);
+      if (lErr) throw lErr;
+      idToEmail = Object.fromEntries((learners || []).map((l) => [l.id, l.email]));
+    }
+
+    const result = {};
+    (rows || []).forEach((r) => {
+      const email = idToEmail[r.learner_id];
+      if (!email) return;
+      if (!result[email]) result[email] = {};
+      result[email][r.date] = { status: DB_TO_UI_STATUS[r.status] || "" };
+    });
+
+    res.json(result);
+  } catch (err) {
+    console.error("GET /api/get_attendance_table error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+app.post("/api/save_attendance_table", authMiddleware, async (req, res) => {
+  try {
+    const { batch_no, attendance } = req.body;
+    if (!batch_no || !attendance) {
+      return res.status(400).json({ error: "Missing batch_no or attendance" });
+    }
+
+    const batch_id = await resolveBatchId(batch_no);
+    if (!batch_id) return res.status(404).json({ error: "Batch not found" });
+
+    const trainerEmail = req.user?.email;
+    let trainer_id = null;
+    if (trainerEmail) {
+      const { data: trainer, error: tErr } = await supabase
+        .from("trainers")
+        .select("id")
+        .eq("email", trainerEmail)
+        .maybeSingle();
+      if (tErr) throw tErr;
+      trainer_id = trainer?.id || null;
+    }
+    if (!trainer_id) {
+      return res.status(400).json({ error: "Could not resolve trainer_id from token" });
+    }
+
+    const emails = Object.keys(attendance);
+    let emailToId = {};
+    if (emails.length) {
+      const { data: learners, error: lErr } = await supabase
+        .from("learners")
+        .select("id, email")
+        .in("email", emails);
+      if (lErr) throw lErr;
+      emailToId = Object.fromEntries((learners || []).map((l) => [l.email, l.id]));
+    }
+
+    const rows = [];
+    for (const [email, dateObj] of Object.entries(attendance)) {
+      const learner_id = emailToId[email];
+      if (!learner_id) continue;
+      for (const [date, uiStatus] of Object.entries(dateObj)) {
+        const dbStatus = UI_TO_DB_STATUS[uiStatus];
+        if (!dbStatus) continue;
+        rows.push({
+          trainer_id,
+          batch_id,
+          learner_id,
+          date,
+          status: dbStatus,
+          marked_at: new Date().toISOString(),
+        });
+      }
+    }
+
+    if (rows.length) {
+      const { error } = await supabase
+        .from("attendance")
+        .upsert(rows, { onConflict: "learner_id,batch_id,date" });
+      if (error) throw error;
+    }
+
+    res.json({ success: true, saved: rows.length });
+  } catch (err) {
+    console.error("POST /api/save_attendance_table error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 // ===========================
 // FIXED ANNOUNCEMENT SEND API
 // ===========================
