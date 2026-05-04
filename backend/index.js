@@ -4418,20 +4418,26 @@ app.get("/api/get_batch_attendance", async (req, res) => {
   try {
     const batch_no = req.query.batch_no;
     if (!batch_no) return res.status(400).json({ error: "Missing batch_no" });
+    const date = req.query.date; // optional — when provided, only return that day's rows
 
-    // Query all attendance records for the batch
-    const { data, error } = await supabase
+    // Query all attendance records for the batch (and optionally a specific date)
+    let query = supabase
       .from("learner_attendance")
-      .select("learner_email, date, status")
+      .select("learner_email, date, session, status")
       .eq("batch_no", batch_no);
+    if (date) query = query.eq("date", date);
 
+    const { data, error } = await query;
     if (error) throw error;
 
+    /* Build { learnerEmail: { date: { session: { status } } } } so the frontend
+     * (which reads serverAttendance[email][date][session].status) gets a hit
+     * for each saved row. */
     const result = {};
-    // Build { learnerEmail: { date: { status,... } } }
-    data.forEach(row => {
+    (data || []).forEach((row) => {
       if (!result[row.learner_email]) result[row.learner_email] = {};
-      result[row.learner_email][row.date] = { status: row.status, locked: true };
+      if (!result[row.learner_email][row.date]) result[row.learner_email][row.date] = {};
+      result[row.learner_email][row.date][row.session] = { status: row.status };
     });
 
     res.json(result);

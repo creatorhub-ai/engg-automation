@@ -151,7 +151,7 @@ export default function AttendanceDashboard({ token }) {
         let serverAttendance = {};
         try {
           const attRes = await axios.get(`${API_BASE}/api/get_batch_attendance`, {
-            params: { batch_no: batchNo },
+            params: { batch_no: batchNo, date: today },
           });
           serverAttendance = attRes.data || {};
         } catch (_) {
