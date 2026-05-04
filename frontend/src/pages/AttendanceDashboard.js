@@ -426,18 +426,44 @@ export default function AttendanceDashboard({ token }) {
     return n;
   }
 
-  /* ── Summary stats ── */
+  /* ── Per-learner daily status (majority across sessions) ──
+   * Returns "P" | "A" | "L" | "" — empty when nothing actionable was marked
+   * or when no status holds a strict plurality. */
+  function getDailyStatus(learnerEmail) {
+    const sessions = attendance[learnerEmail]?.[todayDate] || {};
+    const counts = { P: 0, A: 0, L: 0 };
+    for (let s = 1; s <= sessionsPerDay; s++) {
+      const v = sessions[s]?.status;
+      if (v === "P" || v === "A" || v === "L") counts[v] += 1;
+    }
+    if (counts.P === 0 && counts.A === 0 && counts.L === 0) return "";
+    let winner = "";
+    let max = 0;
+    let tied = false;
+    for (const k of ["P", "A", "L"]) {
+      if (counts[k] > max) { winner = k; max = counts[k]; tied = false; }
+      else if (counts[k] === max && max > 0) { tied = true; }
+    }
+    return tied ? "" : winner;
+  }
+
+  /* ── Summary stats (counted per learner per day, not per session) ── */
   const totalSessions = learners.filter((l) => l.status !== "Disabled").length * sessionsPerDay;
-  const markedCount   = Object.values(attendance).reduce((sum, dates) =>
+
+  const markedCount = Object.values(attendance).reduce((sum, dates) =>
     sum + Object.values(dates).reduce((s2, sessions) =>
       s2 + Object.values(sessions).filter((c) => c.status !== "" && c.status !== "NA").length, 0), 0);
-  const presentCount  = Object.values(attendance).reduce((sum, dates) =>
-    sum + Object.values(dates).reduce((s2, sessions) =>
-      s2 + Object.values(sessions).filter((c) => c.status === "P").length, 0), 0);
-  const absentCount   = Object.values(attendance).reduce((sum, dates) =>
-    sum + Object.values(dates).reduce((s2, sessions) =>
-      s2 + Object.values(sessions).filter((c) => c.status === "A").length, 0), 0);
-  const savedCount    = Object.values(attendance).reduce((sum, dates) =>
+
+  let presentCount = 0;
+  let absentCount  = 0;
+  learners.forEach((l) => {
+    if (l.status === "Disabled") return;
+    const daily = getDailyStatus(l.email);
+    if (daily === "P") presentCount += 1;
+    else if (daily === "A") absentCount += 1;
+  });
+
+  const savedCount = Object.values(attendance).reduce((sum, dates) =>
     sum + Object.values(dates).reduce((s2, sessions) =>
       s2 + Object.values(sessions).filter((c) => c.savedStatus !== "" && c.savedStatus !== "NA").length, 0), 0);
   const hasDirtyChanges = dirtyEmails.size > 0;
