@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState } from "react";
 import axios from "axios";
 import {
   Box,
@@ -56,7 +56,7 @@ const selectSx = {
   fontFamily:   "'DM Sans', sans-serif",
   fontSize:     13,
   background:   T.surfaceAlt,
-  "& fieldset":             { borderColor: T.border },
+  "& fieldset":            { borderColor: T.border },
   "&:hover fieldset":       { borderColor: T.accent },
   "&.Mui-focused fieldset": { borderColor: T.accent },
 };
@@ -69,7 +69,7 @@ const SESSION_CFG = {
   NA: { label: "NA", bg: "#f3f4f6", text: "#6b7280", border: "#d1d5db", hov: "#6b7280" },
 };
 
-export default function AttendanceDashboard({ token, currentUser }) {
+export default function AttendanceDashboard({ token }) {
   const [domains,         setDomains]         = useState([]);
   const [domain,          setDomain]          = useState("");
   const [batches,         setBatches]         = useState([]);
@@ -79,17 +79,19 @@ export default function AttendanceDashboard({ token, currentUser }) {
   const [courseStartDate, setCourseStartDate] = useState("");
   const [courseEndDate,   setCourseEndDate]   = useState("");
 
-  /* attendance[learnerEmail][date][session] = { status, savedStatus, locked } */
+  /* attendance[learnerEmail][todayDate][session] = { status: "", savedStatus: "" }
+   * - status:      current (possibly unsaved) value shown in UI
+   * - savedStatus: last value confirmed saved to server (used to show "saved" indicator)
+   */
   const [attendance,  setAttendance]  = useState({});
   const [loading,     setLoading]     = useState(false);
   const [saving,      setSaving]      = useState(false);
   const [message,     setMessage]     = useState("");
+
+  /* Track which learners have unsaved changes (to show a dirty indicator) */
   const [dirtyEmails, setDirtyEmails] = useState(new Set());
 
-  const authHeaders = useCallback(
-    () => (token ? { Authorization: `Bearer ${token}` } : {}),
-    [token]
-  );
+  const authHeaders = () => (token ? { Authorization: `Bearer ${token}` } : {});
 
   /* ── Load domains ── */
   useEffect(() => {
@@ -109,44 +111,7 @@ export default function AttendanceDashboard({ token, currentUser }) {
       .then((res) => setBatches(res.data || []));
   }, [domain]);
 
-  /* ── Build local attendance map from learners + saved data ── */
-  const buildAttendanceMap = useCallback((learnersList, today, serverData) => {
-    const map = {};
-    learnersList.forEach((learner) => {
-      map[learner.email] = { [today]: {} };
-      for (let session = 1; session <= sessionsPerDay; session++) {
-        if (learner.status === "Disabled") {
-          map[learner.email][today][session] = { status: "NA", savedStatus: "NA", locked: true };
-          continue;
-        }
-        const savedVal = serverData?.[learner.email]?.[today]?.[session] || "";
-        map[learner.email][today][session] = {
-          status:      savedVal,
-          savedStatus: savedVal,
-          locked:      false,
-        };
-      }
-    });
-    return map;
-  }, []);
-
-  /* ── Reload saved attendance from the table ── */
-  const reloadSavedAttendance = useCallback(
-    async (learnersList, today) => {
-      try {
-        const res = await axios.get(`${API_BASE}/api/get_attendance_table`, {
-          params: { batch_no: batchNo },
-        });
-        setAttendance(buildAttendanceMap(learnersList, today, res.data || {}));
-        setDirtyEmails(new Set());
-      } catch (e) {
-        console.error("Failed to reload attendance from table:", e);
-      }
-    },
-    [batchNo, buildAttendanceMap]
-  );
-
-  /* ── Load learners, course dates, and saved attendance on batch select ── */
+  /* ── Load learners, course dates, today's attendance ── */
   useEffect(() => {
     if (!batchNo) {
       setLearners([]); setTodayDate(""); setCourseStartDate("");
@@ -182,15 +147,52 @@ export default function AttendanceDashboard({ token, currentUser }) {
           return;
         }
 
-        let serverData = {};
+        /* ── Fetch saved attendance for today ── */
+        let serverAttendance = {};
         try {
-          const attRes = await axios.get(`${API_BASE}/api/get_attendance_table`, {
+          const attRes = await axios.get(`${API_BASE}/api/get_batch_attendance`, {
             params: { batch_no: batchNo },
           });
-          serverData = attRes.data || {};
-        } catch (_) { /* allow blank start if endpoint fails */ }
+          serverAttendance = attRes.data || {};
+        } catch (_) {
+          /* If this endpoint fails we still allow marking — just start blank */
+        }
 
-        setAttendance(buildAttendanceMap(filteredLearners, today, serverData));
+        /* ── Build local attendance map ──────────────────────────────────────
+         * Rules:
+         *  - "Disabled" learners → NA, not editable
+         *  - All other learners → always editable for today's date
+         *  - If a saved value exists from the server → pre-fill it as both
+         *    `status` (shown in UI) and `savedStatus` (reference for dirty check)
+         *  - If no saved value → empty string for status
+         * ─────────────────────────────────────────────────────────────────── */
+        const newAttendance = {};
+
+        filteredLearners.forEach((learner) => {
+          newAttendance[learner.email] = { [today]: {} };
+
+          for (let session = 1; session <= sessionsPerDay; session++) {
+            const serverCell = serverAttendance[learner.email]?.[today]?.[session];
+
+            if (learner.status === "Disabled") {
+              newAttendance[learner.email][today][session] = {
+                status:      "NA",
+                savedStatus: "NA",
+                locked:      true,   // Disabled learners are always locked
+              };
+            } else {
+              /* Pre-fill with saved value if it exists, but always keep editable */
+              const savedVal = serverCell?.status ?? (typeof serverCell === "string" ? serverCell : "");
+              newAttendance[learner.email][today][session] = {
+                status:      savedVal,
+                savedStatus: savedVal,
+                locked:      false,   // Always editable for today
+              };
+            }
+          }
+        });
+
+        setAttendance(newAttendance);
       } catch (e) {
         console.error(e);
         setMessage("Failed to load batch data");
@@ -202,9 +204,9 @@ export default function AttendanceDashboard({ token, currentUser }) {
     }
 
     fetchBatchDetails();
-  }, [batchNo, buildAttendanceMap]);
+  }, [batchNo]);
 
-  /* ── Mark P / A / L ── */
+  /* ── Mark P / A / L — always editable, track dirty state ── */
   function markAttendance(learnerEmail, session, status) {
     setAttendance((prev) => {
       const prevCell = prev[learnerEmail]?.[todayDate]?.[session] || {};
@@ -214,58 +216,78 @@ export default function AttendanceDashboard({ token, currentUser }) {
           ...prev[learnerEmail],
           [todayDate]: {
             ...prev[learnerEmail]?.[todayDate],
-            [session]: { ...prevCell, status, locked: false },
+            [session]: {
+              ...prevCell,
+              status,
+              locked: false,
+            },
           },
         },
       };
     });
 
+    /* Mark this learner as having unsaved changes */
     setDirtyEmails((prev) => {
       const next = new Set(prev);
       next.add(learnerEmail);
       return next;
     });
 
+    /* Clear any stale success/error message when user starts editing */
     if (message) setMessage("");
   }
 
-  /* ── Save attendance, then reload from the table ── */
+  /* ── Save attendance ── */
   async function saveAttendance() {
     setSaving(true);
     setMessage("");
 
     try {
-      /* Build { email: { date: { session: "P|A|L" } } }, skipping NA / unmarked */
       const saveObj = {};
       Object.keys(attendance).forEach((email) => {
+        saveObj[email] = { [todayDate]: {} };
         for (let session = 1; session <= sessionsPerDay; session++) {
-          const cell = attendance[email]?.[todayDate]?.[session];
-          if (!cell || cell.locked) continue;
-          if (!cell.status) continue;
-          if (!saveObj[email]) saveObj[email] = { [todayDate]: {} };
-          saveObj[email][todayDate][session] = cell.status;
+          saveObj[email][todayDate][session] =
+            attendance[email]?.[todayDate]?.[session]?.status || "";
         }
       });
 
       await axios.post(
-        `${API_BASE}/api/save_attendance_table`,
+        `${API_BASE}/api/save_attendance_ui`,
         {
-          batch_no:      batchNo,
-          attendance:    saveObj,
-          /* fallback if no JWT — server tries header first, then body */
-          trainer_email: currentUser?.email || undefined,
+          batch_no:          batchNo,
+          attendance:        saveObj,
+          course_start_date: courseStartDate,
+          course_end_date:   courseEndDate,
         },
         { headers: authHeaders() }
       );
 
-      /* Reload from the attendance table so the UI reflects what's persisted */
-      await reloadSavedAttendance(learners, todayDate);
+      /* ── After successful save: update savedStatus for all cells so
+       *    the dirty indicator clears, but keep everything editable ── */
+      setAttendance((prev) => {
+        const updated = { ...prev };
+        Object.keys(updated).forEach((email) => {
+          if (updated[email]?.[todayDate]) {
+            updated[email] = {
+              ...updated[email],
+              [todayDate]: Object.fromEntries(
+                Object.entries(updated[email][todayDate]).map(([sess, cell]) => [
+                  sess,
+                  { ...cell, savedStatus: cell.status },
+                ])
+              ),
+            };
+          }
+        });
+        return updated;
+      });
 
-      setMessage("✅ Attendance saved and loaded from table.");
+      setDirtyEmails(new Set());
+      setMessage("✅ Attendance saved successfully. You can continue editing if needed.");
     } catch (err) {
       console.error(err);
-      const apiMsg = err?.response?.data?.error;
-      setMessage(`❌ Failed to save attendance${apiMsg ? `: ${apiMsg}` : ""}.`);
+      setMessage("❌ Failed to save attendance. Please try again.");
     }
 
     setSaving(false);
@@ -277,6 +299,7 @@ export default function AttendanceDashboard({ token, currentUser }) {
       status: "", savedStatus: "", locked: false,
     };
 
+    /* Disabled learner → static NA badge */
     if (cell.locked) {
       const cfg = SESSION_CFG[cell.status] || SESSION_CFG.NA;
       return (
@@ -288,11 +311,13 @@ export default function AttendanceDashboard({ token, currentUser }) {
       );
     }
 
+    /* All other learners → always show three clickable P / A / L tiles */
     return (
       <Box sx={{ display: "flex", gap: 0.6, justifyContent: "center", alignItems: "center" }}>
         {["P", "A", "L"].map((key) => {
           const cfg        = SESSION_CFG[key];
           const isSelected = cell.status === key;
+          /* Show a small dot under the tile if this value was previously saved */
           const isSaved    = cell.savedStatus === key;
 
           return (
@@ -300,8 +325,8 @@ export default function AttendanceDashboard({ token, currentUser }) {
               <Box
                 onClick={() => markAttendance(learner.email, session, key)}
                 sx={{
-                  width:        30,
-                  height:       30,
+                  width:      30,
+                  height:     30,
                   borderRadius: "8px",
                   background:   isSelected ? cfg.hov : cfg.bg,
                   display:      "flex",
@@ -327,6 +352,7 @@ export default function AttendanceDashboard({ token, currentUser }) {
               >
                 {key}
               </Box>
+              {/* Saved-state dot: only visible when this tile matches the last saved value */}
               <Box
                 sx={{
                   width:        5,
@@ -380,6 +406,7 @@ export default function AttendanceDashboard({ token, currentUser }) {
           </Box>
         </Box>
 
+        {/* Domain + Batch selectors */}
         <Grid container spacing={2}>
           <Grid item xs={12} sm={6}>
             <Typography sx={{ ...labelSx, mb: 0.8 }}>Domain</Typography>
@@ -421,6 +448,7 @@ export default function AttendanceDashboard({ token, currentUser }) {
           </Grid>
         </Grid>
 
+        {/* Date + summary badges */}
         {todayDate && (
           <Box sx={{ mt: 2, display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap" }}>
             <Box sx={{ px: 2, py: 0.8, borderRadius: "10px", background: T.accentLight, border: `1px solid ${T.accent}44` }}>
@@ -465,6 +493,7 @@ export default function AttendanceDashboard({ token, currentUser }) {
         )}
       </Box>
 
+      {/* ── Loading ── */}
       {loading && (
         <Box sx={{ ...cardSx, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", py: 8, gap: 2, mb: 2.5 }}>
           <CircularProgress size={36} sx={{ color: T.accent }} />
@@ -474,8 +503,10 @@ export default function AttendanceDashboard({ token, currentUser }) {
         </Box>
       )}
 
+      {/* ── Attendance table ── */}
       {!loading && learners.length > 0 && todayDate && (
         <Box sx={{ ...cardSx, mb: 2.5 }}>
+          {/* Table header strip */}
           <Box sx={{ px: 2.5, py: 1.5, background: `linear-gradient(135deg, ${T.accent}14, ${T.accentLight})`, borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: 1.5 }}>
             <Box sx={{ width: 4, height: 20, borderRadius: "2px", background: T.accent }} />
             <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 800, fontSize: 14, color: T.text }}>
@@ -488,12 +519,13 @@ export default function AttendanceDashboard({ token, currentUser }) {
             />
           </Box>
 
+          {/* Legend */}
           <Box sx={{ px: 2.5, py: 1.2, borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap", background: T.surfaceAlt }}>
             <Typography sx={{ ...labelSx, fontSize: 9 }}>Legend:</Typography>
             {[
               { key: "P", desc: "Present" },
               { key: "A", desc: "Absent" },
-              { key: "L", desc: "Late" },
+              { key: "L", desc: "Leave" },
             ].map(({ key, desc }) => {
               const cfg = SESSION_CFG[key];
               return (
@@ -535,6 +567,7 @@ export default function AttendanceDashboard({ token, currentUser }) {
                       sx={{
                         "&:nth-of-type(even)": { background: T.surfaceAlt },
                         "&:hover":             { background: T.accentLight, transition: "background 0.15s" },
+                        /* Subtle left border highlight for rows with unsaved changes */
                         ...(isDirty ? { borderLeft: `3px solid #f59e0b` } : {}),
                       }}
                     >
@@ -566,6 +599,7 @@ export default function AttendanceDashboard({ token, currentUser }) {
         </Box>
       )}
 
+      {/* ── Save button ── */}
       {!loading && (
         <Button
           variant="contained"
@@ -602,6 +636,7 @@ export default function AttendanceDashboard({ token, currentUser }) {
         </Button>
       )}
 
+      {/* ── Status message ── */}
       <Fade in={!!message}>
         <Box>
           {message && (
