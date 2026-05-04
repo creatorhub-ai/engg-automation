@@ -19,7 +19,8 @@ import {
   Fade,
 } from "@mui/material";
 
-const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
+const API_BASE       = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
+const sessionsPerDay = 3;
 
 /* ─── Design tokens ──────────────────────────────────────────────────────── */
 const T = {
@@ -60,15 +61,15 @@ const selectSx = {
   "&.Mui-focused fieldset": { borderColor: T.accent },
 };
 
-/* ─── Status display config ─────────────────────────────────────────────── */
-const STATUS_CFG = {
+/* ─── Session status display config ─────────────────────────────────────── */
+const SESSION_CFG = {
   P:  { label: "P",  bg: "#dcfce7", text: "#15803d", border: "#86efac", hov: "#16a34a" },
   A:  { label: "A",  bg: "#fee2e2", text: "#b91c1c", border: "#fca5a5", hov: "#dc2626" },
   L:  { label: "L",  bg: "#fef3c7", text: "#b45309", border: "#fcd34d", hov: "#d97706" },
   NA: { label: "NA", bg: "#f3f4f6", text: "#6b7280", border: "#d1d5db", hov: "#6b7280" },
 };
 
-export default function AttendanceDashboard({ token }) {
+export default function AttendanceDashboard({ token, currentUser }) {
   const [domains,         setDomains]         = useState([]);
   const [domain,          setDomain]          = useState("");
   const [batches,         setBatches]         = useState([]);
@@ -78,8 +79,7 @@ export default function AttendanceDashboard({ token }) {
   const [courseStartDate, setCourseStartDate] = useState("");
   const [courseEndDate,   setCourseEndDate]   = useState("");
 
-  /* attendance[learnerEmail] = { status, savedStatus, locked }
-   * One row per learner per day (the new attendance table has no session column). */
+  /* attendance[learnerEmail][date][session] = { status, savedStatus, locked } */
   const [attendance,  setAttendance]  = useState({});
   const [loading,     setLoading]     = useState(false);
   const [saving,      setSaving]      = useState(false);
@@ -113,25 +113,31 @@ export default function AttendanceDashboard({ token }) {
   const buildAttendanceMap = useCallback((learnersList, today, serverData) => {
     const map = {};
     learnersList.forEach((learner) => {
-      if (learner.status === "Disabled") {
-        map[learner.email] = { status: "NA", savedStatus: "NA", locked: true };
-        return;
+      map[learner.email] = { [today]: {} };
+      for (let session = 1; session <= sessionsPerDay; session++) {
+        if (learner.status === "Disabled") {
+          map[learner.email][today][session] = { status: "NA", savedStatus: "NA", locked: true };
+          continue;
+        }
+        const savedVal = serverData?.[learner.email]?.[today]?.[session] || "";
+        map[learner.email][today][session] = {
+          status:      savedVal,
+          savedStatus: savedVal,
+          locked:      false,
+        };
       }
-      const savedVal = serverData?.[learner.email]?.[today]?.status || "";
-      map[learner.email] = { status: savedVal, savedStatus: savedVal, locked: false };
     });
     return map;
   }, []);
 
-  /* ── Reload saved attendance for the current batch + today from the table ── */
+  /* ── Reload saved attendance from the table ── */
   const reloadSavedAttendance = useCallback(
     async (learnersList, today) => {
       try {
         const res = await axios.get(`${API_BASE}/api/get_attendance_table`, {
           params: { batch_no: batchNo },
         });
-        const serverData = res.data || {};
-        setAttendance(buildAttendanceMap(learnersList, today, serverData));
+        setAttendance(buildAttendanceMap(learnersList, today, res.data || {}));
         setDirtyEmails(new Set());
       } catch (e) {
         console.error("Failed to reload attendance from table:", e);
@@ -198,12 +204,21 @@ export default function AttendanceDashboard({ token }) {
     fetchBatchDetails();
   }, [batchNo, buildAttendanceMap]);
 
-  /* ── Mark P / A / L for a learner ── */
-  function markAttendance(learnerEmail, status) {
-    setAttendance((prev) => ({
-      ...prev,
-      [learnerEmail]: { ...(prev[learnerEmail] || {}), status, locked: false },
-    }));
+  /* ── Mark P / A / L ── */
+  function markAttendance(learnerEmail, session, status) {
+    setAttendance((prev) => {
+      const prevCell = prev[learnerEmail]?.[todayDate]?.[session] || {};
+      return {
+        ...prev,
+        [learnerEmail]: {
+          ...prev[learnerEmail],
+          [todayDate]: {
+            ...prev[learnerEmail]?.[todayDate],
+            [session]: { ...prevCell, status, locked: false },
+          },
+        },
+      };
+    });
 
     setDirtyEmails((prev) => {
       const next = new Set(prev);
@@ -220,17 +235,26 @@ export default function AttendanceDashboard({ token }) {
     setMessage("");
 
     try {
+      /* Build { email: { date: { session: "P|A|L" } } }, skipping NA / unmarked */
       const saveObj = {};
       Object.keys(attendance).forEach((email) => {
-        const cell = attendance[email];
-        if (cell?.locked) return;                  // skip Disabled (NA)
-        if (!cell?.status) return;                 // skip unmarked
-        saveObj[email] = { [todayDate]: cell.status };
+        for (let session = 1; session <= sessionsPerDay; session++) {
+          const cell = attendance[email]?.[todayDate]?.[session];
+          if (!cell || cell.locked) continue;
+          if (!cell.status) continue;
+          if (!saveObj[email]) saveObj[email] = { [todayDate]: {} };
+          saveObj[email][todayDate][session] = cell.status;
+        }
       });
 
       await axios.post(
         `${API_BASE}/api/save_attendance_table`,
-        { batch_no: batchNo, attendance: saveObj },
+        {
+          batch_no:      batchNo,
+          attendance:    saveObj,
+          /* fallback if no JWT — server tries header first, then body */
+          trainer_email: currentUser?.email || undefined,
+        },
         { headers: authHeaders() }
       );
 
@@ -240,18 +264,21 @@ export default function AttendanceDashboard({ token }) {
       setMessage("✅ Attendance saved and loaded from table.");
     } catch (err) {
       console.error(err);
-      setMessage("❌ Failed to save attendance. Please try again.");
+      const apiMsg = err?.response?.data?.error;
+      setMessage(`❌ Failed to save attendance${apiMsg ? `: ${apiMsg}` : ""}.`);
     }
 
     setSaving(false);
   }
 
-  /* ── Status cell renderer ── */
-  function renderStatusCell(learner) {
-    const cell = attendance[learner.email] || { status: "", savedStatus: "", locked: false };
+  /* ── Session cell renderer ── */
+  function renderSessionCell(learner, session) {
+    const cell = attendance[learner.email]?.[todayDate]?.[session] || {
+      status: "", savedStatus: "", locked: false,
+    };
 
     if (cell.locked) {
-      const cfg = STATUS_CFG[cell.status] || STATUS_CFG.NA;
+      const cfg = SESSION_CFG[cell.status] || SESSION_CFG.NA;
       return (
         <Box sx={{ display: "inline-flex", alignItems: "center", px: 1.5, py: 0.4, borderRadius: "20px", background: cfg.bg, border: `1px solid ${cfg.border}` }}>
           <Typography sx={{ fontFamily: "'DM Mono', monospace", fontSize: 12, fontWeight: 800, color: cfg.text }}>
@@ -264,14 +291,14 @@ export default function AttendanceDashboard({ token }) {
     return (
       <Box sx={{ display: "flex", gap: 0.6, justifyContent: "center", alignItems: "center" }}>
         {["P", "A", "L"].map((key) => {
-          const cfg        = STATUS_CFG[key];
+          const cfg        = SESSION_CFG[key];
           const isSelected = cell.status === key;
           const isSaved    = cell.savedStatus === key;
 
           return (
             <Box key={key} sx={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 0.3 }}>
               <Box
-                onClick={() => markAttendance(learner.email, key)}
+                onClick={() => markAttendance(learner.email, session, key)}
                 sx={{
                   width:        30,
                   height:       30,
@@ -317,18 +344,19 @@ export default function AttendanceDashboard({ token }) {
   }
 
   /* ── Summary stats ── */
-  const editableLearners = learners.filter((l) => l.status !== "Disabled");
-  const totalToMark = editableLearners.length;
-  const markedCount  = editableLearners.filter((l) => {
-    const s = attendance[l.email]?.status;
-    return s && s !== "NA";
-  }).length;
-  const presentCount = editableLearners.filter((l) => attendance[l.email]?.status === "P").length;
-  const absentCount  = editableLearners.filter((l) => attendance[l.email]?.status === "A").length;
-  const savedCount   = editableLearners.filter((l) => {
-    const s = attendance[l.email]?.savedStatus;
-    return s && s !== "NA";
-  }).length;
+  const totalSessions = learners.filter((l) => l.status !== "Disabled").length * sessionsPerDay;
+  const markedCount   = Object.values(attendance).reduce((sum, dates) =>
+    sum + Object.values(dates).reduce((s2, sessions) =>
+      s2 + Object.values(sessions).filter((c) => c.status !== "" && c.status !== "NA").length, 0), 0);
+  const presentCount  = Object.values(attendance).reduce((sum, dates) =>
+    sum + Object.values(dates).reduce((s2, sessions) =>
+      s2 + Object.values(sessions).filter((c) => c.status === "P").length, 0), 0);
+  const absentCount   = Object.values(attendance).reduce((sum, dates) =>
+    sum + Object.values(dates).reduce((s2, sessions) =>
+      s2 + Object.values(sessions).filter((c) => c.status === "A").length, 0), 0);
+  const savedCount    = Object.values(attendance).reduce((sum, dates) =>
+    sum + Object.values(dates).reduce((s2, sessions) =>
+      s2 + Object.values(sessions).filter((c) => c.savedStatus !== "" && c.savedStatus !== "NA").length, 0), 0);
   const hasDirtyChanges = dirtyEmails.size > 0;
 
   /* ════════════════════ RENDER ════════════════════ */
@@ -414,13 +442,13 @@ export default function AttendanceDashboard({ token }) {
                 </Box>
                 <Box sx={{ px: 2, py: 0.8, borderRadius: "10px", background: T.surfaceAlt, border: `1px solid ${T.border}` }}>
                   <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, color: T.textSub }}>
-                    {markedCount}/{totalToMark} learners marked
+                    {markedCount}/{totalSessions} sessions marked
                   </Typography>
                 </Box>
                 {savedCount > 0 && (
                   <Box sx={{ px: 2, py: 0.8, borderRadius: "10px", background: "#f0fdf4", border: "1px solid #86efac" }}>
                     <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, color: "#15803d" }}>
-                      ✓ {savedCount} learners saved
+                      ✓ {savedCount} sessions saved
                     </Typography>
                   </Box>
                 )}
@@ -467,7 +495,7 @@ export default function AttendanceDashboard({ token }) {
               { key: "A", desc: "Absent" },
               { key: "L", desc: "Late" },
             ].map(({ key, desc }) => {
-              const cfg = STATUS_CFG[key];
+              const cfg = SESSION_CFG[key];
               return (
                 <Box key={key} sx={{ display: "flex", alignItems: "center", gap: 0.8 }}>
                   <Box sx={{ width: 20, height: 20, borderRadius: "5px", background: cfg.hov, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -487,10 +515,10 @@ export default function AttendanceDashboard({ token }) {
             <Table size="small">
               <TableHead>
                 <TableRow>
-                  {["#", "Learner Name", "Email", "Status"].map((h) => (
+                  {["#", "Learner Name", "Email", ...Array.from({ length: sessionsPerDay }, (_, i) => `Session ${i + 1}`)].map((h) => (
                     <TableCell
                       key={h}
-                      align={h === "Status" ? "center" : "left"}
+                      align={["Learner Name", "Email", "#"].includes(h) ? "left" : "center"}
                       sx={{ ...labelSx, background: T.surfaceAlt, borderBottom: `2px solid ${T.border}`, py: 1.3, whiteSpace: "nowrap" }}
                     >
                       {h}
@@ -524,9 +552,11 @@ export default function AttendanceDashboard({ token }) {
                       <TableCell sx={{ fontFamily: "'DM Mono', monospace", fontSize: 11, color: T.textSub, maxWidth: 220, wordBreak: "break-all" }}>
                         {learner.email}
                       </TableCell>
-                      <TableCell align="center" sx={{ py: 1 }}>
-                        {renderStatusCell(learner)}
-                      </TableCell>
+                      {Array.from({ length: sessionsPerDay }, (_, i) => (
+                        <TableCell key={`cell_${learner.email}_${i + 1}`} align="center" sx={{ py: 1 }}>
+                          {renderSessionCell(learner, i + 1)}
+                        </TableCell>
+                      ))}
                     </TableRow>
                   );
                 })}

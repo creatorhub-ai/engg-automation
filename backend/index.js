@@ -4498,6 +4498,28 @@ async function resolveBatchId(batch_no) {
   return data?.id || null;
 }
 
+async function resolveTrainerId(req) {
+  const authHeader = req.headers.authorization || "";
+  const tokenStr = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+  let trainerEmail = null;
+  if (tokenStr) {
+    try {
+      const decoded = jwt.verify(tokenStr, process.env.JWT_SECRET);
+      trainerEmail = decoded?.email || null;
+    } catch (_) { /* ignore — fall through to body fallback */ }
+  }
+  if (!trainerEmail) trainerEmail = req.body?.trainer_email || req.query?.trainer_email || null;
+  if (!trainerEmail) return null;
+
+  const { data: trainer, error } = await supabase
+    .from("trainers")
+    .select("id")
+    .eq("email", trainerEmail)
+    .maybeSingle();
+  if (error) throw error;
+  return trainer?.id || null;
+}
+
 app.get("/api/get_attendance_table", async (req, res) => {
   try {
     const batch_no = req.query.batch_no;
@@ -4508,7 +4530,7 @@ app.get("/api/get_attendance_table", async (req, res) => {
 
     const { data: rows, error } = await supabase
       .from("attendance")
-      .select("learner_id, date, status")
+      .select("learner_id, date, session, status")
       .eq("batch_id", batch_id);
     if (error) throw error;
 
@@ -4523,12 +4545,15 @@ app.get("/api/get_attendance_table", async (req, res) => {
       idToEmail = Object.fromEntries((learners || []).map((l) => [l.id, l.email]));
     }
 
+    /* { email: { date: { session: "P|A|L" } } } */
     const result = {};
     (rows || []).forEach((r) => {
       const email = idToEmail[r.learner_id];
       if (!email) return;
+      const sess = r.session || 1;
       if (!result[email]) result[email] = {};
-      result[email][r.date] = { status: DB_TO_UI_STATUS[r.status] || "" };
+      if (!result[email][r.date]) result[email][r.date] = {};
+      result[email][r.date][sess] = DB_TO_UI_STATUS[r.status] || "";
     });
 
     res.json(result);
@@ -4538,7 +4563,7 @@ app.get("/api/get_attendance_table", async (req, res) => {
   }
 });
 
-app.post("/api/save_attendance_table", authMiddleware, async (req, res) => {
+app.post("/api/save_attendance_table", async (req, res) => {
   try {
     const { batch_no, attendance } = req.body;
     if (!batch_no || !attendance) {
@@ -4548,20 +4573,7 @@ app.post("/api/save_attendance_table", authMiddleware, async (req, res) => {
     const batch_id = await resolveBatchId(batch_no);
     if (!batch_id) return res.status(404).json({ error: "Batch not found" });
 
-    const trainerEmail = req.user?.email;
-    let trainer_id = null;
-    if (trainerEmail) {
-      const { data: trainer, error: tErr } = await supabase
-        .from("trainers")
-        .select("id")
-        .eq("email", trainerEmail)
-        .maybeSingle();
-      if (tErr) throw tErr;
-      trainer_id = trainer?.id || null;
-    }
-    if (!trainer_id) {
-      return res.status(400).json({ error: "Could not resolve trainer_id from token" });
-    }
+    const trainer_id = await resolveTrainerId(req);
 
     const emails = Object.keys(attendance);
     let emailToId = {};
@@ -4574,28 +4586,32 @@ app.post("/api/save_attendance_table", authMiddleware, async (req, res) => {
       emailToId = Object.fromEntries((learners || []).map((l) => [l.email, l.id]));
     }
 
+    /* attendance: { email: { date: { session: "P|A|L" } } } */
     const rows = [];
     for (const [email, dateObj] of Object.entries(attendance)) {
       const learner_id = emailToId[email];
       if (!learner_id) continue;
-      for (const [date, uiStatus] of Object.entries(dateObj)) {
-        const dbStatus = UI_TO_DB_STATUS[uiStatus];
-        if (!dbStatus) continue;
-        rows.push({
-          trainer_id,
-          batch_id,
-          learner_id,
-          date,
-          status: dbStatus,
-          marked_at: new Date().toISOString(),
-        });
+      for (const [date, sessions] of Object.entries(dateObj)) {
+        for (const [sessionStr, uiStatus] of Object.entries(sessions)) {
+          const dbStatus = UI_TO_DB_STATUS[uiStatus];
+          if (!dbStatus) continue;
+          rows.push({
+            trainer_id,
+            batch_id,
+            learner_id,
+            date,
+            session: parseInt(sessionStr, 10),
+            status: dbStatus,
+            marked_at: new Date().toISOString(),
+          });
+        }
       }
     }
 
     if (rows.length) {
       const { error } = await supabase
         .from("attendance")
-        .upsert(rows, { onConflict: "learner_id,batch_id,date" });
+        .upsert(rows, { onConflict: "learner_id,batch_id,date,session" });
       if (error) throw error;
     }
 
