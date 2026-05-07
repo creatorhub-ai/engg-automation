@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import {
   Box,
@@ -12,12 +12,37 @@ import {
   TableBody,
   TableRow,
   TableCell,
+  TextField,
   Button,
   Alert,
   CircularProgress,
   Chip,
   Fade,
 } from "@mui/material";
+
+/* Returns YYYY-MM-DD for today in the *local* timezone (not UTC).
+ * `new Date().toISOString().slice(0,10)` returns UTC date which can shift
+ * by a day for users in IST near midnight. */
+function getLocalToday() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/* Read the logged-in user from whichever localStorage key the active login flow used. */
+function getStoredUser() {
+  try {
+    const sess = JSON.parse(localStorage.getItem("userSession") || "null");
+    if (sess && (sess.role || sess.email)) return sess;
+  } catch (_) { /* ignore */ }
+  try {
+    const u = JSON.parse(localStorage.getItem("user") || "null");
+    if (u) return u;
+  } catch (_) { /* ignore */ }
+  return null;
+}
 
 const API_BASE       = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
 const sessionsPerDay = 3;
@@ -69,12 +94,29 @@ const SESSION_CFG = {
   NA: { label: "NA", bg: "#f3f4f6", text: "#6b7280", border: "#d1d5db", hov: "#6b7280" },
 };
 
-export default function AttendanceDashboard({ token }) {
+export default function AttendanceDashboard({ token, user }) {
+  /* ── Role gating ── Admin/Coordinator can mark attendance for past dates;
+   *    everyone else is locked to today's date. */
+  const storedUser  = useMemo(() => user || getStoredUser(), [user]);
+  const roleLower   = useMemo(
+    () => ((storedUser?.role || "")).toString().trim().toLowerCase(),
+    [storedUser]
+  );
+  const canMarkPastDates = useMemo(
+    () => roleLower === "admin" || roleLower === "coordinator" || roleLower === "corrdinator",
+    [roleLower]
+  );
+
+  const todayLocal = useMemo(() => getLocalToday(), []);
+
   const [domains,         setDomains]         = useState([]);
   const [domain,          setDomain]          = useState("");
   const [batches,         setBatches]         = useState([]);
   const [batchNo,         setBatchNo]         = useState("");
   const [learners,        setLearners]        = useState([]);
+  /* `todayDate` is the date currently being marked (kept name to minimise diff).
+   * For non-admin/coord roles this is always today; admin/coord can change it
+   * to any past date within the course range. */
   const [todayDate,       setTodayDate]       = useState("");
   const [courseStartDate, setCourseStartDate] = useState("");
   const [courseEndDate,   setCourseEndDate]   = useState("");
@@ -111,7 +153,7 @@ export default function AttendanceDashboard({ token }) {
       .then((res) => setBatches(res.data || []));
   }, [domain]);
 
-  /* ── Load learners, course dates, today's attendance ── */
+  /* ── Load learners + course dates when batch changes ── */
   useEffect(() => {
     if (!batchNo) {
       setLearners([]); setTodayDate(""); setCourseStartDate("");
@@ -125,7 +167,9 @@ export default function AttendanceDashboard({ token }) {
       setDirtyEmails(new Set());
 
       try {
-        const today = new Date().toISOString().slice(0, 10);
+        const today = todayLocal;
+        /* Default the marking date to today; the date-change effect below will
+         * fetch attendance once todayDate is set. */
         setTodayDate(today);
 
         const [learnersRes, datesRes] = await Promise.all([
@@ -139,73 +183,6 @@ export default function AttendanceDashboard({ token }) {
         const { start_date, end_date } = datesRes.data || {};
         setCourseStartDate(start_date);
         setCourseEndDate(end_date);
-
-        if (!start_date || !end_date || today < start_date || today > end_date) {
-          setMessage("Today is outside the course duration. You can view but not mark attendance.");
-          setAttendance({});
-          setLoading(false);
-          return;
-        }
-
-        /* ── Fetch saved attendance for today ── */
-        let serverAttendance = {};
-        try {
-          const attRes = await axios.get(`${API_BASE}/api/get_batch_attendance`, {
-            params: { batch_no: batchNo, date: today },
-          });
-          serverAttendance = attRes.data || {};
-        } catch (_) {
-          /* If this endpoint fails we still allow marking — just start blank */
-        }
-
-        /* ── Build local attendance map ──────────────────────────────────────
-         * Rules:
-         *  - "Disabled" learners → NA, not editable
-         *  - All other learners → always editable for today's date
-         *  - If a saved value exists from the server → pre-fill it as both
-         *    `status` (shown in UI) and `savedStatus` (reference for dirty check)
-         *  - If no saved value → empty string for status
-         * ─────────────────────────────────────────────────────────────────── */
-        const newAttendance = {};
-
-        /* Tolerate both server response shapes:
-         *   new: serverAttendance[email][date][session] = { status }
-         *   old: serverAttendance[email][date]          = { status }   ← single status per day
-         * If the old shape is returned, apply that status to all 3 sessions so the
-         * saved data is still visibly reflected in the dashboard. */
-        const readSavedStatus = (email, session) => {
-          const dateNode = serverAttendance[email]?.[today];
-          if (!dateNode) return "";
-          const sessionCell = dateNode[session];
-          if (sessionCell && typeof sessionCell === "object" && sessionCell.status) return sessionCell.status;
-          if (typeof sessionCell === "string" && sessionCell) return sessionCell;
-          if (typeof dateNode.status === "string" && dateNode.status) return dateNode.status; // old per-day shape
-          return "";
-        };
-
-        filteredLearners.forEach((learner) => {
-          newAttendance[learner.email] = { [today]: {} };
-
-          for (let session = 1; session <= sessionsPerDay; session++) {
-            if (learner.status === "Disabled") {
-              newAttendance[learner.email][today][session] = {
-                status:      "NA",
-                savedStatus: "NA",
-                locked:      true,
-              };
-              continue;
-            }
-
-            const savedVal = readSavedStatus(learner.email, session);
-            newAttendance[learner.email][today][session] = {
-              status:      savedVal,    // pre-fill UI with saved value
-              savedStatus: savedVal,    // remember what was saved
-              locked:      false,
-            };
-          }
-        });
-
-        setAttendance(newAttendance);
       } catch (e) {
         console.error(e);
         setMessage("Failed to load batch data");
@@ -217,7 +194,72 @@ export default function AttendanceDashboard({ token }) {
     }
 
     fetchBatchDetails();
-  }, [batchNo]);
+  }, [batchNo, todayLocal]);
+
+  /* ── Fetch saved attendance whenever the marking date changes ── */
+  useEffect(() => {
+    if (!batchNo || !todayDate || learners.length === 0) return;
+
+    async function fetchForDate() {
+      const today = todayDate;
+
+      /* Validate against course duration */
+      if (courseStartDate && courseEndDate && (today < courseStartDate || today > courseEndDate)) {
+        setMessage(`Selected date is outside the course duration (${courseStartDate} → ${courseEndDate}).`);
+        setAttendance({});
+        return;
+      }
+
+      setMessage("");
+      setDirtyEmails(new Set());
+
+      let serverAttendance = {};
+      try {
+        const attRes = await axios.get(`${API_BASE}/api/get_batch_attendance`, {
+          params: { batch_no: batchNo, date: today },
+        });
+        serverAttendance = attRes.data || {};
+      } catch (_) {
+        /* allow marking with blank state if endpoint fails */
+      }
+
+      /* Tolerant read of either server response shape (per-session or per-day). */
+      const readSavedStatus = (email, session) => {
+        const dateNode = serverAttendance[email]?.[today];
+        if (!dateNode) return "";
+        const sessionCell = dateNode[session];
+        if (sessionCell && typeof sessionCell === "object" && sessionCell.status) return sessionCell.status;
+        if (typeof sessionCell === "string" && sessionCell) return sessionCell;
+        if (typeof dateNode.status === "string" && dateNode.status) return dateNode.status;
+        return "";
+      };
+
+      const newAttendance = {};
+      learners.forEach((learner) => {
+        newAttendance[learner.email] = { [today]: {} };
+        for (let session = 1; session <= sessionsPerDay; session++) {
+          if (learner.status === "Disabled") {
+            newAttendance[learner.email][today][session] = {
+              status:      "NA",
+              savedStatus: "NA",
+              locked:      true,
+            };
+            continue;
+          }
+          const savedVal = readSavedStatus(learner.email, session);
+          newAttendance[learner.email][today][session] = {
+            status:      savedVal,
+            savedStatus: savedVal,
+            locked:      false,
+          };
+        }
+      });
+
+      setAttendance(newAttendance);
+    }
+
+    fetchForDate();
+  }, [batchNo, todayDate, learners, courseStartDate, courseEndDate]);
 
   /* ── Mark P / A / L — always editable, track dirty state ── */
   function markAttendance(learnerEmail, session, status) {
@@ -534,11 +576,64 @@ export default function AttendanceDashboard({ token }) {
         {/* Date + summary badges */}
         {todayDate && (
           <Box sx={{ mt: 2, display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap" }}>
-            <Box sx={{ px: 2, py: 0.8, borderRadius: "10px", background: T.accentLight, border: `1px solid ${T.accent}44` }}>
-              <Typography sx={{ fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 700, color: T.accent }}>
-                📅 {todayDate}
-              </Typography>
-            </Box>
+            {canMarkPastDates ? (
+              <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                <TextField
+                  type="date"
+                  size="small"
+                  value={todayDate}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (!v) return;
+                    if (v > todayLocal) {
+                      setMessage("Future dates are not allowed.");
+                      return;
+                    }
+                    setTodayDate(v);
+                  }}
+                  inputProps={{
+                    max: todayLocal,
+                    min: courseStartDate || undefined,
+                  }}
+                  sx={{
+                    "& .MuiInputBase-root": {
+                      borderRadius: "10px",
+                      fontFamily:   "'DM Mono', monospace",
+                      fontSize:     13,
+                      fontWeight:   700,
+                      background:   T.accentLight,
+                      color:        T.accent,
+                    },
+                    "& fieldset":             { borderColor: `${T.accent}44` },
+                    "&:hover fieldset":       { borderColor: T.accent },
+                    "&.Mui-focused fieldset": { borderColor: T.accent },
+                  }}
+                />
+                {todayDate !== todayLocal && (
+                  <Button
+                    size="small"
+                    onClick={() => setTodayDate(todayLocal)}
+                    sx={{ textTransform: "none", fontSize: 11, fontFamily: "'DM Sans', sans-serif", color: T.accent }}
+                  >
+                    Reset to today
+                  </Button>
+                )}
+                <Box sx={{
+                  px: 1.2, py: 0.4, borderRadius: "8px",
+                  background: "#fef3c7", border: "1px solid #fcd34d",
+                  fontFamily: "'DM Sans', sans-serif", fontSize: 10, fontWeight: 800,
+                  color: "#92400e", letterSpacing: "0.05em",
+                }}>
+                  {(roleLower || "user").toUpperCase()} · CAN EDIT PAST DATES
+                </Box>
+              </Box>
+            ) : (
+              <Box sx={{ px: 2, py: 0.8, borderRadius: "10px", background: T.accentLight, border: `1px solid ${T.accent}44` }}>
+                <Typography sx={{ fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 700, color: T.accent }}>
+                  📅 {todayDate} · today only
+                </Typography>
+              </Box>
+            )}
             {learners.length > 0 && (
               <>
                 <Box sx={{ px: 2, py: 0.8, borderRadius: "10px", background: "#dcfce7", border: "1px solid #86efac" }}>

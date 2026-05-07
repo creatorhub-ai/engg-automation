@@ -144,19 +144,34 @@ function normalizeDate(dateStr) {
   return dateStr;
 }
 function getCurrentUser() {
-  try { return JSON.parse(localStorage.getItem("user") || "{}"); }
-  catch { return {}; }
+  /* The active LoginPage stores under "userSession"; an older flow uses "user".
+   * Read both so role detection works regardless of which login flow ran. */
+  try {
+    const sess = JSON.parse(localStorage.getItem("userSession") || "null");
+    if (sess && (sess.role || sess.email)) return sess;
+  } catch { /* ignore */ }
+  try {
+    const u = JSON.parse(localStorage.getItem("user") || "null");
+    if (u) return u;
+  } catch { /* ignore */ }
+  return {};
 }
 function useCurrentUserRole() {
   const localUser = getCurrentUser();
   const roleRaw   = localUser?.role || "";
-  const roleLower = roleRaw.toLowerCase();
+  const roleLower = roleRaw.toString().trim().toLowerCase();
+  /* Tolerate the "Corrdinator" typo that exists in the internal_users table. */
+  const isCoordinator = roleLower === "coordinator" || roleLower === "corrdinator";
+  const isAdmin       = roleLower === "admin";
+  const isManager     = roleLower === "manager";
   return {
     role: roleRaw,
     loading: false,
-    isAdminOrManager:     roleLower === "admin" || roleLower === "manager",
-    isAdminOrCoordinator: roleLower === "admin" || roleLower === "coordinator",
+    isAdminOrManager:     isAdmin || isManager,
+    isAdminOrCoordinator: isAdmin || isCoordinator,
     isTrainer:            roleLower === "trainer",
+    /* Convenience flag — Admin / Coordinator can edit every field on this page. */
+    canEditAllFields:     isAdmin || isCoordinator,
   };
 }
 function deduplicatePeriods(data) {
@@ -240,7 +255,7 @@ function RoleBadge({ canEdit }) {
 }
 
 function MarkSheet() {
-  const { isAdminOrManager, isAdminOrCoordinator, loading: roleLoading } = useCurrentUserRole();
+  const { isAdminOrManager, isAdminOrCoordinator, canEditAllFields, loading: roleLoading } = useCurrentUserRole();
   const [batchNo,                 setBatchNo]                 = useState("");
   const [assessmentType,          setAssessmentType]          = useState("weekly");
   const [availableBatches,        setAvailableBatches]        = useState([]);
@@ -271,7 +286,9 @@ function MarkSheet() {
   const isAutoDateAssessment = assessmentType === "final_project" || assessmentType === "viva";
   const isAutoOutOfType      = AUTO_OUT_OF_TYPES.includes(assessmentType);
   const isDvftAutoDateType   = isDvft && isAutoDateAssessment;
-  const outOfLocked          = isAdminOrManager ? false : isAutoOutOfType && isFixedOutOfBatch;
+  /* Admin / Coordinator can override the fixed Out-Of even on PDFT/DVFT batches;
+   * Manager keeps the previous override capability. */
+  const outOfLocked          = (isAdminOrManager || canEditAllFields) ? false : isAutoOutOfType && isFixedOutOfBatch;
   const canEditSavedMarks    = isAdminOrCoordinator;
   const marksEditDisabled    = marksAlreadySaved && !canEditSavedMarks;
   const marksEnteredCount    = learners.filter(l => marks[l.id]?.points && marks[l.id].points.trim() !== "").length;
@@ -385,7 +402,7 @@ function MarkSheet() {
             if (savedDate) setSelectedDate(normalizeDate(savedDate));
             setMarksAlreadySaved(true);
             const savedOutOf = data[0]?.out_off;
-            if (savedOutOf != null && (!outOfLocked || isAdminOrManager)) {
+            if (savedOutOf != null && (!outOfLocked || isAdminOrManager || canEditAllFields)) {
               setOutOff(String(savedOutOf));
             }
             const marksMap = {};
@@ -464,7 +481,7 @@ function MarkSheet() {
     } finally {
       setLoadingMarks(false);
     }
-  }, [batchNo, assessmentType, outOfLocked, isAdminOrManager]);
+  }, [batchNo, assessmentType, outOfLocked, isAdminOrManager, canEditAllFields]);
 
   /* ── Period selection ── */
   const handlePeriodSelect = (e) => {
@@ -675,8 +692,8 @@ function MarkSheet() {
                 </FormControl>
               )}
               {isAutoDateAssessment && (
-                isDvft ? (
-                  <TextField label="Assessment Date" type="date" size="small" value={selectedDate}
+                isDvft || canEditAllFields ? (
+                  <TextField label="Assessment Date" type="date" size="small" value={selectedDate || todayDate}
                     onChange={e => setSelectedDate(e.target.value)} InputLabelProps={{ shrink: true }}
                     sx={{ width: 180, "& .MuiInputBase-root": { ...inputSx, fontFamily: "'DM Sans', sans-serif", fontSize: 13 }, "& .MuiInputLabel-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 13 } }} />
                 ) : (
@@ -690,12 +707,12 @@ function MarkSheet() {
                     <TextField label="Out Of" value={outOff} disabled={outOfLocked} size="small"
                       onChange={e => handleOutOfChange(e.target.value)}
                       inputProps={{ inputMode: "decimal" }}
-                      helperText={isFixedOutOfBatch && outOff && isAutoOutOfType ? (isAdminOrManager ? "Override" : "Fixed") : ""}
-                      sx={{ width: 110, "& .MuiInputBase-root": { ...inputSx, fontFamily: "'DM Sans', sans-serif", fontSize: 13, background: isAdminOrManager && isFixedOutOfBatch && isAutoOutOfType ? "#fef3c7" : "transparent" }, "& .MuiInputLabel-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 13 }, "& .MuiFormHelperText-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 10 } }}
+                      helperText={isFixedOutOfBatch && outOff && isAutoOutOfType ? ((isAdminOrManager || canEditAllFields) ? "Override" : "Fixed") : ""}
+                      sx={{ width: 110, "& .MuiInputBase-root": { ...inputSx, fontFamily: "'DM Sans', sans-serif", fontSize: 13, background: (isAdminOrManager || canEditAllFields) && isFixedOutOfBatch && isAutoOutOfType ? "#fef3c7" : "transparent" }, "& .MuiInputLabel-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 13 }, "& .MuiFormHelperText-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 10 } }}
                     />
                   </span>
                 </Tooltip>
-                {isAdminOrManager && selectedDate && (
+                {(isAdminOrManager || canEditAllFields) && selectedDate && (
                   <Button variant="outlined" size="small" onClick={handleSaveOutOf}
                     disabled={savingOutOf || !outOff}
                     startIcon={savingOutOf ? <CircularProgress size={12} color="inherit" /> : <SaveIcon sx={{ fontSize: 14 }} />}
@@ -713,7 +730,7 @@ function MarkSheet() {
                   <StatPill icon={<InfoOutlinedIcon sx={{ fontSize: 14 }} />} label="Out Of" value={outOff || "—"} />
                   {selectedCoursePlannerId && <StatPill icon={<InfoOutlinedIcon sx={{ fontSize: 14 }} />} label="Planner ID" value={selectedCoursePlannerId} />}
                   <BatchBadge batchNo={batchNo} />
-                  {isAdminOrManager && isFixedOutOfBatch && isAutoOutOfType && <OutOfOverrideBadge />}
+                  {(isAdminOrManager || canEditAllFields) && isFixedOutOfBatch && isAutoOutOfType && <OutOfOverrideBadge />}
                 </Box>
               </Fade>
             )}
