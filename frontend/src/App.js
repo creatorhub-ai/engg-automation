@@ -30,6 +30,7 @@ import MarksDashboard from "./pages/MarksDashboard";
 import MarkEntryDashboard from "./pages/MarkEntryDashboard";
 import TrainerParentDashboard from "./pages/TrainerParentDashboard";
 import ClassroomMatrixDashboard from "./pages/ClassroomMatrixDashboard";
+import LeaveApply from "./pages/LeaveApply";
 
 const roleMenus = {
   admin: [
@@ -55,6 +56,7 @@ const roleMenus = {
     { text: "Trainer Assignment Dashboard", path: "/trainer-assignment" },
     { text: "Marks Dashboard", path: "/marks/entry" },
     { text: "Classroom Occupancy", path: "/classroom-matrix" },
+    { text: "Apply Leave", path: "/leave-apply" },
   ],
   manager: [
     { text: "Home", path: "/home" },
@@ -75,6 +77,7 @@ const roleMenus = {
     { text: "Manager Leave Dashboard", path: "/manager/leaves" },
     { text: "Upload Holidays", path: "/holiday-upload" },
     { text: "Marks Dashboard", path: "/marks/entry" }, 
+    { text: "Apply Leave", path: "/leave-apply" },
   ],
   trainer: [
     { text: "Trainer Dashboards", path: "/trainer-dashboard" },
@@ -84,6 +87,7 @@ const roleMenus = {
     { text: "Mark Entry", path: "/marks-entry" },
     { text: "Trainer Leave Dashboard", path: "/trainer/leaves" },
     { text: "Marks Dashboard", path: "/marks/entry" }, 
+    { text: "Apply Leave", path: "/leave-apply" },
   ],
   coordinator: [
     { text: "Home", path: "/home" },
@@ -93,6 +97,7 @@ const roleMenus = {
     { text: "Trainer Dashboards", path: "/trainer-dashboard" },
     { text: "Users Management", path: "/users" },
     { text: "Announcement", path: "/announcement" }, 
+    { text: "Apply Leave", path: "/leave-apply" },
   ],
 };
 
@@ -172,6 +177,8 @@ function getComponentForPath(path, login) {
       return <MarkEntryDashboard user={login} />;
     case "/classroom-matrix":
       return <ClassroomMatrixDashboard user={login} />;
+    case "/leave-apply":
+      return <LeaveApply user={login} />;
     default:
       return <div>Page not found</div>;
   }
