@@ -209,17 +209,23 @@ function LeaveApply({ user, token }) {
       return;
     }
 
+    if (!user?.email) {
+      setErr("User session is missing. Please re-login.");
+      setSubmitting(false);
+      return;
+    }
+
     try {
       const response = await axios.post(
         `${API_BASE}/api/trainer-leaves`,
         {
           trainer_email: user.email,
-          trainer_name: user.name,
-          domain: null,
+          trainer_name: user.name || user.email.split("@")[0],
+          domain: user.domain || "",
           start_date: start,
           end_date: end,
-          reason: reason || null,
-          batch_nos: null,
+          reason: reason || "",
+          batch_nos: "",
         },
         { headers: authHeaders, timeout: 15000 }
       );
@@ -232,25 +238,22 @@ function LeaveApply({ user, token }) {
         fetchLeaveHistory();
       } else {
         setErr(
-          `Server response: ${response.data?.message || "Unknown error"}`
+          `Server response: ${response.data?.error || response.data?.message || "Unknown error"}`
         );
       }
     } catch (e) {
       console.error("🚨 Submit failed:", e.response?.data || e);
+      const serverMsg = e.response?.data?.error || e.response?.data?.message;
       if (e.response?.status === 404)
         setErr("🚫 API endpoint not found.");
       else if (e.response?.status === 400)
-        setErr(
-          `Validation error: ${e.response.data?.error || "Check your input"}`
-        );
+        setErr(`Validation error: ${serverMsg || "Check your input"}`);
       else if (e.code === "ECONNABORTED")
         setErr("⏰ Request timeout. Please try again.");
       else if (e.response?.status === 500)
-        setErr(
-          `Server error: ${e.response.data?.error || "Please contact admin"}`
-        );
+        setErr(`Server error: ${serverMsg || "Please contact admin"}`);
       else
-        setErr(`Failed: ${e.response?.data?.error || e.message}`);
+        setErr(`Failed: ${serverMsg || e.message}`);
     } finally {
       setSubmitting(false);
     }

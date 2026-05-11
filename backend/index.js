@@ -5476,61 +5476,130 @@ app.post("/api/trainer-leaves", async (req, res) => {
     return res.status(400).json({ error: "Missing required fields" });
   }
 
+  const safeDomain = domain || null;
+  const safeBatchNos = batch_nos || null;
+  const safeReason = reason || null;
+  const safeTrainerName = trainer_name || (trainer_email ? trainer_email.split("@")[0] : "Unknown");
+
   try {
-    // 1️⃣ Fetch DISTINCT module names from course_planner_data
-    const moduleResult = await pool.query(
-      `
-      SELECT DISTINCT module_name
-      FROM course_planner_data
-      WHERE trainer_email = $1
-        AND date BETWEEN $2 AND $3
-        AND module_name IS NOT NULL
-      `,
-      [trainer_email, start_date, end_date]
-    );
+    const { data, error } = await supabase
+      .from("trainer_unavailability")
+      .insert([
+        {
+          trainer_email,
+          trainer_name: safeTrainerName,
+          domain: safeDomain,
+          start_date,
+          end_date,
+          reason: safeReason,
+          batch_nos: safeBatchNos,
+          status: "pending",
+          submitted_at: new Date().toISOString(),
+        },
+      ])
+      .select("id, trainer_email, trainer_name, domain, start_date, end_date, status")
+      .single();
 
-    // 2️⃣ Convert to comma-separated string
-    const moduleNames = moduleResult.rows
-      .map((r) => r.module_name)
-      .filter(Boolean);
+    if (error) {
+      console.error("Error applying leave (supabase):", error);
+      return res.status(500).json({ error: error.message || "Failed to apply leave" });
+    }
 
-    const moduleNameStr = moduleNames.join(", ");
-
-    // 3️⃣ Insert leave record
-    await pool.query(
-      `
-      INSERT INTO trainer_unavailability
-      (
-        trainer_email,
-        trainer_name,
-        domain,
-        start_date,
-        end_date,
-        reason,
-        batch_nos,
-        module_name
-      )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-      `,
-      [
-        trainer_email,
-        trainer_name,
-        domain,
-        start_date,
-        end_date,
-        reason,
-        batch_nos,
-        moduleNameStr,
-      ]
-    );
-
-    res.json({
-      success: true,
-      module_name: moduleNameStr,
-    });
+    res.json({ success: true, leave: data });
   } catch (err) {
     console.error("Error applying leave:", err);
-    res.status(500).json({ error: "Failed to apply leave" });
+    res.status(500).json({ error: err.message || "Failed to apply leave" });
+  }
+});
+
+// PUT - update a leave (only if not yet processed)
+app.put("/api/trainer-leaves/:id", async (req, res) => {
+  const { id } = req.params;
+  const { start_date, end_date, reason } = req.body;
+
+  if (!id) return res.status(400).json({ error: "Missing leave id" });
+  if (!start_date || !end_date) {
+    return res.status(400).json({ error: "Missing required fields" });
+  }
+
+  try {
+    const { data: existing, error: fetchErr } = await supabase
+      .from("trainer_unavailability")
+      .select("id, status")
+      .eq("id", id)
+      .single();
+
+    if (fetchErr || !existing) {
+      return res.status(404).json({ error: "Leave request not found" });
+    }
+
+    const lockedStatuses = ["assigned", "approved"];
+    if (lockedStatuses.includes(String(existing.status || "").toLowerCase())) {
+      return res
+        .status(409)
+        .json({ error: "Cannot edit — leave already processed" });
+    }
+
+    const { data, error } = await supabase
+      .from("trainer_unavailability")
+      .update({
+        start_date,
+        end_date,
+        reason: reason || null,
+      })
+      .eq("id", id)
+      .select("id, start_date, end_date, reason, status")
+      .single();
+
+    if (error) {
+      console.error("Error updating leave:", error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.json({ success: true, leave: data });
+  } catch (err) {
+    console.error("Error updating leave:", err);
+    res.status(500).json({ error: err.message || "Failed to update leave" });
+  }
+});
+
+// DELETE - cancel a leave (only if not yet processed)
+app.delete("/api/trainer-leaves/:id", async (req, res) => {
+  const { id } = req.params;
+  if (!id) return res.status(400).json({ error: "Missing leave id" });
+
+  try {
+    const { data: existing, error: fetchErr } = await supabase
+      .from("trainer_unavailability")
+      .select("id, status")
+      .eq("id", id)
+      .single();
+
+    if (fetchErr || !existing) {
+      return res.status(404).json({ error: "Leave request not found" });
+    }
+
+    const lockedStatuses = ["assigned", "approved"];
+    if (lockedStatuses.includes(String(existing.status || "").toLowerCase())) {
+      return res
+        .status(409)
+        .json({ error: "Cannot delete — leave already processed" });
+    }
+
+    const { error } = await supabase
+      .from("trainer_unavailability")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      console.error("Error deleting leave:", error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Error deleting leave:", err);
+    res.status(500).json({ error: err.message || "Failed to delete leave" });
   }
 });
 
