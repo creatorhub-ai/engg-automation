@@ -1376,6 +1376,7 @@ app.post("/upload-learners", async (req, res) => {
       phone: (l.phone || "").trim(),
       batch_no: (l.batch_no || "").trim(),
       status: (l.status || "").trim(),
+      server_id: (l.server_id || "").trim(),
     }));
 
     // 2) Detect in-file duplicates
@@ -5376,7 +5377,7 @@ app.get('/apigetlearners', async (req, res) => {
 
     const { data, error } = await supabase
       .from('learners_data') // Your actual table name
-      .select('id, name, email, batch_no, status')
+      .select('id, name, email, batch_no, status, server_id')
       .eq('batch_no', batchno)
       .order('name', { ascending: true });
 

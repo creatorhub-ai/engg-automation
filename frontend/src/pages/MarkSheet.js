@@ -773,6 +773,7 @@ function MarkSheet() {
                         <TableCell sx={{ ...tableHeadSx, width: 40 }}>#</TableCell>
                         <TableCell sx={tableHeadSx}>Name</TableCell>
                         <TableCell sx={tableHeadSx}>Email</TableCell>
+                        <TableCell sx={tableHeadSx}>Server ID</TableCell>
                         <TableCell sx={{ ...tableHeadSx, width: 150 }}>
                           <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
                             Marks{outOff ? ` / ${outOff}` : ""}
@@ -798,6 +799,7 @@ function MarkSheet() {
                             <TableCell sx={{ ...tableCellSx, color: TOKENS.textSub, fontFamily: "'DM Mono', monospace", fontSize: 11 }}>{idx + 1}</TableCell>
                             <TableCell sx={{ ...tableCellSx, fontWeight: 600 }}>{l.name}</TableCell>
                             <TableCell sx={{ ...tableCellSx, color: TOKENS.textSub, fontSize: 12 }}>{l.email}</TableCell>
+                            <TableCell sx={{ ...tableCellSx, color: TOKENS.textSub, fontFamily: "'DM Mono', monospace", fontSize: 12 }}>{l.server_id || "—"}</TableCell>
                             <TableCell sx={{ ...tableCellSx, py: 0.5 }}>
                               <Tooltip title={marksEditDisabled ? "Only Admin or Coordinator can edit saved marks" : ""} placement="top">
                                 <span>

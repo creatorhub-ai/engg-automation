@@ -66,6 +66,7 @@ export default function UploadLearners() {
             phone: r.phone || r.Phone || "",
             batch_no: r.batch_no || r.Batch || r.batch || "",
             status: r.status || r.Status || "",
+            server_id: r.server_id || r.ServerID || r["Server ID"] || r["Server Id"] || "",
             __rowIndex: index + 2,
           };
 
@@ -158,7 +159,7 @@ export default function UploadLearners() {
               <Box component="table" sx={{ width: "100%", borderCollapse: "collapse" }}>
                 <Box component="thead" sx={{ bgcolor: "#f5f5f5" }}>
                   <Box component="tr">
-                    {["Row", "Name", "Email", "Phone", "Batch No", "Status", "Errors", "Duplicate"].map(h => (
+                    {["Row", "Name", "Email", "Phone", "Batch No", "Status", "Server ID", "Errors", "Duplicate"].map(h => (
                       <Box
                         key={h}
                         component="th"
@@ -202,6 +203,9 @@ export default function UploadLearners() {
                         </Box>
                         <Box component="td" sx={{ border: "1px solid #eee", p: 1, fontSize: 13 }}>
                           {row.status}
+                        </Box>
+                        <Box component="td" sx={{ border: "1px solid #eee", p: 1, fontSize: 13 }}>
+                          {row.server_id}
                         </Box>
                         <Box
                           component="td"
