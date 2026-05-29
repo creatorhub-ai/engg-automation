@@ -172,17 +172,36 @@ export default function AttendanceDashboard({ token, user }) {
          * fetch attendance once todayDate is set. */
         setTodayDate(today);
 
-        const [learnersRes, datesRes] = await Promise.all([
+        /* Fetch learners and course dates independently — a freshly uploaded
+         * batch may have no course_planner_data rows yet, in which case the
+         * dates endpoint 404s. That must not prevent learners from loading. */
+        const [learnersResult, datesResult] = await Promise.allSettled([
           axios.get(`${API_BASE}/api/get_learners`,    { params: { batch_no: batchNo } }),
           axios.get(`${API_BASE}/api/get_batch_dates`, { params: { batch_no: batchNo } }),
         ]);
 
-        const filteredLearners = (learnersRes.data || []).filter((l) => l.status !== "Dropout");
-        setLearners(filteredLearners);
+        if (learnersResult.status === "fulfilled") {
+          const filteredLearners = (learnersResult.value.data || []).filter((l) => l.status !== "Dropout");
+          setLearners(filteredLearners);
+        } else {
+          console.error(learnersResult.reason);
+          setLearners([]);
+          setMessage("Failed to load learners");
+        }
 
-        const { start_date, end_date } = datesRes.data || {};
-        setCourseStartDate(start_date);
-        setCourseEndDate(end_date);
+        if (datesResult.status === "fulfilled") {
+          const { start_date, end_date } = datesResult.value.data || {};
+          setCourseStartDate(start_date || "");
+          setCourseEndDate(end_date || "");
+        } else {
+          setCourseStartDate("");
+          setCourseEndDate("");
+          if (datesResult.reason?.response?.status === 404) {
+            setMessage("Course planner not uploaded for this batch yet — you can still mark attendance, but date-range validation is disabled.");
+          } else {
+            console.error(datesResult.reason);
+          }
+        }
       } catch (e) {
         console.error(e);
         setMessage("Failed to load batch data");
