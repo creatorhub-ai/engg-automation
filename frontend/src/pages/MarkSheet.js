@@ -289,8 +289,8 @@ function MarkSheet() {
   /* Admin / Coordinator can override the fixed Out-Of even on PDFT/DVFT batches;
    * Manager keeps the previous override capability. */
   const outOfLocked          = (isAdminOrManager || canEditAllFields) ? false : isAutoOutOfType && isFixedOutOfBatch;
-  const canEditSavedMarks    = true;
-  const marksEditDisabled    = false;
+  const canEditSavedMarks    = isAdminOrCoordinator;
+  const marksEditDisabled    = marksAlreadySaved && !canEditSavedMarks;
   const marksEnteredCount    = learners.filter(l => marks[l.id]?.points && marks[l.id].points.trim() !== "").length;
 
   /* ── Load batches ── */
