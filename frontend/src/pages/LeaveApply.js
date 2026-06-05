@@ -432,7 +432,7 @@ function LeaveApply({ user, token }) {
                 letterSpacing: "-0.02em",
               }}
             >
-              Apply Leave
+              Notify Leave
             </Typography>
             <Typography
               sx={{

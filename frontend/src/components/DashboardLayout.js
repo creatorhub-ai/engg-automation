@@ -94,6 +94,9 @@ const MENUS_BY_ROLE = {
     { id: 7, name: "Announcement", path: "/announcement" },
     { id: 8, name: "Apply Leave", path: "/leave-apply" },
   ],
+  coordinator: [
+    { id: 1, name: "Notify Leave", path: "/leave-apply" },
+  ],
 };
 
 export default function DashboardLayout({ user, logout, children }) {
