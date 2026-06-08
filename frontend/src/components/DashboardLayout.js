@@ -94,7 +94,10 @@ const MENUS_BY_ROLE = {
     { id: 7, name: "Announcement", path: "/announcement" },
     { id: 8, name: "Apply Leave", path: "/leave-apply" },
   ],
-  coordinator: [
+  sales: [
+    { id: 1, name: "Notify Leave", path: "/leave-apply" },
+  ],
+  it: [
     { id: 1, name: "Notify Leave", path: "/leave-apply" },
   ],
 };

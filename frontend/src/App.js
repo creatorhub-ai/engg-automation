@@ -102,6 +102,9 @@ const roleMenus = {
   sales: [
     { text: "Apply Leave", path: "/leave-apply" },
   ],
+  it: [
+    { text: "Apply Leave", path: "/leave-apply" },
+  ],
 };
 
 // Normalize roles for consistent checking
