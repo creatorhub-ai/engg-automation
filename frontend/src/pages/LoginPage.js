@@ -17,6 +17,9 @@ import {
   Lock as LockIcon,
   Visibility,
   VisibilityOff,
+  AutoAwesome as BrandIcon,
+  LoginRounded as LoginRoundedIcon,
+  LockResetRounded as LockResetIcon,
 } from "@mui/icons-material";
 
 export default function LoginPage({ onLogin }) {
@@ -155,31 +158,166 @@ export default function LoginPage({ onLogin }) {
   // ======================================================
   // UI
   // ======================================================
+  // Shared styling for the glassy, glowing input fields
+  const fieldSx = {
+    "& .MuiOutlinedInput-root": {
+      borderRadius: 2.5,
+      background: "rgba(255,255,255,0.65)",
+      backdropFilter: "blur(6px)",
+      transition: "box-shadow .25s ease, transform .25s ease",
+      "& fieldset": { borderColor: "rgba(118,75,162,0.25)", transition: "border-color .25s" },
+      "&:hover fieldset": { borderColor: "#764ba2" },
+      "&:hover": { transform: "translateY(-1px)" },
+      "&.Mui-focused fieldset": { borderColor: "#764ba2", borderWidth: 2 },
+      "&.Mui-focused": { boxShadow: "0 0 0 4px rgba(118,75,162,0.15)" },
+    },
+    "& .MuiInputLabel-root.Mui-focused": { color: "#764ba2" },
+  };
+
   return (
     <Box
       sx={{
+        position: "relative",
         minHeight: "100vh",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+        overflow: "hidden",
+        px: 2,
+        background:
+          "linear-gradient(135deg, #667eea 0%, #764ba2 45%, #5b2c83 100%)",
+        backgroundSize: "220% 220%",
+        animation: "bgShift 16s ease infinite",
+        "@keyframes bgShift": {
+          "0%": { backgroundPosition: "0% 50%" },
+          "50%": { backgroundPosition: "100% 50%" },
+          "100%": { backgroundPosition: "0% 50%" },
+        },
+        "@keyframes floatA": {
+          "0%,100%": { transform: "translate(0,0) scale(1)" },
+          "50%": { transform: "translate(30px,-40px) scale(1.08)" },
+        },
+        "@keyframes floatB": {
+          "0%,100%": { transform: "translate(0,0) scale(1)" },
+          "50%": { transform: "translate(-35px,30px) scale(1.12)" },
+        },
+        "@keyframes logoGlow": {
+          "0%,100%": { boxShadow: "0 0 0 0 rgba(255,255,255,0.45)" },
+          "50%": { boxShadow: "0 0 0 14px rgba(255,255,255,0)" },
+        },
       }}
     >
+      {/* ── Decorative floating graphic blobs ── */}
+      <Box
+        sx={{
+          position: "absolute",
+          top: "-120px",
+          left: "-100px",
+          width: 360,
+          height: 360,
+          borderRadius: "50%",
+          background:
+            "radial-gradient(circle at 30% 30%, rgba(255,255,255,0.35), rgba(255,255,255,0))",
+          filter: "blur(8px)",
+          animation: "floatA 13s ease-in-out infinite",
+          pointerEvents: "none",
+        }}
+      />
+      <Box
+        sx={{
+          position: "absolute",
+          bottom: "-140px",
+          right: "-90px",
+          width: 420,
+          height: 420,
+          borderRadius: "50%",
+          background:
+            "radial-gradient(circle at 70% 70%, rgba(118,75,162,0.55), rgba(118,75,162,0))",
+          filter: "blur(10px)",
+          animation: "floatB 17s ease-in-out infinite",
+          pointerEvents: "none",
+        }}
+      />
+      <Box
+        sx={{
+          position: "absolute",
+          top: "40%",
+          right: "12%",
+          width: 140,
+          height: 140,
+          borderRadius: "50%",
+          background:
+            "radial-gradient(circle, rgba(102,126,234,0.5), rgba(102,126,234,0))",
+          filter: "blur(6px)",
+          animation: "floatA 11s ease-in-out infinite",
+          pointerEvents: "none",
+        }}
+      />
+
       <Grow in={true} timeout={800}>
         <Paper
           elevation={24}
           sx={{
-            width: { xs: "90%", sm: 450 },
-            p: 5,
-            borderRadius: 4,
-            background: "rgba(255,255,255,0.95)",
+            position: "relative",
+            zIndex: 1,
+            width: { xs: "100%", sm: 450 },
+            p: { xs: 3.5, sm: 5 },
+            pt: 7,
+            borderRadius: 5,
+            background: "rgba(255,255,255,0.82)",
+            backdropFilter: "blur(18px)",
+            border: "1px solid rgba(255,255,255,0.6)",
+            boxShadow:
+              "0 24px 60px rgba(31,38,135,0.35), inset 0 1px 0 rgba(255,255,255,0.7)",
+            transition: "transform .35s ease, box-shadow .35s ease",
+            "&:hover": {
+              transform: "translateY(-4px)",
+              boxShadow:
+                "0 32px 80px rgba(31,38,135,0.45), inset 0 1px 0 rgba(255,255,255,0.7)",
+            },
           }}
         >
+          {/* ── Floating brand logo badge ── */}
+          <Box
+            sx={{
+              position: "absolute",
+              top: -36,
+              left: "50%",
+              transform: "translateX(-50%)",
+              width: 72,
+              height: 72,
+              borderRadius: "20px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+              boxShadow: "0 10px 24px rgba(118,75,162,0.5)",
+              animation: "logoGlow 2.8s ease-in-out infinite",
+              transition: "transform .3s ease",
+              "&:hover": { transform: "translateX(-50%) rotate(-8deg) scale(1.06)" },
+            }}
+          >
+            {resetMode ? (
+              <LockResetIcon sx={{ color: "#fff", fontSize: 38 }} />
+            ) : (
+              <BrandIcon sx={{ color: "#fff", fontSize: 36 }} />
+            )}
+          </Box>
+
           <Box sx={{ textAlign: "center", mb: 4 }}>
-            <Typography variant="h4" fontWeight="bold">
+            <Typography
+              variant="h4"
+              fontWeight="bold"
+              sx={{
+                background: "linear-gradient(135deg, #667eea, #764ba2)",
+                WebkitBackgroundClip: "text",
+                WebkitTextFillColor: "transparent",
+                letterSpacing: "-0.02em",
+              }}
+            >
               {resetMode ? "Reset Password" : "Welcome Back"}
             </Typography>
-            <Typography variant="body2" color="text.secondary">
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
               {resetMode
                 ? "Reset your password below"
                 : "Sign in to access your dashboard"}
@@ -188,7 +326,7 @@ export default function LoginPage({ onLogin }) {
 
           {resetSuccess && (
             <Collapse in={resetSuccess}>
-              <Alert severity="success" sx={{ mb: 2 }}>
+              <Alert severity="success" sx={{ mb: 2, borderRadius: 2 }}>
                 Password reset successful! Logging out...
               </Alert>
             </Collapse>
@@ -203,10 +341,11 @@ export default function LoginPage({ onLogin }) {
                 margin="normal"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                sx={fieldSx}
                 InputProps={{
                   startAdornment: (
                     <InputAdornment position="start">
-                      <EmailIcon />
+                      <EmailIcon sx={{ color: "#764ba2" }} />
                     </InputAdornment>
                   ),
                 }}
@@ -222,16 +361,18 @@ export default function LoginPage({ onLogin }) {
                   type={showPassword ? "text" : "password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  sx={fieldSx}
                   InputProps={{
                     startAdornment: (
                       <InputAdornment position="start">
-                        <LockIcon />
+                        <LockIcon sx={{ color: "#764ba2" }} />
                       </InputAdornment>
                     ),
                     endAdornment: (
                       <InputAdornment position="end">
                         <IconButton
                           onClick={() => setShowPassword(!showPassword)}
+                          edge="end"
                         >
                           {showPassword ? <VisibilityOff /> : <Visibility />}
                         </IconButton>
@@ -252,6 +393,24 @@ export default function LoginPage({ onLogin }) {
                     type={showNewPassword ? "text" : "password"}
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
+                    sx={fieldSx}
+                    InputProps={{
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <LockIcon sx={{ color: "#764ba2" }} />
+                        </InputAdornment>
+                      ),
+                      endAdornment: (
+                        <InputAdornment position="end">
+                          <IconButton
+                            onClick={() => setShowNewPassword(!showNewPassword)}
+                            edge="end"
+                          >
+                            {showNewPassword ? <VisibilityOff /> : <Visibility />}
+                          </IconButton>
+                        </InputAdornment>
+                      ),
+                    }}
                     required
                   />
 
@@ -262,6 +421,30 @@ export default function LoginPage({ onLogin }) {
                     type={showConfirmNewPassword ? "text" : "password"}
                     value={confirmNewPassword}
                     onChange={(e) => setConfirmNewPassword(e.target.value)}
+                    sx={fieldSx}
+                    InputProps={{
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <LockIcon sx={{ color: "#764ba2" }} />
+                        </InputAdornment>
+                      ),
+                      endAdornment: (
+                        <InputAdornment position="end">
+                          <IconButton
+                            onClick={() =>
+                              setShowConfirmNewPassword(!showConfirmNewPassword)
+                            }
+                            edge="end"
+                          >
+                            {showConfirmNewPassword ? (
+                              <VisibilityOff />
+                            ) : (
+                              <Visibility />
+                            )}
+                          </IconButton>
+                        </InputAdornment>
+                      ),
+                    }}
                     required
                   />
                 </>
@@ -286,7 +469,34 @@ export default function LoginPage({ onLogin }) {
                 type="submit"
                 fullWidth
                 variant="contained"
-                sx={{ mt: 3, py: 1.3 }}
+                disableElevation
+                startIcon={
+                  resetMode ? <LockResetIcon /> : <LoginRoundedIcon />
+                }
+                sx={{
+                  mt: 3,
+                  py: 1.4,
+                  borderRadius: 2.5,
+                  fontWeight: 700,
+                  fontSize: 15,
+                  textTransform: "none",
+                  letterSpacing: "0.02em",
+                  background:
+                    "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                  backgroundSize: "200% 200%",
+                  boxShadow: "0 8px 20px rgba(118,75,162,0.45)",
+                  transition: "all .3s ease",
+                  "&:hover": {
+                    backgroundPosition: "100% 0",
+                    transform: "translateY(-2px)",
+                    boxShadow: "0 12px 28px rgba(118,75,162,0.6)",
+                  },
+                  "&:active": { transform: "translateY(0)" },
+                  "&.Mui-disabled": {
+                    background: "rgba(118,75,162,0.35)",
+                    color: "rgba(255,255,255,0.8)",
+                  },
+                }}
                 disabled={loading || resetLoading}
               >
                 {resetMode
@@ -301,14 +511,21 @@ export default function LoginPage({ onLogin }) {
               {/* Toggle reset mode */}
               <Button
                 fullWidth
-                sx={{ mt: 2 }}
+                sx={{
+                  mt: 2,
+                  textTransform: "none",
+                  fontWeight: 600,
+                  color: "#764ba2",
+                  borderRadius: 2,
+                  "&:hover": { background: "rgba(118,75,162,0.08)" },
+                }}
                 onClick={() => {
                   setResetMode(!resetMode);
                   setError("");
                   setResetError("");
                 }}
               >
-                {resetMode ? "Back to Login" : "Forgot Password?"}
+                {resetMode ? "← Back to Login" : "Forgot Password?"}
               </Button>
             </form>
           )}
