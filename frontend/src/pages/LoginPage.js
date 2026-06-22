@@ -165,13 +165,13 @@ export default function LoginPage({ onLogin }) {
       background: "rgba(255,255,255,0.65)",
       backdropFilter: "blur(6px)",
       transition: "box-shadow .25s ease, transform .25s ease",
-      "& fieldset": { borderColor: "rgba(118,75,162,0.25)", transition: "border-color .25s" },
-      "&:hover fieldset": { borderColor: "#764ba2" },
+      "& fieldset": { borderColor: "rgba(9,109,202,0.25)", transition: "border-color .25s" },
+      "&:hover fieldset": { borderColor: "#fc5b32" },
       "&:hover": { transform: "translateY(-1px)" },
-      "&.Mui-focused fieldset": { borderColor: "#764ba2", borderWidth: 2 },
-      "&.Mui-focused": { boxShadow: "0 0 0 4px rgba(118,75,162,0.15)" },
+      "&.Mui-focused fieldset": { borderColor: "#fc5b32", borderWidth: 2 },
+      "&.Mui-focused": { boxShadow: "0 0 0 4px rgba(9,109,202,0.15)" },
     },
-    "& .MuiInputLabel-root.Mui-focused": { color: "#764ba2" },
+    "& .MuiInputLabel-root.Mui-focused": { color: "#fc5b32" },
   };
 
   return (
@@ -185,7 +185,7 @@ export default function LoginPage({ onLogin }) {
         overflow: "hidden",
         px: 2,
         background:
-          "linear-gradient(135deg, #667eea 0%, #764ba2 45%, #5b2c83 100%)",
+          "linear-gradient(135deg, #096dca 0%, #fc5b32 55%, #d8401c 100%)",
         backgroundSize: "220% 220%",
         animation: "bgShift 16s ease infinite",
         "@keyframes bgShift": {
@@ -232,7 +232,7 @@ export default function LoginPage({ onLogin }) {
           height: 420,
           borderRadius: "50%",
           background:
-            "radial-gradient(circle at 70% 70%, rgba(118,75,162,0.55), rgba(118,75,162,0))",
+            "radial-gradient(circle at 70% 70%, rgba(9,109,202,0.55), rgba(9,109,202,0))",
           filter: "blur(10px)",
           animation: "floatB 17s ease-in-out infinite",
           pointerEvents: "none",
@@ -247,7 +247,7 @@ export default function LoginPage({ onLogin }) {
           height: 140,
           borderRadius: "50%",
           background:
-            "radial-gradient(circle, rgba(102,126,234,0.5), rgba(102,126,234,0))",
+            "radial-gradient(circle, rgba(252,91,50,0.5), rgba(252,91,50,0))",
           filter: "blur(6px)",
           animation: "floatA 11s ease-in-out infinite",
           pointerEvents: "none",
@@ -290,8 +290,8 @@ export default function LoginPage({ onLogin }) {
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-              boxShadow: "0 10px 24px rgba(118,75,162,0.5)",
+              background: "linear-gradient(135deg, #096dca 0%, #fc5b32 100%)",
+              boxShadow: "0 10px 24px rgba(9,109,202,0.5)",
               animation: "logoGlow 2.8s ease-in-out infinite",
               transition: "transform .3s ease",
               "&:hover": { transform: "translateX(-50%) rotate(-8deg) scale(1.06)" },
@@ -309,7 +309,7 @@ export default function LoginPage({ onLogin }) {
               variant="h4"
               fontWeight="bold"
               sx={{
-                background: "linear-gradient(135deg, #667eea, #764ba2)",
+                background: "linear-gradient(135deg, #096dca, #fc5b32)",
                 WebkitBackgroundClip: "text",
                 WebkitTextFillColor: "transparent",
                 letterSpacing: "-0.02em",
@@ -345,7 +345,7 @@ export default function LoginPage({ onLogin }) {
                 InputProps={{
                   startAdornment: (
                     <InputAdornment position="start">
-                      <EmailIcon sx={{ color: "#764ba2" }} />
+                      <EmailIcon sx={{ color: "#fc5b32" }} />
                     </InputAdornment>
                   ),
                 }}
@@ -365,7 +365,7 @@ export default function LoginPage({ onLogin }) {
                   InputProps={{
                     startAdornment: (
                       <InputAdornment position="start">
-                        <LockIcon sx={{ color: "#764ba2" }} />
+                        <LockIcon sx={{ color: "#fc5b32" }} />
                       </InputAdornment>
                     ),
                     endAdornment: (
@@ -397,7 +397,7 @@ export default function LoginPage({ onLogin }) {
                     InputProps={{
                       startAdornment: (
                         <InputAdornment position="start">
-                          <LockIcon sx={{ color: "#764ba2" }} />
+                          <LockIcon sx={{ color: "#fc5b32" }} />
                         </InputAdornment>
                       ),
                       endAdornment: (
@@ -425,7 +425,7 @@ export default function LoginPage({ onLogin }) {
                     InputProps={{
                       startAdornment: (
                         <InputAdornment position="start">
-                          <LockIcon sx={{ color: "#764ba2" }} />
+                          <LockIcon sx={{ color: "#fc5b32" }} />
                         </InputAdornment>
                       ),
                       endAdornment: (
@@ -482,18 +482,18 @@ export default function LoginPage({ onLogin }) {
                   textTransform: "none",
                   letterSpacing: "0.02em",
                   background:
-                    "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                    "linear-gradient(135deg, #096dca 0%, #fc5b32 100%)",
                   backgroundSize: "200% 200%",
-                  boxShadow: "0 8px 20px rgba(118,75,162,0.45)",
+                  boxShadow: "0 8px 20px rgba(9,109,202,0.45)",
                   transition: "all .3s ease",
                   "&:hover": {
                     backgroundPosition: "100% 0",
                     transform: "translateY(-2px)",
-                    boxShadow: "0 12px 28px rgba(118,75,162,0.6)",
+                    boxShadow: "0 12px 28px rgba(9,109,202,0.6)",
                   },
                   "&:active": { transform: "translateY(0)" },
                   "&.Mui-disabled": {
-                    background: "rgba(118,75,162,0.35)",
+                    background: "rgba(9,109,202,0.35)",
                     color: "rgba(255,255,255,0.8)",
                   },
                 }}
@@ -515,9 +515,9 @@ export default function LoginPage({ onLogin }) {
                   mt: 2,
                   textTransform: "none",
                   fontWeight: 600,
-                  color: "#764ba2",
+                  color: "#fc5b32",
                   borderRadius: 2,
-                  "&:hover": { background: "rgba(118,75,162,0.08)" },
+                  "&:hover": { background: "rgba(9,109,202,0.08)" },
                 }}
                 onClick={() => {
                   setResetMode(!resetMode);

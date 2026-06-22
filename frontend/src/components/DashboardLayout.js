@@ -151,7 +151,7 @@ export default function DashboardLayout({ user, logout, children }) {
   const sidebarStyle = {
     width: isExpanded ? "270px" : "84px",
     background:
-      "linear-gradient(160deg, #001d6e 0%, #16234f 55%, #323a52 100%)",
+      "linear-gradient(160deg, #075399 0%, #0a3e74 55%, #0f2747 100%)",
     color: "white",
     boxShadow: "8px 0 32px -8px rgba(0, 21, 90, 0.55)",
     display: "flex",
@@ -189,9 +189,9 @@ export default function DashboardLayout({ user, logout, children }) {
     padding: "12px 14px",
     borderRadius: "12px",
     background: isActive
-      ? "linear-gradient(135deg, rgba(93,135,224,0.95), rgba(37,99,235,0.85))"
+      ? "linear-gradient(135deg, rgba(9,109,202,0.95), rgba(7,83,153,0.85))"
       : "transparent",
-    boxShadow: isActive ? "0 6px 18px rgba(37,99,235,0.45)" : "none",
+    boxShadow: isActive ? "0 6px 18px rgba(7,83,153,0.45)" : "none",
     cursor: "pointer",
     transition: "all 0.22s cubic-bezier(0.4, 0, 0.2, 1)",
     border: "none",
@@ -242,8 +242,8 @@ export default function DashboardLayout({ user, logout, children }) {
       {/* Keyframes + micro-interaction styles for the layout */}
       <style>{`
         @keyframes eaPulse {
-          0%, 100% { box-shadow: 0 0 0 0 rgba(251,165,36,0.55); }
-          50% { box-shadow: 0 0 0 7px rgba(251,165,36,0); }
+          0%, 100% { box-shadow: 0 0 0 0 rgba(252,91,50,0.55); }
+          50% { box-shadow: 0 0 0 7px rgba(252,91,50,0); }
         }
         @keyframes eaFloat {
           0%, 100% { transform: translateY(0); }
@@ -276,12 +276,12 @@ export default function DashboardLayout({ user, logout, children }) {
               width: "44px",
               height: "44px",
               borderRadius: "14px",
-              background: "linear-gradient(135deg, #5d87e0, #fba524)",
+              background: "linear-gradient(135deg, #096dca, #fc5b32)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               flexShrink: 0,
-              boxShadow: "0 6px 16px rgba(37,99,235,0.5)",
+              boxShadow: "0 6px 16px rgba(7,83,153,0.5)",
             }}
           >
             <MenuIcon style={{ color: "white", fontSize: "26px" }} />
@@ -329,9 +329,9 @@ export default function DashboardLayout({ user, logout, children }) {
               justifyContent: "center",
               fontWeight: 700,
               fontSize: "15px",
-              color: "#001d6e",
-              background: "linear-gradient(135deg, #ffe7b3, #fba524)",
-              boxShadow: "0 4px 12px rgba(251,165,36,0.5)",
+              color: "#ffffff",
+              background: "linear-gradient(135deg, #ff8160, #fc5b32)",
+              boxShadow: "0 4px 12px rgba(252,91,50,0.5)",
             }}
             title={!isExpanded ? `${displayName}${roleLabel ? " · " + roleLabel : ""}` : ""}
           >
@@ -376,8 +376,8 @@ export default function DashboardLayout({ user, logout, children }) {
                     padding: "2px 8px",
                     borderRadius: "20px",
                     color: "#bfd3ff",
-                    background: "rgba(93,135,224,0.25)",
-                    border: "1px solid rgba(93,135,224,0.4)",
+                    background: "rgba(9,109,202,0.25)",
+                    border: "1px solid rgba(9,109,202,0.4)",
                   }}
                 >
                   {roleLabel}
@@ -412,7 +412,7 @@ export default function DashboardLayout({ user, logout, children }) {
                   onMouseEnter={(e) => {
                     if (!active) {
                       e.currentTarget.style.background =
-                        "rgba(93,135,224,0.22)";
+                        "rgba(9,109,202,0.22)";
                     }
                   }}
                   onMouseLeave={(e) => {
@@ -432,8 +432,8 @@ export default function DashboardLayout({ user, logout, children }) {
                         width: "4px",
                         height: "60%",
                         borderRadius: "0 4px 4px 0",
-                        background: "#fba524",
-                        boxShadow: "0 0 10px #fba524",
+                        background: "#fc5b32",
+                        boxShadow: "0 0 10px #fc5b32",
                       }}
                     />
                   )}
@@ -516,7 +516,7 @@ export default function DashboardLayout({ user, logout, children }) {
             height: "200px",
             borderRadius: "50%",
             background:
-              "radial-gradient(circle at 70% 70%, rgba(147,197,253,0.28), rgba(147,197,253,0))",
+              "radial-gradient(circle at 70% 70%, rgba(252,91,50,0.28), rgba(252,91,50,0))",
             filter: "blur(8px)",
             animation: "eaFloat 16s ease-in-out infinite",
             pointerEvents: "none",
