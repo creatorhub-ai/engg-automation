@@ -141,6 +141,13 @@ function TrainerUnavailabilityForm({ user, token }) {
 
   const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
 
+  /* Today (local) as YYYY-MM-DD — used to block past-dated leave */
+  const todayStr = (() => {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  })();
+
   const fetchBatches = useCallback(async () => {
     if (!user?.email) return;
     try {
@@ -206,7 +213,7 @@ function TrainerUnavailabilityForm({ user, token }) {
     setMsg(""); setErr(""); setSubmitting(true);
     if (!start || !end)                              { setErr("Please select From and To dates");     setSubmitting(false); return; }
     if (new Date(start) > new Date(end))              { setErr("End date must be after start date");   setSubmitting(false); return; }
-    if (selectedBatchNos.length === 0)                { setErr("Please select at least one batch");    setSubmitting(false); return; }
+    if (start < todayStr)                             { setErr("Cannot apply leave for past dates");   setSubmitting(false); return; }
     if (!domain)                                      { setErr("Domain is required");                  setSubmitting(false); return; }
 
     try {
@@ -327,16 +334,16 @@ function TrainerUnavailabilityForm({ user, token }) {
 
             <Grid container spacing={2} sx={{ mb: 2 }}>
               <Grid item xs={12} sm={6}>
-                <TextField label="From Date *" type="date" value={start} onChange={e => setStart(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} disabled={loading || submitting} required error={!start} helperText={!start ? "Required" : ""} sx={fieldSx} />
+                <TextField label="From Date *" type="date" value={start} onChange={e => setStart(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} inputProps={{ min: todayStr }} disabled={loading || submitting} required error={!start || (start && start < todayStr)} helperText={!start ? "Required" : start < todayStr ? "Cannot apply leave for past dates" : ""} sx={fieldSx} />
               </Grid>
               <Grid item xs={12} sm={6}>
-                <TextField label="To Date *" type="date" value={end} onChange={e => setEnd(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} disabled={loading || submitting} required error={!end || (start && new Date(start) > new Date(end))} helperText={!end ? "Required" : (start && new Date(start) > new Date(end)) ? "End date must be after start date" : ""} sx={fieldSx} />
+                <TextField label="To Date *" type="date" value={end} onChange={e => setEnd(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} inputProps={{ min: start || todayStr }} disabled={loading || submitting} required error={!end || (start && new Date(start) > new Date(end)) || end < todayStr} helperText={!end ? "Required" : (start && new Date(start) > new Date(end)) ? "End date must be after start date" : end < todayStr ? "Cannot apply leave for past dates" : ""} sx={fieldSx} />
               </Grid>
             </Grid>
 
             <TextField label="Reason (Optional)" value={reason} onChange={e => setReason(e.target.value)} fullWidth multiline rows={2} disabled={loading || submitting} sx={{ mb: 2.5, ...fieldSx }} />
 
-            <Button onClick={submitUnavailability} variant="contained" disabled={loading || submitting || selectedBatchNos.length === 0} startIcon={submitting ? <CircularProgress size={18} color="inherit" /> : null} fullWidth
+            <Button onClick={submitUnavailability} variant="contained" disabled={loading || submitting} startIcon={submitting ? <CircularProgress size={18} color="inherit" /> : null} fullWidth
               sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 14, borderRadius: "10px", py: 1.4, textTransform: "none", background: `linear-gradient(135deg, ${T.accent} 0%, ${T.accentDark} 100%)`, boxShadow: `0 4px 14px ${T.accent}44`, "&:hover": { background: `linear-gradient(135deg, ${T.accentDark} 0%, ${T.accent} 100%)` }, "&.Mui-disabled": { background: T.border, color: T.textSub, boxShadow: "none" } }}>
               {submitting ? "Submitting…" : "Submit Leave Request"}
             </Button>

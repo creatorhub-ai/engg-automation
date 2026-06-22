@@ -156,6 +156,13 @@ function LeaveApply({ user, token }) {
 
   const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
 
+  /* ── Today (local) as YYYY-MM-DD — used to block past-dated leave ── */
+  const todayStr = (() => {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  })();
+
   /* ─── Fetch leave history for this user ─── */
   const fetchLeaveHistory = useCallback(async () => {
     if (!user?.email) return;
@@ -205,6 +212,11 @@ function LeaveApply({ user, token }) {
     }
     if (new Date(start) > new Date(end)) {
       setErr("End date must be after start date");
+      setSubmitting(false);
+      return;
+    }
+    if (start < todayStr) {
+      setErr("Cannot apply leave for past dates");
       setSubmitting(false);
       return;
     }
@@ -469,10 +481,17 @@ function LeaveApply({ user, token }) {
                   onChange={(e) => setStart(e.target.value)}
                   fullWidth
                   InputLabelProps={{ shrink: true }}
+                  inputProps={{ min: todayStr }}
                   disabled={submitting}
                   required
-                  error={!start}
-                  helperText={!start ? "Required" : ""}
+                  error={!start || (start && start < todayStr)}
+                  helperText={
+                    !start
+                      ? "Required"
+                      : start < todayStr
+                      ? "Cannot apply leave for past dates"
+                      : ""
+                  }
                   sx={fieldSx}
                 />
               </Grid>
@@ -484,14 +503,21 @@ function LeaveApply({ user, token }) {
                   onChange={(e) => setEnd(e.target.value)}
                   fullWidth
                   InputLabelProps={{ shrink: true }}
+                  inputProps={{ min: start || todayStr }}
                   disabled={submitting}
                   required
-                  error={!end || (start && new Date(start) > new Date(end))}
+                  error={
+                    !end ||
+                    (start && new Date(start) > new Date(end)) ||
+                    end < todayStr
+                  }
                   helperText={
                     !end
                       ? "Required"
                       : start && new Date(start) > new Date(end)
                       ? "End date must be after start date"
+                      : end < todayStr
+                      ? "Cannot apply leave for past dates"
                       : ""
                   }
                   sx={fieldSx}
