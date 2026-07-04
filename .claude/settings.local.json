@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(grep -E \"\\\\.js$\")",
-      "mcp__ide__getDiagnostics"
+      "mcp__ide__getDiagnostics",
+      "Bash(npx --no-install eslint src/pages/MarkSheet.js src/pages/MarksDashboard.js)",
+      "Bash(node -e ' *)"
     ]
   }
 }

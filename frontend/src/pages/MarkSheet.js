@@ -127,6 +127,27 @@ function getFixedOutOf(topicName, assessmentType, batchNo) {
   return null;
 }
 const todayDate = new Date().toISOString().split("T")[0];
+/* ── Mark-entry window extension (client-persisted) ──────────────────────────
+ * The standard entry window closes a few days after the assessment date.
+ * Admin / Manager / Coordinator can extend it by one day. The extension is
+ * stored in localStorage keyed by batch + assessment type + date so it
+ * survives reloads and is honoured the next time the sheet is opened. */
+function windowExtKey(batchNo, assessmentType, date) {
+  return `markWindowExt::${batchNo}::${assessmentType}::${date}`;
+}
+function readWindowExtension(batchNo, assessmentType, date) {
+  if (!batchNo || !date) return null;
+  try {
+    const raw = localStorage.getItem(windowExtKey(batchNo, assessmentType, date));
+    if (!raw) return null;
+    const t = new Date(raw);
+    return isNaN(t.getTime()) ? null : t;
+  } catch { return null; }
+}
+function writeWindowExtension(batchNo, assessmentType, date, until) {
+  try { localStorage.setItem(windowExtKey(batchNo, assessmentType, date), until.toISOString()); }
+  catch { /* ignore */ }
+}
 function normalizeDate(dateStr) {
   if (!dateStr) return "";
   if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
@@ -271,6 +292,8 @@ function MarkSheet() {
   const [marks,                   setMarks]                   = useState({});
   const [outOff,                  setOutOff]                  = useState("");
   const [windowCloseDate,         setWindowCloseDate]         = useState("");
+  const [windowCloseAt,           setWindowCloseAt]           = useState(null);   // base close (Date)
+  const [windowExtendedUntil,     setWindowExtendedUntil]     = useState(null);   // extension (Date) or null
   const [message,                 setMessage]                 = useState("");
   const [saving,                  setSaving]                  = useState(false);
   const [savingOutOf,             setSavingOutOf]             = useState(false);
@@ -292,6 +315,20 @@ function MarkSheet() {
   const canEditSavedMarks    = isAdminOrCoordinator;
   const marksEditDisabled    = marksAlreadySaved && !canEditSavedMarks;
   const marksEnteredCount    = learners.filter(l => marks[l.id]?.points && marks[l.id].points.trim() !== "").length;
+
+  /* ── Mark-entry window state ──
+   * Admin / Manager / Coordinator are "privileged": they may enter marks at any
+   * time and can extend the window. For everyone else (trainers) the window
+   * closes once the effective close date/time is crossed. */
+  const isPrivileged         = isAdminOrManager || canEditAllFields;
+  const effectiveCloseAt     = windowCloseAt
+    ? (windowExtendedUntil && windowExtendedUntil > windowCloseAt ? windowExtendedUntil : windowCloseAt)
+    : null;
+  const windowIsExtended     = !!(windowExtendedUntil && windowCloseAt && windowExtendedUntil > windowCloseAt);
+  const windowIsClosed       = !isAutoDateAssessment && !!selectedDate && !!effectiveCloseAt && Date.now() > effectiveCloseAt.getTime();
+  const windowLockedForTrainer = windowIsClosed && !isPrivileged;
+  const marksEntryLocked     = marksEditDisabled || windowLockedForTrainer;
+  const effectiveCloseLabel  = effectiveCloseAt ? effectiveCloseAt.toLocaleDateString("en-GB") : windowCloseDate;
 
   /* ── Load batches ── */
   useEffect(() => {
@@ -364,7 +401,10 @@ function MarkSheet() {
 
   /* ── Window close date ── */
   useEffect(() => {
-    if (isAutoDateAssessment || !selectedDate) return;
+    if (isAutoDateAssessment || !selectedDate) {
+      setWindowCloseDate(""); setWindowCloseAt(null); setWindowExtendedUntil(null);
+      return;
+    }
     const d = new Date(selectedDate + "T00:00:00");
     if (isNaN(d.getTime())) return;
     const close = new Date(d);
@@ -374,7 +414,10 @@ function MarkSheet() {
     else if (type === "final") close.setDate(close.getDate() + 7);
     close.setHours(23, 59, 59, 999);
     setWindowCloseDate(close.toLocaleDateString("en-GB"));
-  }, [selectedDate, assessmentType, isAutoDateAssessment]);
+    setWindowCloseAt(close);
+    // Honour any previously-saved extension for this batch/type/date.
+    setWindowExtendedUntil(readWindowExtension(batchNo, assessmentType, selectedDate));
+  }, [selectedDate, assessmentType, isAutoDateAssessment, batchNo]);
 
   /* ── Auto-load marks for final_project / viva ───────────────────────────
    *
@@ -547,6 +590,21 @@ function MarkSheet() {
     finally { setSavingOutOf(false); setTimeout(() => setMessage(""), 4000); }
   };
 
+  /* ── Extend Window ──────────────────────────────────────────────────────
+   * Admin / Manager / Coordinator only. Re-opens the mark-entry window until
+   * 23:59 of the *next* calendar day (i.e. "one more day" from the click).
+   * e.g. clicked 04/07/2026 12:24 PM → open till 05/07/2026 11:59 PM. */
+  const handleExtendWindow = () => {
+    if (!isPrivileged || isAutoDateAssessment || !batchNo || !selectedDate) return;
+    const until = new Date();
+    until.setDate(until.getDate() + 1);
+    until.setHours(23, 59, 59, 999);
+    writeWindowExtension(batchNo, assessmentType, selectedDate, until);
+    setWindowExtendedUntil(until);
+    setMessage(`✅ Mark entry window extended till ${until.toLocaleDateString("en-GB")} 11:59 PM.`);
+    setTimeout(() => setMessage(""), 5000);
+  };
+
   /* ── Save Marks ─────────────────────────────────────────────────────────
    *
    * IMPORTANT: assessment_date is always included in the payload.
@@ -557,6 +615,7 @@ function MarkSheet() {
    * will always agree on the date.
    * ─────────────────────────────────────────────────────────────────── */
   const handleSave = async () => {
+    if (windowLockedForTrainer) { setMessage("❌ Mark entry window is closed. Please ask an Admin, Manager or Coordinator to extend it."); return; }
     if (!batchNo || !selectedDate || !outOff) { setMessage("❌ Please complete all required fields."); return; }
     if (!isAutoDateAssessment && !selectedCoursePlannerId) { setMessage("❌ Please select an assessment date from the dropdown."); return; }
     if (isDvftAutoDateType && !selectedDate) { setMessage("❌ Please enter the assessment date."); return; }
@@ -635,12 +694,36 @@ function MarkSheet() {
             right={
               selectedDate && (
                 <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
-                  <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2, py: 0.8, borderRadius: "10px", background: TOKENS.success.light, border: `1px solid ${TOKENS.success.fill}44` }}>
-                    <LockOpenIcon sx={{ fontSize: 14, color: TOKENS.success.fill }} />
-                    <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700, color: TOKENS.success.text }}>
-                      {!isAutoDateAssessment && windowCloseDate ? `Window open · standard close ${windowCloseDate}` : "Window open"}
-                    </Typography>
-                  </Box>
+                  {(() => {
+                    const closed = windowIsClosed;
+                    const tok = closed ? TOKENS.error : windowIsExtended ? TOKENS.warning : TOKENS.success;
+                    const label = isAutoDateAssessment
+                      ? "Window open"
+                      : closed
+                        ? `Window closed · ${effectiveCloseLabel}`
+                        : windowIsExtended
+                          ? `Window open · extended till ${effectiveCloseLabel}`
+                          : windowCloseDate
+                            ? `Window open · standard close ${windowCloseDate}`
+                            : "Window open";
+                    return (
+                      <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2, py: 0.8, borderRadius: "10px", background: tok.light, border: `1px solid ${tok.fill}44` }}>
+                        {closed ? <LockIcon sx={{ fontSize: 14, color: tok.fill }} /> : <LockOpenIcon sx={{ fontSize: 14, color: tok.fill }} />}
+                        <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700, color: tok.text }}>
+                          {label}
+                        </Typography>
+                      </Box>
+                    );
+                  })()}
+                  {isPrivileged && !isAutoDateAssessment && selectedDate && (
+                    <Tooltip title="Re-open the mark entry window until 11:59 PM tomorrow so trainers can still enter marks.">
+                      <Button variant="contained" size="small" onClick={handleExtendWindow}
+                        startIcon={<LockOpenIcon sx={{ fontSize: 14 }} />}
+                        sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 12, borderRadius: "10px", textTransform: "none", background: TOKENS.accent, whiteSpace: "nowrap", "&:hover": { background: "#2a3fd4" } }}>
+                        Extend Window
+                      </Button>
+                    </Tooltip>
+                  )}
                 </Box>
               )
             }
@@ -777,8 +860,8 @@ function MarkSheet() {
                         <TableCell sx={{ ...tableHeadSx, width: 150 }}>
                           <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
                             Marks{outOff ? ` / ${outOff}` : ""}
-                            <Tooltip title={marksEditDisabled ? "Marks are locked. Only Admin or Coordinator can edit saved marks." : "Enter numbers (e.g. 10 or 10.5) or AB for absent"}>
-                              {marksEditDisabled ? <LockIcon sx={{ fontSize: 14, color: TOKENS.textSub }} /> : <InfoOutlinedIcon sx={{ fontSize: 14, color: TOKENS.textSub }} />}
+                            <Tooltip title={marksEntryLocked ? (windowLockedForTrainer ? "Mark entry window is closed. Ask an Admin, Manager or Coordinator to extend it." : "Marks are locked. Only Admin or Coordinator can edit saved marks.") : "Enter numbers (e.g. 10 or 10.5) or AB for absent"}>
+                              {marksEntryLocked ? <LockIcon sx={{ fontSize: 14, color: TOKENS.textSub }} /> : <InfoOutlinedIcon sx={{ fontSize: 14, color: TOKENS.textSub }} />}
                             </Tooltip>
                           </Box>
                         </TableCell>
@@ -801,14 +884,14 @@ function MarkSheet() {
                             <TableCell sx={{ ...tableCellSx, color: TOKENS.textSub, fontSize: 12 }}>{l.email}</TableCell>
                             <TableCell sx={{ ...tableCellSx, color: TOKENS.textSub, fontFamily: "'DM Mono', monospace", fontSize: 12 }}>{l.server_id || "—"}</TableCell>
                             <TableCell sx={{ ...tableCellSx, py: 0.5 }}>
-                              <Tooltip title={marksEditDisabled ? "Only Admin or Coordinator can edit saved marks" : ""} placement="top">
+                              <Tooltip title={windowLockedForTrainer ? "Mark entry window is closed — ask an Admin, Manager or Coordinator to extend it" : marksEditDisabled ? "Only Admin or Coordinator can edit saved marks" : ""} placement="top">
                                 <span>
                                   <TextField size="small" value={points}
                                     onChange={e => handleMarksInput(l.id, e.target.value)}
-                                    placeholder={marksEditDisabled ? "" : "e.g. 10.5 or AB"}
-                                    disabled={marksEditDisabled}
+                                    placeholder={marksEntryLocked ? "" : "e.g. 10.5 or AB"}
+                                    disabled={marksEntryLocked}
                                     inputProps={{ style: { fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 700, textTransform: "uppercase" } }}
-                                    sx={{ width: 110, "& .MuiInputBase-root": { borderRadius: "8px", background: marksEditDisabled ? TOKENS.surfaceAlt : hasMarks ? (isAbsent ? "#fef3c7" : TOKENS.accentLight) : "transparent", "& .MuiOutlinedInput-notchedOutline": { borderColor: marksEditDisabled ? TOKENS.border : hasMarks ? (isAbsent ? TOKENS.warning.fill + "66" : TOKENS.accent + "44") : TOKENS.border }, "&:hover .MuiOutlinedInput-notchedOutline": { borderColor: marksEditDisabled ? TOKENS.border : TOKENS.accent } } }}
+                                    sx={{ width: 110, "& .MuiInputBase-root": { borderRadius: "8px", background: marksEntryLocked ? TOKENS.surfaceAlt : hasMarks ? (isAbsent ? "#fef3c7" : TOKENS.accentLight) : "transparent", "& .MuiOutlinedInput-notchedOutline": { borderColor: marksEntryLocked ? TOKENS.border : hasMarks ? (isAbsent ? TOKENS.warning.fill + "66" : TOKENS.accent + "44") : TOKENS.border }, "&:hover .MuiOutlinedInput-notchedOutline": { borderColor: marksEntryLocked ? TOKENS.border : TOKENS.accent } } }}
                                   />
                                 </span>
                               </Tooltip>
@@ -837,13 +920,22 @@ function MarkSheet() {
                   </Table>
                 </Box>
                 <Box sx={{ mt: 3, display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
-                  {marksEditDisabled ? (
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2.5, py: 1.2, borderRadius: "10px", background: TOKENS.surfaceAlt, border: `1px solid ${TOKENS.border}` }}>
-                      <LockIcon sx={{ fontSize: 16, color: TOKENS.textSub }} />
-                      <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: TOKENS.textSub }}>
-                        Marks are saved — only <strong>Admin</strong> or <strong>Coordinator</strong> can edit
-                      </Typography>
-                    </Box>
+                  {marksEntryLocked ? (
+                    windowLockedForTrainer ? (
+                      <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2.5, py: 1.2, borderRadius: "10px", background: TOKENS.error.light, border: `1px solid ${TOKENS.error.fill}44` }}>
+                        <LockIcon sx={{ fontSize: 16, color: TOKENS.error.fill }} />
+                        <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: TOKENS.error.text }}>
+                          Mark entry window closed on <strong>{effectiveCloseLabel}</strong> — ask an <strong>Admin</strong>, <strong>Manager</strong> or <strong>Coordinator</strong> to extend it
+                        </Typography>
+                      </Box>
+                    ) : (
+                      <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2.5, py: 1.2, borderRadius: "10px", background: TOKENS.surfaceAlt, border: `1px solid ${TOKENS.border}` }}>
+                        <LockIcon sx={{ fontSize: 16, color: TOKENS.textSub }} />
+                        <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: TOKENS.textSub }}>
+                          Marks are saved — only <strong>Admin</strong> or <strong>Coordinator</strong> can edit
+                        </Typography>
+                      </Box>
+                    )
                   ) : (
                     <>
                       <Button variant="contained" onClick={handleSave}

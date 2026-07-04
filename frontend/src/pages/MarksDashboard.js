@@ -129,6 +129,13 @@ function n(val) {
   return isNaN(v) ? null : v;
 }
 
+/* Scorecard export helper — absentees are stored as 0 marks, so a value of
+ * exactly 0 is exported as "AB" (matching the on-screen scorecard). */
+function ab(val) {
+  if (val === null || val === undefined || val === "") return val;
+  return parseFloat(val) === 0 ? "AB" : val;
+}
+
 /* ─── Sub-components ─────────────────────────────────────────────────────── */
 function SectionHeader({ icon, title, subtitle, right }) {
   return (
@@ -169,9 +176,24 @@ function StatusBanner({ message }) {
   );
 }
 
-/* Percentage cell — coloured pill. Accepts number or string. */
-function PctCell({ value }) {
+/* Absent-mark pill — absent learners are stored as 0 marks; the scorecard
+ * surfaces them as "AB" instead of a misleading 0%. */
+function AbsentPill() {
+  return (
+    <Box sx={{ display: "inline-flex", alignItems: "center", px: 1.2, py: 0.3, borderRadius: "20px", background: `${TOKENS.warning.fill}18`, border: `1px solid ${TOKENS.warning.fill}44` }}>
+      <Typography sx={{ fontFamily: "'DM Mono', monospace", fontSize: 12, fontWeight: 800, color: TOKENS.warning.fill }}>AB</Typography>
+    </Box>
+  );
+}
+
+/* Percentage cell — coloured pill. Accepts number or string.
+ * When absentOnZero is set (scorecard view), a value of exactly 0 is shown
+ * as "AB" because absentees are persisted with 0 marks. */
+function PctCell({ value, absentOnZero }) {
   const num = parseFloat(value);
+  if (absentOnZero && num === 0) {
+    return <TableCell align="center" sx={{ ...tableCellSx, py: 0.8 }}><AbsentPill /></TableCell>;
+  }
   if (isNaN(num) || (num === 0 && (value === null || value === undefined || value === ""))) {
     return <TableCell align="center" sx={{ ...tableCellSx, color: TOKENS.textSub, fontSize: 12 }}>—</TableCell>;
   }
@@ -190,8 +212,11 @@ function PctCell({ value }) {
 }
 
 /* Overall cell — slightly larger */
-function OverallCell({ value, accentColor }) {
+function OverallCell({ value, accentColor, absentOnZero }) {
   const num = parseFloat(value) || 0;
+  if (absentOnZero && parseFloat(value) === 0) {
+    return <TableCell align="center" sx={tableCellSx}><AbsentPill /></TableCell>;
+  }
   const c = accentColor || (num >= 80 ? TOKENS.success.fill : num >= 70 ? TOKENS.accent : TOKENS.error.fill);
   return (
     <TableCell align="center" sx={tableCellSx}>
@@ -312,15 +337,15 @@ function PdftScorecardTable({ data, batchNo }) {
               <TableRow key={i} sx={{ "&:nth-of-type(even)": { background: TOKENS.surfaceAlt }, "&:hover": { background: `${TOKENS.accent}08` } }}>
                 <TableCell sx={{ ...tableCellSx, fontWeight: 600 }}>{row.name}</TableCell>
                 <TableCell sx={{ ...tableCellSx, color: TOKENS.textSub, fontSize: 12 }}>{row.email}</TableCell>
-                <PctCell value={row.intermediate} />
-                <PctCell value={row.breakdown?.digital} />
-                <PctCell value={row.breakdown?.cmos} />
-                <PctCell value={row.breakdown?.tcl} />
-                <PctCell value={row.theory} />
-                <PctCell value={row.breakdown?.physical} />
-                <PctCell value={row.project} />
-                <PctCell value={row.viva} />
-                <OverallCell value={row.overall} />
+                <PctCell value={row.intermediate} absentOnZero />
+                <PctCell value={row.breakdown?.digital} absentOnZero />
+                <PctCell value={row.breakdown?.cmos} absentOnZero />
+                <PctCell value={row.breakdown?.tcl} absentOnZero />
+                <PctCell value={row.theory} absentOnZero />
+                <PctCell value={row.breakdown?.physical} absentOnZero />
+                <PctCell value={row.project} absentOnZero />
+                <PctCell value={row.viva} absentOnZero />
+                <OverallCell value={row.overall} absentOnZero />
                 <TableCell align="center" sx={tableCellSx}><GradeChip grade={row.grade} /></TableCell>
                 <TableCell align="center" sx={tableCellSx}><YesNoChip value={row.certification} /></TableCell>
                 <TableCell align="center" sx={tableCellSx}><YesNoChip value={row.placement} /></TableCell>
@@ -411,17 +436,17 @@ function DvftScorecardTable({ data, batchNo }) {
               <TableRow key={i} sx={{ "&:nth-of-type(even)": { background: TOKENS.surfaceAlt }, "&:hover": { background: TOKENS.dvft.light } }}>
                 <TableCell sx={{ ...tableCellSx, fontWeight: 600 }}>{row.name}</TableCell>
                 <TableCell sx={{ ...tableCellSx, color: TOKENS.textSub, fontSize: 12 }}>{row.email}</TableCell>
-                <PctCell value={row.intermediate} />
-                <PctCell value={row.breakdown?.digital} />
-                <PctCell value={row.breakdown?.verilog} />
-                <PctCell value={row.dvGroup1} />
-                <PctCell value={row.breakdown?.sv} />
-                <PctCell value={row.breakdown?.uvm} />
-                <PctCell value={row.breakdown?.python} />
-                <PctCell value={row.dvGroup2} />
-                <PctCell value={row.project} />
-                <PctCell value={row.viva} />
-                <OverallCell value={row.overall} accentColor={TOKENS.dvft.fill} />
+                <PctCell value={row.intermediate} absentOnZero />
+                <PctCell value={row.breakdown?.digital} absentOnZero />
+                <PctCell value={row.breakdown?.verilog} absentOnZero />
+                <PctCell value={row.dvGroup1} absentOnZero />
+                <PctCell value={row.breakdown?.sv} absentOnZero />
+                <PctCell value={row.breakdown?.uvm} absentOnZero />
+                <PctCell value={row.breakdown?.python} absentOnZero />
+                <PctCell value={row.dvGroup2} absentOnZero />
+                <PctCell value={row.project} absentOnZero />
+                <PctCell value={row.viva} absentOnZero />
+                <OverallCell value={row.overall} accentColor={TOKENS.dvft.fill} absentOnZero />
                 <TableCell align="center" sx={tableCellSx}><GradeChip grade={row.grade} /></TableCell>
                 <TableCell align="center" sx={tableCellSx}><YesNoChip value={row.certification} /></TableCell>
                 <TableCell align="center" sx={tableCellSx}><YesNoChip value={row.placement} /></TableCell>
@@ -563,31 +588,31 @@ export default function MarksDashboard({ user }) {
     if (isScorecard && isPdft) {
       exportData = scorecardData.map(r => ({
         Name: r.name, Email: r.email,
-        "Intermediate (%)": r.intermediate,
-        "Digital (%)":       r.breakdown?.digital,
-        "CMOS (%)":          r.breakdown?.cmos,
-        "TCL (%)":           r.breakdown?.tcl,
-        "Theory Group (%)":  r.theory,
-        "Physical (%)":      r.breakdown?.physical,
-        "Project (%)":       r.project,
-        "Viva (%)":          r.viva,
-        "Overall (%)":       r.overall,
+        "Intermediate (%)": ab(r.intermediate),
+        "Digital (%)":       ab(r.breakdown?.digital),
+        "CMOS (%)":          ab(r.breakdown?.cmos),
+        "TCL (%)":           ab(r.breakdown?.tcl),
+        "Theory Group (%)":  ab(r.theory),
+        "Physical (%)":      ab(r.breakdown?.physical),
+        "Project (%)":       ab(r.project),
+        "Viva (%)":          ab(r.viva),
+        "Overall (%)":       ab(r.overall),
         Grade: r.grade, Certification: r.certification, Placement: r.placement,
       }));
     } else if (isScorecard && isDvft) {
       exportData = scorecardData.map(r => ({
         Name: r.name, Email: r.email,
-        "Intermediate (%)":  r.intermediate,
-        "Digital (%)":       r.breakdown?.digital,
-        "Verilog (%)":       r.breakdown?.verilog,
-        "Grp1 Avg (%)":      r.dvGroup1,
-        "SV (%)":            r.breakdown?.sv,
-        "UVM (%)":           r.breakdown?.uvm,
-        "Python (%)":        r.breakdown?.python,
-        "Grp2 Avg (%)":      r.dvGroup2,
-        "Project (%)":       r.project,
-        "Viva (%)":          r.viva,
-        "Overall (%)":       r.overall,
+        "Intermediate (%)":  ab(r.intermediate),
+        "Digital (%)":       ab(r.breakdown?.digital),
+        "Verilog (%)":       ab(r.breakdown?.verilog),
+        "Grp1 Avg (%)":      ab(r.dvGroup1),
+        "SV (%)":            ab(r.breakdown?.sv),
+        "UVM (%)":           ab(r.breakdown?.uvm),
+        "Python (%)":        ab(r.breakdown?.python),
+        "Grp2 Avg (%)":      ab(r.dvGroup2),
+        "Project (%)":       ab(r.project),
+        "Viva (%)":          ab(r.viva),
+        "Overall (%)":       ab(r.overall),
         Grade: r.grade, Certification: r.certification, Placement: r.placement,
       }));
     } else {
@@ -624,8 +649,8 @@ export default function MarksDashboard({ user }) {
         head: [["Name","Email","Inter %","Digital %","CMOS %","TCL %","Theory %","Physical %","Project %","Viva %","Overall %","Grade","Cert","Place"]],
         body: scorecardData.map(r => [
           r.name, r.email,
-          r.intermediate, r.breakdown?.digital, r.breakdown?.cmos, r.breakdown?.tcl,
-          r.theory, r.breakdown?.physical, r.project, r.viva, r.overall,
+          ab(r.intermediate), ab(r.breakdown?.digital), ab(r.breakdown?.cmos), ab(r.breakdown?.tcl),
+          ab(r.theory), ab(r.breakdown?.physical), ab(r.project), ab(r.viva), ab(r.overall),
           r.grade, r.certification, r.placement,
         ]),
         styles: { fontSize: 7 }, alternateRowStyles: { fillColor: [245, 247, 255] },
@@ -637,9 +662,9 @@ export default function MarksDashboard({ user }) {
         head: [["Name","Email","Inter %","Digital %","Verilog %","Grp1 %","SV %","UVM %","Python %","Grp2 %","Project %","Viva %","Overall %","Grade","Cert","Place"]],
         body: scorecardData.map(r => [
           r.name, r.email,
-          r.intermediate, r.breakdown?.digital, r.breakdown?.verilog, r.dvGroup1,
-          r.breakdown?.sv, r.breakdown?.uvm, r.breakdown?.python, r.dvGroup2,
-          r.project, r.viva, r.overall, r.grade, r.certification, r.placement,
+          ab(r.intermediate), ab(r.breakdown?.digital), ab(r.breakdown?.verilog), ab(r.dvGroup1),
+          ab(r.breakdown?.sv), ab(r.breakdown?.uvm), ab(r.breakdown?.python), ab(r.dvGroup2),
+          ab(r.project), ab(r.viva), ab(r.overall), r.grade, r.certification, r.placement,
         ]),
         styles: { fontSize: 7 }, alternateRowStyles: { fillColor: [240, 249, 255] },
         headStyles: { fillColor: [8, 145, 178], textColor: 255, fontStyle: "bold" },
