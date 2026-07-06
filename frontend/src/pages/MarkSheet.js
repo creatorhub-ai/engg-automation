@@ -578,14 +578,53 @@ function MarkSheet() {
 
   const handleSaveOutOf = async () => {
     if (!outOff || !batchNo) return;
+    if (!selectedDate) { setMessage("❌ Please select an assessment date first."); setTimeout(() => setMessage(""), 4000); return; }
     setSavingOutOf(true);
     try {
-      const cfg = ASSESSMENT_MAP[assessmentType];
+      const cfg      = ASSESSMENT_MAP[assessmentType];
+      const outOfNum = Number(outOff);
+
+      /* 1) Update the stored Out Of for every existing row of this assessment. */
       const res = await fetch(`${API_BASE}/api/marks/update-out-of`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ batch_no: batchNo, assessment_type: cfg.api, course_planner_id: selectedCoursePlannerId ? Number(selectedCoursePlannerId) : undefined, assessment_date: selectedDate, out_off: Number(outOff) }),
+        body: JSON.stringify({ batch_no: batchNo, assessment_type: cfg.api, course_planner_id: selectedCoursePlannerId ? Number(selectedCoursePlannerId) : undefined, assessment_date: selectedDate, out_off: outOfNum }),
       });
-      setMessage(res.status === 403 ? "❌ Permission denied." : res.ok ? "✅ Out Of updated successfully." : `❌ Failed: ${(await res.json().catch(() => ({}))).error || "Unknown"}`);
+      if (res.status === 403) { setMessage("❌ Permission denied."); return; }
+
+      /* 2) The bulk update above only touches rows that already exist and can
+       *    silently match nothing (reporting success while saving 0 rows).
+       *    Re-persist each entered learner's mark through the proven per-learner
+       *    save path so the new Out Of (and recalculated %) is reliably stored. */
+      const learnersWithMarks = learners.filter(l => marks[l.id]?.points && marks[l.id].points.trim() !== "");
+      let failCount = 0;
+      for (const l of learnersWithMarks) {
+        const pointsStr = marks[l.id].points.trim();
+        const payload = {
+          learner_id:        l.id,
+          batch_no:          batchNo,
+          assessment_date:   selectedDate,
+          assessment_name:   topicName || cfg.label,
+          out_off:           outOfNum,
+          points:            pointsStr === "AB" ? 0 : parseFloat(pointsStr) || 0,
+          percentage:        marks[l.id].percentage ? parseFloat(marks[l.id].percentage) : null,
+          course_planner_id: selectedCoursePlannerId ? Number(selectedCoursePlannerId) : undefined,
+        };
+        if (!isAutoDateAssessment) {
+          if (assessmentType === "module") payload.module_no = Number(selectedWeekNo);
+          else                             payload.week_no   = Number(selectedWeekNo);
+        }
+        try {
+          const r = await fetch(`${API_BASE}/api/marks/${cfg.api}`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          if (!r.ok) failCount++;
+        } catch { failCount++; }
+      }
+
+      setMessage(failCount === 0
+        ? "✅ Out Of updated successfully."
+        : `⚠️ Out Of saved with ${failCount} error(s).`);
     } catch { setMessage("❌ Network error."); }
     finally { setSavingOutOf(false); setTimeout(() => setMessage(""), 4000); }
   };
