@@ -88,7 +88,7 @@ const ASSESSMENT_MAP = {
 };
 const AUTO_OUT_OF_TYPES = ["intermediate", "final", "final_project", "viva"];
 const PDFT_OUT_OF_RULES = [
-  { keywords: ["intermediate"],    outOf: 30  },
+  { keywords: ["intermediate"],    outOf: 25  },
   { keywords: ["digital design"],  outOf: 25  },
   { keywords: ["cmos"],            outOf: 25  },
   { keywords: ["tcl"],             outOf: 25  },
