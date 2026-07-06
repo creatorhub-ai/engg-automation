@@ -35,6 +35,7 @@ import attendanceRoutes from "./routes/attendance.js";
 import jwt from "jsonwebtoken";
 import holidaysRoutes from "./routes/holidaysRoutes.js";
 import internalUsersRoutes from "./routes/internalUsersRoutes.js";
+import coursePlannerRoutes from "./routes/coursePlanner.js";
 
 dotenv.config();
 
@@ -117,6 +118,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // Mount routers
 app.use("/api/attendance", attendanceRoutes);
+app.use("/api/course-planner", coursePlannerRoutes);
 
 // =====================================================
 // Multer File Upload Config

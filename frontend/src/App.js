@@ -31,6 +31,7 @@ import MarkEntryDashboard from "./pages/MarkEntryDashboard";
 import TrainerParentDashboard from "./pages/TrainerParentDashboard";
 import ClassroomMatrixDashboard from "./pages/ClassroomMatrixDashboard";
 import LeaveApply from "./pages/LeaveApply";
+import CoursePlannerGenerator from "./pages/CoursePlannerGenerator";
 
 const roleMenus = {
   admin: [
@@ -56,6 +57,7 @@ const roleMenus = {
     { text: "Trainer Assignment Dashboard", path: "/trainer-assignment" },
     { text: "Marks Dashboard", path: "/marks/entry" },
     { text: "Classroom Occupancy", path: "/classroom-matrix" },
+    { text: "Course Planner Generator", path: "/course-planner-generator" },
     { text: "Apply Leave", path: "/leave-apply" },
   ],
   manager: [
@@ -76,7 +78,8 @@ const roleMenus = {
     { text: "Announcement", path: "/announcement" }, 
     { text: "Manager Leave Dashboard", path: "/manager/leaves" },
     { text: "Upload Holidays", path: "/holiday-upload" },
-    { text: "Marks Dashboard", path: "/marks/entry" }, 
+    { text: "Marks Dashboard", path: "/marks/entry" },
+    { text: "Course Planner Generator", path: "/course-planner-generator" },
     { text: "Apply Leave", path: "/leave-apply" },
   ],
   trainer: [
@@ -86,7 +89,8 @@ const roleMenus = {
     { text: "Attendance", path: "/attendance" }, // <-- added attendance menu
     { text: "Mark Entry", path: "/marks-entry" },
     { text: "Trainer Leave Dashboard", path: "/trainer/leaves" },
-    { text: "Marks Dashboard", path: "/marks/entry" }, 
+    { text: "Marks Dashboard", path: "/marks/entry" },
+    { text: "Course Planner Generator", path: "/course-planner-generator" },
     { text: "Apply Leave", path: "/leave-apply" },
   ],
   coordinator: [
@@ -96,7 +100,8 @@ const roleMenus = {
     { text: "Course Progress", path: "/course-progress" },
     { text: "Trainer Dashboards", path: "/trainer-dashboard" },
     { text: "Users Management", path: "/users" },
-    { text: "Announcement", path: "/announcement" }, 
+    { text: "Announcement", path: "/announcement" },
+    { text: "Course Planner Generator", path: "/course-planner-generator" },
     { text: "Apply Leave", path: "/leave-apply" },
   ],
   sales: [
@@ -185,6 +190,8 @@ function getComponentForPath(path, login) {
       return <ClassroomMatrixDashboard user={login} />;
     case "/leave-apply":
       return <LeaveApply user={login} />;
+    case "/course-planner-generator":
+      return <CoursePlannerGenerator user={login} />;
     default:
       return <div>Page not found</div>;
   }

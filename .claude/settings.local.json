@@ -4,7 +4,15 @@
       "Bash(grep -E \"\\\\.js$\")",
       "mcp__ide__getDiagnostics",
       "Bash(npx --no-install eslint src/pages/MarkSheet.js src/pages/MarksDashboard.js)",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "Bash(python -c \"import openpyxl; print\\('openpyxl ok'\\)\")",
+      "Bash(python backend/scripts/course_planner_xlsx_to_csv.py \"./_cp_test_out/PD_gen.xlsx\" \"./_cp_test_out/PD.csv\")",
+      "Bash(npx eslint *)",
+      "Bash(node --check routes/coursePlanner.js)",
+      "Bash(node --check index.js)",
+      "Bash(python -m py_compile scripts/generate_course_planner.py scripts/course_planner_xlsx_to_csv.py)",
+      "Bash(python backend/scripts/generate_course_planner.py)",
+      "Bash(python backend/scripts/course_planner_xlsx_to_csv.py \"./_cp_test_out/DV_gen.xlsx\" \"./_cp_test_out/DV.csv\")"
     ]
   }
 }
