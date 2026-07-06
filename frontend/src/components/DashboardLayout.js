@@ -20,6 +20,7 @@ import {
   EventNote as ReportIcon,
   WorkspacePremium as ClassroomIcon,
   PersonAdd as TrainerAssignmentIcon,
+  EditCalendar as CoursePlannerIcon,
 } from "@mui/icons-material";
 
 // Updated Icon mapping for all menu items
@@ -46,6 +47,7 @@ const ICON_MAP = {
   "/trainer-assignment": <TrainerAssignmentIcon />,
   "/reports": <ReportIcon />,
   "/leave-apply": <PeopleIcon />,
+  "/course-planner-generator": <CoursePlannerIcon />,
 };
 
 // Define menus that match the routes in App.js
@@ -64,6 +66,7 @@ const MENUS_BY_ROLE = {
     { id: 10, name: "User Dashboard", path: "/users" },
     { id: 13, name: "Manager Leave Dashboard", path: "/manager/leaves" },
     { id: 14, name: "Announcement", path: "/announcement" },
+    { id: 18, name: "Course Planner Generator", path: "/course-planner-generator" },
     { id: 17, name: "Apply Leave", path: "/leave-apply" },
   ],
   manager: [
@@ -77,12 +80,14 @@ const MENUS_BY_ROLE = {
     { id: 8, name: "Report", path: "/reports" },
     { id: 9, name: "User Dashboard", path: "/users" },
     { id: 12, name: "Announcement", path: "/announcement" },
+    { id: 15, name: "Course Planner Generator", path: "/course-planner-generator" },
     { id: 14, name: "Apply Leave", path: "/leave-apply" },
   ],
   trainer: [
     { id: 1, name: "Trainer Dashboards", path: "/trainer-dashboard" },
     { id: 2, name: "Attendance", path: "/attendance" },
     { id: 3, name: "Mark Entry", path: "marks/entry"},
+    { id: 4, name: "Course Planner Generator", path: "/course-planner-generator" },
   ],
   coordinator: [
     { id: 1, name: "Internal Communication", path: "/internal" },
@@ -92,6 +97,7 @@ const MENUS_BY_ROLE = {
     { id: 5, name: "Course Progress", path: "/course-progress" },
     { id: 6, name: "Trainer Dashboards", path: "/trainer-dashboard" },
     { id: 7, name: "Announcement", path: "/announcement" },
+    { id: 9, name: "Course Planner Generator", path: "/course-planner-generator" },
     { id: 8, name: "Apply Leave", path: "/leave-apply" },
   ],
   sales: [
