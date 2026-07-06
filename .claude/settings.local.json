@@ -12,7 +12,13 @@
       "Bash(node --check index.js)",
       "Bash(python -m py_compile scripts/generate_course_planner.py scripts/course_planner_xlsx_to_csv.py)",
       "Bash(python backend/scripts/generate_course_planner.py)",
-      "Bash(python backend/scripts/course_planner_xlsx_to_csv.py \"./_cp_test_out/DV_gen.xlsx\" \"./_cp_test_out/DV.csv\")"
+      "Bash(python backend/scripts/course_planner_xlsx_to_csv.py \"./_cp_test_out/DV_gen.xlsx\" \"./_cp_test_out/DV.csv\")",
+      "Bash(node scripts/install_python_deps.cjs)",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(ls package.json requirements.txt)",
+      "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\(JSON.stringify\\({name:p.name,scripts:p.scripts,dependencies:p.dependencies,devDependencies:p.devDependencies},null,2\\)\\)\")",
+      "Bash(node -e \"const p=require\\('C:/Users/hariharan_chipedge/package.json'\\); console.log\\('name:', p.name\\); console.log\\('deps:', JSON.stringify\\(p.dependencies||{},null,2\\)\\)\")",
+      "Bash(node -e \"const p=require\\('C:/Users/hariharan_chipedge/Music/engg-automation-git-file/backend/package.json'\\); console.log\\('name:', p.name\\); console.log\\('has puppeteer?', !!\\(p.dependencies&&p.dependencies.puppeteer\\)\\)\")"
     ]
   }
 }

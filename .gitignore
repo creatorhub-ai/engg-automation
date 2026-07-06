@@ -3,3 +3,4 @@ backend/node_modules/
 .env
 frontend/node_modules/
 backend/uploads/course-planner/
+backend/scripts/__pycache__/

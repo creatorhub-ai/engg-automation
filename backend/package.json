@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node index.js",
     "worker": "node email-worker.js",
-    "dev": "nodemon index.js"
+    "dev": "nodemon index.js",
+    "postinstall": "node scripts/install_python_deps.cjs"
   },
   "engines": {
     "node": ">=18"
