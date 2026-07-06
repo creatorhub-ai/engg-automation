@@ -1,21 +1,19 @@
 // routes/coursePlanner.js
 // Course Planner Generator: fills a domain template into an .xlsx (readable
 // planner) and converts that .xlsx into the system-ingestable .csv.
-// Both steps run the Python (openpyxl) scripts in ../scripts.
+// Both steps run in-process via ../lib/coursePlanner.js (exceljs) — no Python.
 import express from "express";
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
-import { spawn } from "child_process";
 import { fileURLToPath } from "url";
+import { generatePlanner, convertPlannerToCsv } from "../lib/coursePlanner.js";
 
 const router = express.Router();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, "..", ".."); // repo root (holds templates)
-const SCRIPTS_DIR = path.join(__dirname, "..", "scripts");
 const WORK_DIR = path.join(__dirname, "..", "uploads", "course-planner");
-const PYTHON_BIN = process.env.PYTHON_BIN || (process.platform === "win32" ? "python" : "python3");
 
 fs.mkdirSync(WORK_DIR, { recursive: true });
 
@@ -29,26 +27,6 @@ function findHolidayFile() {
   } catch {
     return "";
   }
-}
-
-// Run a python script, feed `stdinData` (if any), resolve with {stdout}.
-function runPython(scriptName, args = [], stdinData = null) {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(PYTHON_BIN, [path.join(SCRIPTS_DIR, scriptName), ...args]);
-    let out = "";
-    let err = "";
-    proc.stdout.on("data", (d) => (out += d.toString()));
-    proc.stderr.on("data", (d) => (err += d.toString()));
-    proc.on("error", (e) => reject(new Error(`Failed to start Python (${PYTHON_BIN}): ${e.message}`)));
-    proc.on("close", (code) => {
-      if (code === 0) resolve({ stdout: out.trim() });
-      else reject(new Error(err.trim() || `Python exited with code ${code}`));
-    });
-    if (stdinData !== null) {
-      proc.stdin.write(stdinData);
-      proc.stdin.end();
-    }
-  });
 }
 
 const isId = (s) => typeof s === "string" && /^[a-f0-9-]{36}$/i.test(s);
@@ -88,13 +66,7 @@ router.post("/generate", async (req, res) => {
       out_path: xlsxPath,
     };
 
-    const { stdout } = await runPython("generate_course_planner.py", [], JSON.stringify(cfg));
-    let summary = {};
-    try {
-      summary = JSON.parse(stdout);
-    } catch {
-      /* non-JSON tail is fine */
-    }
+    const summary = await generatePlanner(cfg);
 
     const filename = `${batchNo} Course Planner.xlsx`;
     fs.writeFileSync(
@@ -130,14 +102,13 @@ router.post("/convert", async (req, res) => {
       return res.status(404).json({ error: "Generated planner not found. Generate it first." });
     }
 
-    const { stdout } = await runPython("course_planner_xlsx_to_csv.py", [xlsxPath, csvPath]);
+    const rows = await convertPlannerToCsv(xlsxPath, csvPath);
     const meta = readMeta(id);
-    const rows = (stdout.match(/Wrote\s+(\d+)/) || [])[1] || null;
 
     return res.json({
       id,
       csvFilename: meta ? `${meta.batchNo} CP.csv` : `${id}.csv`,
-      rows: rows ? Number(rows) : null,
+      rows: rows ?? null,
     });
   } catch (err) {
     console.error("Course planner convert error:", err);
