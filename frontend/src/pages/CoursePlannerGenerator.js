@@ -26,9 +26,8 @@ const SESSION1 = ["7.30AM to 9.00AM", "1.30PM to 3.00PM"];
 const SESSION2 = ["9.30AM to 11.00AM", "3.30PM to 5.00PM"];
 const SESSION3 = ["11.15AM to 1.15PM", "5.30PM to 7.00PM"];
 const LAB_TIMINGS = [
-  "11.30AM to 1.30PM",
+  "11.30AM to 1.30PM, 6.00 AM to 11:00 AM",
   "9.00PM to 7.00AM, 5:30 PM to 8.00 PM",
-  "6.00 AM to 11:00 AM",
 ];
 
 export default function CoursePlannerGenerator({ user }) {
