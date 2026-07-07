@@ -47,12 +47,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "ven
 
 try:
     import openpyxl
-    from openpyxl.styles import PatternFill
+    from openpyxl.styles import PatternFill, Font
 except ImportError:
     sys.exit("openpyxl is required.  Install it with:  pip install openpyxl")
 
 
 HOLIDAY_FILL = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+HOLIDAY_FONT = Font(bold=True, color="FFC00000")   # dark-red, bold banner text
 
 # columns (1-based) scanned to decide whether a row is a "working-day" row
 TOPIC_COLS = range(3, 10)          # C..I  (covers both PD and DV layouts)
@@ -130,13 +131,17 @@ def build_resolvers(ws):
     return value, span
 
 
-def set_cell(ws, r, c, val):
-    """Write to (r,c) honouring merges (write to the merge anchor)."""
+def target_cell(ws, r, c):
+    """Return the writable cell for (r,c): the merge anchor if (r,c) is merged."""
     for m in ws.merged_cells.ranges:
         if m.min_row <= r <= m.max_row and m.min_col <= c <= m.max_col:
-            ws.cell(m.min_row, m.min_col).value = val
-            return
-    ws.cell(r, c).value = val
+            return ws.cell(m.min_row, m.min_col)
+    return ws.cell(r, c)
+
+
+def set_cell(ws, r, c, val):
+    """Write to (r,c) honouring merges (write to the merge anchor)."""
+    target_cell(ws, r, c).value = val
 
 
 # --------------------------------------------------------------------------- #
@@ -246,8 +251,16 @@ def fill_dates(ws, start_date, holidays):
         set_cell(ws, r, DATE_COL, current)
         ws.cell(r, DATE_COL).number_format = "m/d/yyyy"
         if current in holidays:
-            # mark in place: note in the fixed trailing column + shade the row
-            ws.cell(r, note_col).value = f"Holiday - {holidays[current]}"
+            # Company holiday: this is a non-teaching day.  Drop the topic that
+            # fell here and show a "HOLIDAY - <name>" banner across the topic
+            # columns (shaded), so the day is clearly marked as a holiday.
+            name = holidays[current]
+            for c in range(3, note_col):          # clear all topic/schedule cells
+                set_cell(ws, r, c, None)
+            banner = target_cell(ws, r, 3)
+            banner.value = f"HOLIDAY - {name}"
+            banner.font = HOLIDAY_FONT
+            ws.cell(r, note_col).value = f"Holiday - {name}"   # keep the remark too
             for c in range(1, last_col + 1):
                 ws.cell(r, c).fill = HOLIDAY_FILL
             marked += 1

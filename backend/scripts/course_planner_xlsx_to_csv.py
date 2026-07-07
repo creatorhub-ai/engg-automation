@@ -241,6 +241,12 @@ def convert(xlsx_path, csv_path):
             if rv:
                 remarks = str(rv).strip()
 
+        # company-holiday day: the generator replaced the topics with a
+        # "HOLIDAY - <name>" banner -> not a teaching session, so skip it
+        banner = value(r, 3)
+        if isinstance(banner, str) and banner.strip().upper().startswith("HOLIDAY -"):
+            continue
+
         # full-day blocks: "Final Assessment ..." / "Self Preparation Time"
         s1_raw = value(r, 3)
         if s1_raw and span(r, 3) >= 2 and \
