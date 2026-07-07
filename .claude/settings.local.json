@@ -24,7 +24,9 @@
       "Bash(rmdir lib *)",
       "Bash(ls lib *)",
       "Bash(git check-ignore *)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(curl -s -m 60 -o - -w '\\\\nHTTP %{http_code}\\\\n' 'https://engg-automation.onrender.com/api/marks/window-status?batch_no=DVFT13&assessment_type=weekly&week_no=1')",
+      "Bash(curl -s -m 60 -o - -w '\\\\nHTTP %{http_code}\\\\n' 'https://engg-automation.onrender.com/api/marks/window-extension?batch_no=DVFT13&assessment_type=weekly&assessment_date=2026-07-03')"
     ]
   }
 }

@@ -3,4 +3,5 @@ backend/node_modules/
 .env
 frontend/node_modules/
 backend/uploads/course-planner/
+backend/uploads/mark-window-extensions.json
 backend/scripts/__pycache__/

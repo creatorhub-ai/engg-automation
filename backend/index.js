@@ -1078,32 +1078,35 @@ app.get("/api/marks/window-status", async (req, res) => {
 // trainers on other machines never saw it and their window stayed closed.
 // It is now stored server-side keyed by (batch_no, assessment_type, date) so
 // the trainer's mark sheet honours it too.
+//
+// Persisted to a small JSON file under uploads/ (the same store the app already
+// uses for file artifacts). This avoids a DB dependency for a short-lived
+// (≈ one day) value and works on the current deployment.
 // ───────────────────────────────────────────────────────────────────────────
-let _extTableReady = null;
-function ensureExtTable() {
-  if (!_extTableReady) {
-    _extTableReady = pool
-      .query(`
-        CREATE TABLE IF NOT EXISTS mark_window_extensions (
-          batch_no         TEXT NOT NULL,
-          assessment_type  TEXT NOT NULL,
-          assessment_date  TEXT NOT NULL,
-          extended_until   TIMESTAMPTZ NOT NULL,
-          updated_by       TEXT,
-          updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-          PRIMARY KEY (batch_no, assessment_type, assessment_date)
-        )
-      `)
-      .catch((e) => {
-        _extTableReady = null; // allow a retry on the next request
-        throw e;
-      });
+const MARK_EXT_DIR = path.join(process.cwd(), "uploads");
+const MARK_EXT_FILE = path.join(MARK_EXT_DIR, "mark-window-extensions.json");
+const markExtKey = (b, t, d) => `${b}::${t}::${d}`;
+
+function readMarkExtStore() {
+  try {
+    return JSON.parse(fs.readFileSync(MARK_EXT_FILE, "utf-8")) || {};
+  } catch {
+    return {}; // missing/blank file → no extensions yet
   }
-  return _extTableReady;
+}
+function writeMarkExtStore(store) {
+  try {
+    fs.mkdirSync(MARK_EXT_DIR, { recursive: true });
+    fs.writeFileSync(MARK_EXT_FILE, JSON.stringify(store));
+    return true;
+  } catch (e) {
+    console.error("window-extension store write error:", e);
+    return false;
+  }
 }
 
 // GET the current shared extension for a batch/assessment/date
-app.get("/api/marks/window-extension", async (req, res) => {
+app.get("/api/marks/window-extension", (req, res) => {
   try {
     const { batch_no, assessment_type, assessment_date } = req.query;
     if (!batch_no || !assessment_type || !assessment_date) {
@@ -1111,26 +1114,19 @@ app.get("/api/marks/window-extension", async (req, res) => {
         .status(400)
         .json({ error: "batch_no, assessment_type and assessment_date are required" });
     }
-    await ensureExtTable();
-    const { rows } = await pool.query(
-      `SELECT extended_until
-         FROM mark_window_extensions
-        WHERE batch_no = $1 AND assessment_type = $2 AND assessment_date = $3
-        LIMIT 1`,
-      [batch_no, assessment_type, assessment_date]
-    );
-    return res.json({ extended_until: rows[0]?.extended_until || null });
+    const store = readMarkExtStore();
+    const val = store[markExtKey(batch_no, assessment_type, assessment_date)] || null;
+    return res.json({ extended_until: val });
   } catch (err) {
     console.error("window-extension get error:", err);
     return res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// POST set/extend the window (Admin/Manager/Coordinator). Upsert = latest wins.
-app.post("/api/marks/window-extension", async (req, res) => {
+// POST set/extend the window (Admin/Manager/Coordinator). Latest write wins.
+app.post("/api/marks/window-extension", (req, res) => {
   try {
-    const { batch_no, assessment_type, assessment_date, extended_until, updated_by } =
-      req.body || {};
+    const { batch_no, assessment_type, assessment_date, extended_until } = req.body || {};
     if (!batch_no || !assessment_type || !assessment_date || !extended_until) {
       return res.status(400).json({
         error: "batch_no, assessment_type, assessment_date and extended_until are required",
@@ -1140,17 +1136,11 @@ app.post("/api/marks/window-extension", async (req, res) => {
     if (isNaN(until.getTime())) {
       return res.status(400).json({ error: "invalid extended_until" });
     }
-    await ensureExtTable();
-    await pool.query(
-      `INSERT INTO mark_window_extensions
-         (batch_no, assessment_type, assessment_date, extended_until, updated_by, updated_at)
-       VALUES ($1, $2, $3, $4, $5, now())
-       ON CONFLICT (batch_no, assessment_type, assessment_date)
-       DO UPDATE SET extended_until = EXCLUDED.extended_until,
-                     updated_by    = EXCLUDED.updated_by,
-                     updated_at    = now()`,
-      [batch_no, assessment_type, assessment_date, until.toISOString(), updated_by || null]
-    );
+    const store = readMarkExtStore();
+    store[markExtKey(batch_no, assessment_type, assessment_date)] = until.toISOString();
+    if (!writeMarkExtStore(store)) {
+      return res.status(500).json({ error: "Could not save the extension" });
+    }
     return res.json({ success: true, extended_until: until.toISOString() });
   } catch (err) {
     console.error("window-extension set error:", err);
