@@ -1072,6 +1072,92 @@ app.get("/api/marks/window-status", async (req, res) => {
   }
 });
 
+// ───────────────────────────────────────────────────────────────────────────
+// Admin/Manager/Coordinator "Extend Window" persistence (shared across users).
+// Previously the extension was kept in the admin's browser localStorage, so
+// trainers on other machines never saw it and their window stayed closed.
+// It is now stored server-side keyed by (batch_no, assessment_type, date) so
+// the trainer's mark sheet honours it too.
+// ───────────────────────────────────────────────────────────────────────────
+let _extTableReady = null;
+function ensureExtTable() {
+  if (!_extTableReady) {
+    _extTableReady = pool
+      .query(`
+        CREATE TABLE IF NOT EXISTS mark_window_extensions (
+          batch_no         TEXT NOT NULL,
+          assessment_type  TEXT NOT NULL,
+          assessment_date  TEXT NOT NULL,
+          extended_until   TIMESTAMPTZ NOT NULL,
+          updated_by       TEXT,
+          updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+          PRIMARY KEY (batch_no, assessment_type, assessment_date)
+        )
+      `)
+      .catch((e) => {
+        _extTableReady = null; // allow a retry on the next request
+        throw e;
+      });
+  }
+  return _extTableReady;
+}
+
+// GET the current shared extension for a batch/assessment/date
+app.get("/api/marks/window-extension", async (req, res) => {
+  try {
+    const { batch_no, assessment_type, assessment_date } = req.query;
+    if (!batch_no || !assessment_type || !assessment_date) {
+      return res
+        .status(400)
+        .json({ error: "batch_no, assessment_type and assessment_date are required" });
+    }
+    await ensureExtTable();
+    const { rows } = await pool.query(
+      `SELECT extended_until
+         FROM mark_window_extensions
+        WHERE batch_no = $1 AND assessment_type = $2 AND assessment_date = $3
+        LIMIT 1`,
+      [batch_no, assessment_type, assessment_date]
+    );
+    return res.json({ extended_until: rows[0]?.extended_until || null });
+  } catch (err) {
+    console.error("window-extension get error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// POST set/extend the window (Admin/Manager/Coordinator). Upsert = latest wins.
+app.post("/api/marks/window-extension", async (req, res) => {
+  try {
+    const { batch_no, assessment_type, assessment_date, extended_until, updated_by } =
+      req.body || {};
+    if (!batch_no || !assessment_type || !assessment_date || !extended_until) {
+      return res.status(400).json({
+        error: "batch_no, assessment_type, assessment_date and extended_until are required",
+      });
+    }
+    const until = new Date(extended_until);
+    if (isNaN(until.getTime())) {
+      return res.status(400).json({ error: "invalid extended_until" });
+    }
+    await ensureExtTable();
+    await pool.query(
+      `INSERT INTO mark_window_extensions
+         (batch_no, assessment_type, assessment_date, extended_until, updated_by, updated_at)
+       VALUES ($1, $2, $3, $4, $5, now())
+       ON CONFLICT (batch_no, assessment_type, assessment_date)
+       DO UPDATE SET extended_until = EXCLUDED.extended_until,
+                     updated_by    = EXCLUDED.updated_by,
+                     updated_at    = now()`,
+      [batch_no, assessment_type, assessment_date, until.toISOString(), updated_by || null]
+    );
+    return res.json({ success: true, extended_until: until.toISOString() });
+  } catch (err) {
+    console.error("window-extension set error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // 2) GET /api/marks/:assessmentType — load existing marks
 app.get("/api/marks/:assessmentType", async (req, res, next) => {
   const { assessmentType } = req.params;

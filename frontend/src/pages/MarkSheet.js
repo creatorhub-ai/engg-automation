@@ -127,26 +127,43 @@ function getFixedOutOf(topicName, assessmentType, batchNo) {
   return null;
 }
 const todayDate = new Date().toISOString().split("T")[0];
-/* ── Mark-entry window extension (client-persisted) ──────────────────────────
+/* ── Mark-entry window extension (server-persisted) ──────────────────────────
  * The standard entry window closes a few days after the assessment date.
  * Admin / Manager / Coordinator can extend it by one day. The extension is
- * stored in localStorage keyed by batch + assessment type + date so it
- * survives reloads and is honoured the next time the sheet is opened. */
-function windowExtKey(batchNo, assessmentType, date) {
-  return `markWindowExt::${batchNo}::${assessmentType}::${date}`;
-}
-function readWindowExtension(batchNo, assessmentType, date) {
+ * persisted on the SERVER keyed by batch + assessment type + date, so it is
+ * shared across users — a trainer on any machine sees the same extension and
+ * their window re-opens. (It used to live in the admin's browser localStorage,
+ * which is why trainers never saw it.) */
+async function readWindowExtension(batchNo, assessmentType, date) {
   if (!batchNo || !date) return null;
   try {
-    const raw = localStorage.getItem(windowExtKey(batchNo, assessmentType, date));
-    if (!raw) return null;
-    const t = new Date(raw);
+    const url =
+      `${API_BASE}/api/marks/window-extension` +
+      `?batch_no=${encodeURIComponent(batchNo)}` +
+      `&assessment_type=${encodeURIComponent(assessmentType || "")}` +
+      `&assessment_date=${encodeURIComponent(date)}`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data?.extended_until) return null;
+    const t = new Date(data.extended_until);
     return isNaN(t.getTime()) ? null : t;
   } catch { return null; }
 }
-function writeWindowExtension(batchNo, assessmentType, date, until) {
-  try { localStorage.setItem(windowExtKey(batchNo, assessmentType, date), until.toISOString()); }
-  catch { /* ignore */ }
+async function writeWindowExtension(batchNo, assessmentType, date, until) {
+  try {
+    const res = await fetch(`${API_BASE}/api/marks/window-extension`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        batch_no: batchNo,
+        assessment_type: assessmentType,
+        assessment_date: date,
+        extended_until: until.toISOString(),
+      }),
+    });
+    return res.ok;
+  } catch { return false; }
 }
 function normalizeDate(dateStr) {
   if (!dateStr) return "";
@@ -415,8 +432,14 @@ function MarkSheet() {
     close.setHours(23, 59, 59, 999);
     setWindowCloseDate(close.toLocaleDateString("en-GB"));
     setWindowCloseAt(close);
-    // Honour any previously-saved extension for this batch/type/date.
-    setWindowExtendedUntil(readWindowExtension(batchNo, assessmentType, selectedDate));
+    // Honour any server-saved extension (set by an Admin/Manager/Coordinator).
+    // Fetched async so trainers pick up an extension made on another machine.
+    let ignore = false;
+    setWindowExtendedUntil(null);
+    readWindowExtension(batchNo, assessmentType, selectedDate).then((ext) => {
+      if (!ignore) setWindowExtendedUntil(ext);
+    });
+    return () => { ignore = true; };
   }, [selectedDate, assessmentType, isAutoDateAssessment, batchNo]);
 
   /* ── Auto-load marks for final_project / viva ───────────────────────────
@@ -633,14 +656,19 @@ function MarkSheet() {
    * Admin / Manager / Coordinator only. Re-opens the mark-entry window until
    * 23:59 of the *next* calendar day (i.e. "one more day" from the click).
    * e.g. clicked 04/07/2026 12:24 PM → open till 05/07/2026 11:59 PM. */
-  const handleExtendWindow = () => {
+  const handleExtendWindow = async () => {
     if (!isPrivileged || isAutoDateAssessment || !batchNo || !selectedDate) return;
     const until = new Date();
     until.setDate(until.getDate() + 1);
     until.setHours(23, 59, 59, 999);
-    writeWindowExtension(batchNo, assessmentType, selectedDate, until);
+    const ok = await writeWindowExtension(batchNo, assessmentType, selectedDate, until);
+    if (!ok) {
+      setMessage("❌ Could not extend the window. Please try again.");
+      setTimeout(() => setMessage(""), 5000);
+      return;
+    }
     setWindowExtendedUntil(until);
-    setMessage(`✅ Mark entry window extended till ${until.toLocaleDateString("en-GB")} 11:59 PM.`);
+    setMessage(`✅ Mark entry window extended till ${until.toLocaleDateString("en-GB")} 11:59 PM. Trainers can now enter marks.`);
     setTimeout(() => setMessage(""), 5000);
   };
 
