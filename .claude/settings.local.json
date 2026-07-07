@@ -18,7 +18,13 @@
       "Bash(ls package.json requirements.txt)",
       "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\(JSON.stringify\\({name:p.name,scripts:p.scripts,dependencies:p.dependencies,devDependencies:p.devDependencies},null,2\\)\\)\")",
       "Bash(node -e \"const p=require\\('C:/Users/hariharan_chipedge/package.json'\\); console.log\\('name:', p.name\\); console.log\\('deps:', JSON.stringify\\(p.dependencies||{},null,2\\)\\)\")",
-      "Bash(node -e \"const p=require\\('C:/Users/hariharan_chipedge/Music/engg-automation-git-file/backend/package.json'\\); console.log\\('name:', p.name\\); console.log\\('has puppeteer?', !!\\(p.dependencies&&p.dependencies.puppeteer\\)\\)\")"
+      "Bash(node -e \"const p=require\\('C:/Users/hariharan_chipedge/Music/engg-automation-git-file/backend/package.json'\\); console.log\\('name:', p.name\\); console.log\\('has puppeteer?', !!\\(p.dependencies&&p.dependencies.puppeteer\\)\\)\")",
+      "Bash(python *)",
+      "Bash(rm -f lib/coursePlanner.js)",
+      "Bash(rmdir lib *)",
+      "Bash(ls lib *)",
+      "Bash(git check-ignore *)",
+      "Bash(git add *)"
     ]
   }
 }

@@ -39,6 +39,10 @@ import os
 import re
 import sys
 
+# Prefer the vendored openpyxl/et_xmlfile shipped in ./vendor so the tool works
+# on hosts (e.g. Render) with no pip-installed openpyxl. Pure-Python, no build.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor"))
+
 try:
     import openpyxl
 except ImportError:
