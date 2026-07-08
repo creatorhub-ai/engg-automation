@@ -67,6 +67,7 @@ router.get("/trainers", async (req, res) => {
     const { data, error } = await supabase
       .from("internal_users")
       .select("name, email")
+      .eq("role", "Trainer")
       .order("name");
     if (error) throw error;
 
