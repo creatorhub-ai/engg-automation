@@ -316,10 +316,11 @@ function MarkSheet() {
   const [savingOutOf,             setSavingOutOf]             = useState(false);
   const [loadingMarks,            setLoadingMarks]            = useState(false);
   const [marksAlreadySaved,       setMarksAlreadySaved]       = useState(false);
-  // "Open Mark Entry" (privileged): unlocks the mark-entry fields for editing
-  // WITHOUT changing/extending the window close date. Reset on any selection
-  // change. Independent of the "Extend Window" action.
-  const [manualEntryOpen,         setManualEntryOpen]         = useState(false);
+  // "Open Mark Entry" (privileged): unlocks the mark-entry fields for the
+  // current day only (until 11:59 PM of the click day), WITHOUT changing the
+  // window close date. Stored as the "open until" timestamp so it auto-expires;
+  // the button stays clickable to re-open. Reset on any selection change.
+  const [manualEntryOpenUntil,    setManualEntryOpenUntil]    = useState(null);
   // Incremented to force re-load when switching between final_project/viva
   // on the same batch+date (where no other dependency changes).
   const [autoLoadTrigger,         setAutoLoadTrigger]         = useState(0);
@@ -348,7 +349,9 @@ function MarkSheet() {
   const windowIsExtended     = !!(windowExtendedUntil && windowCloseAt && windowExtendedUntil > windowCloseAt);
   const windowIsClosed       = !isAutoDateAssessment && !!selectedDate && !!effectiveCloseAt && Date.now() > effectiveCloseAt.getTime();
   const windowLockedForTrainer = windowIsClosed && !isPrivileged;
-  // "Open Mark Entry" force-unlocks the fields (without touching the window).
+  // "Open Mark Entry" force-unlocks the fields for the current day only (expires
+  // at 11:59 PM of the day it was clicked), without touching the window.
+  const manualEntryOpen      = !!manualEntryOpenUntil && Date.now() <= manualEntryOpenUntil.getTime();
   const marksEntryLocked     = !manualEntryOpen && (marksEditDisabled || windowLockedForTrainer);
   const effectiveCloseLabel  = effectiveCloseAt ? effectiveCloseAt.toLocaleDateString("en-GB") : windowCloseDate;
 
@@ -423,7 +426,7 @@ function MarkSheet() {
 
   /* ── Window close date ── */
   useEffect(() => {
-    setManualEntryOpen(false); // a manual open never carries across selections
+    setManualEntryOpenUntil(null); // a manual open never carries across selections
     if (isAutoDateAssessment || !selectedDate) {
       setWindowCloseDate(""); setWindowCloseAt(null); setWindowExtendedUntil(null);
       return;
@@ -679,13 +682,16 @@ function MarkSheet() {
   };
 
   /* ── Open Mark Entry ────────────────────────────────────────────────────
-   * Admin / Manager / Coordinator only. Unlocks the mark-entry fields for
-   * editing right now WITHOUT changing/extending the window close date.
-   * Use this to edit already-saved marks; the window date stays untouched. */
+   * Admin / Manager / Coordinator only. Unlocks the mark-entry fields for the
+   * CURRENT DAY only — until 11:59 PM of the day the button is clicked — WITHOUT
+   * changing/extending the window close date. The button stays active so it can
+   * be clicked again to re-open. */
   const handleOpenMarkEntry = () => {
     if (!isPrivileged) return;
-    setManualEntryOpen(true);
-    setMessage("✅ Mark entry fields opened for editing. The window date is unchanged.");
+    const until = new Date();
+    until.setHours(23, 59, 59, 999); // today only, till 11:59 PM
+    setManualEntryOpenUntil(until);
+    setMessage(`✅ Mark entry opened for today till ${until.toLocaleDateString("en-GB")} 11:59 PM. The window date is unchanged.`);
     setTimeout(() => setMessage(""), 5000);
   };
 
@@ -809,15 +815,12 @@ function MarkSheet() {
                     </Tooltip>
                   )}
                   {isPrivileged && !isAutoDateAssessment && selectedDate && (
-                    <Tooltip title="Unlock the mark entry fields for editing now, without changing the window close date.">
-                      <span>
-                        <Button variant="outlined" size="small" onClick={handleOpenMarkEntry}
-                          disabled={manualEntryOpen}
-                          startIcon={<LockOpenIcon sx={{ fontSize: 14 }} />}
-                          sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 12, borderRadius: "10px", textTransform: "none", color: TOKENS.accent, borderColor: `${TOKENS.accent}66`, whiteSpace: "nowrap", "&:hover": { borderColor: TOKENS.accent, background: `${TOKENS.accent}11` } }}>
-                          {manualEntryOpen ? "Mark Entry Opened" : "Open Mark Entry"}
-                        </Button>
-                      </span>
+                    <Tooltip title="Unlock the mark entry fields for today only (till 11:59 PM), without changing the window close date. Click again anytime to re-open.">
+                      <Button variant="outlined" size="small" onClick={handleOpenMarkEntry}
+                        startIcon={<LockOpenIcon sx={{ fontSize: 14 }} />}
+                        sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 12, borderRadius: "10px", textTransform: "none", color: TOKENS.accent, borderColor: `${TOKENS.accent}66`, whiteSpace: "nowrap", "&:hover": { borderColor: TOKENS.accent, background: `${TOKENS.accent}11` } }}>
+                        Open Mark Entry
+                      </Button>
                     </Tooltip>
                   )}
                 </Box>
