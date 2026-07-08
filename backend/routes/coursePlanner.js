@@ -11,6 +11,7 @@ import path from "path";
 import crypto from "crypto";
 import { spawn } from "child_process";
 import { fileURLToPath } from "url";
+import { supabase } from "../supabaseClient.js";
 
 const router = express.Router();
 
@@ -55,6 +56,34 @@ function runPython(scriptName, args = [], stdinData = null) {
 }
 
 const isId = (s) => typeof s === "string" && /^[a-f0-9-]{36}$/i.test(s);
+
+// ---------------------------------------------------------------------------
+// GET /api/course-planner/trainers
+// -> [{ name, email }] from the internal_users table, for the Theory/Lab
+//    trainer pickers in the Course Planner Generator (email auto-fills by name).
+// ---------------------------------------------------------------------------
+router.get("/trainers", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("internal_users")
+      .select("name, email")
+      .order("name");
+    if (error) throw error;
+
+    const seen = new Set();
+    const trainers = [];
+    for (const u of data || []) {
+      const name = (u.name || "").trim();
+      if (!name || seen.has(name.toLowerCase())) continue;
+      seen.add(name.toLowerCase());
+      trainers.push({ name, email: (u.email || "").trim() });
+    }
+    return res.json({ trainers });
+  } catch (err) {
+    console.error("Course planner trainers error:", err);
+    return res.status(500).json({ error: err.message || "Failed to load trainers" });
+  }
+});
 const readMeta = (id) => {
   try {
     return JSON.parse(fs.readFileSync(path.join(WORK_DIR, `${id}.json`), "utf-8"));
@@ -124,7 +153,13 @@ router.post("/generate", async (req, res) => {
 // ---------------------------------------------------------------------------
 router.post("/convert", async (req, res) => {
   try {
-    const { id } = req.body || {};
+    const {
+      id,
+      theoryTrainerName,
+      theoryTrainerEmail,
+      labTrainerName,
+      labTrainerEmail,
+    } = req.body || {};
     if (!isId(id)) return res.status(400).json({ error: "valid id is required" });
 
     const xlsxPath = path.join(WORK_DIR, `${id}.xlsx`);
@@ -133,7 +168,20 @@ router.post("/convert", async (req, res) => {
       return res.status(404).json({ error: "Generated planner not found. Generate it first." });
     }
 
-    const { stdout } = await runPython("course_planner_xlsx_to_csv.py", [xlsxPath, csvPath]);
+    // Trainer overrides only apply to the system CSV (this "Generate CP for
+    // System" step), never to the trainer-facing .xlsx.
+    const trainerCfg = JSON.stringify({
+      theory_name: theoryTrainerName || "",
+      theory_email: theoryTrainerEmail || "",
+      lab_name: labTrainerName || "",
+      lab_email: labTrainerEmail || "",
+    });
+
+    const { stdout } = await runPython("course_planner_xlsx_to_csv.py", [
+      xlsxPath,
+      csvPath,
+      trainerCfg,
+    ]);
     const meta = readMeta(id);
     const rows = (stdout.match(/Wrote\s+(\d+)/) || [])[1] || null;
 

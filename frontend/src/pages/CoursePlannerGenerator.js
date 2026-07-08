@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import axios from "axios";
 import {
   Box,
@@ -50,6 +50,35 @@ export default function CoursePlannerGenerator({ user }) {
   const [result, setResult] = useState(null); // { id, filename, template, holidaysMarked }
   const [csv, setCsv] = useState(null); // { csvFilename, rows }
 
+  // Trainer pickers (Theory / Lab). Names come from internal_users; the email
+  // auto-fills from the selected name but stays editable. These are applied to
+  // trainer_name / trainer_email only in the system CSV ("Generate CP for
+  // System"), never in the trainer-facing planner.
+  const [trainers, setTrainers] = useState([]); // [{ name, email }]
+  const [theoryTrainerName, setTheoryTrainerName] = useState("");
+  const [theoryTrainerEmail, setTheoryTrainerEmail] = useState("");
+  const [labTrainerName, setLabTrainerName] = useState("");
+  const [labTrainerEmail, setLabTrainerEmail] = useState("");
+
+  useEffect(() => {
+    axios
+      .get(`${API_BASE}/api/course-planner/trainers`)
+      .then(({ data }) => setTrainers(Array.isArray(data?.trainers) ? data.trainers : []))
+      .catch(() => setTrainers([]));
+  }, []);
+
+  const emailForName = (name) =>
+    (trainers.find((t) => t.name === name)?.email) || "";
+
+  const handleTheoryName = (name) => {
+    setTheoryTrainerName(name);
+    setTheoryTrainerEmail(emailForName(name)); // auto-fill; still editable
+  };
+  const handleLabName = (name) => {
+    setLabTrainerName(name);
+    setLabTrainerEmail(emailForName(name)); // auto-fill; still editable
+  };
+
   const showSession3 = domain === "PD"; // Session 3 only for the PD domain
 
   const handleGenerate = async () => {
@@ -86,6 +115,10 @@ export default function CoursePlannerGenerator({ user }) {
     try {
       const { data } = await axios.post(`${API_BASE}/api/course-planner/convert`, {
         id: result.id,
+        theoryTrainerName,
+        theoryTrainerEmail,
+        labTrainerName,
+        labTrainerEmail,
       });
       setCsv(data);
     } catch (e) {
@@ -207,6 +240,60 @@ export default function CoursePlannerGenerator({ user }) {
               helperText="Used to place weekday dates, weekends and holidays on the grid."
               fullWidth
             />
+
+            <Divider textAlign="left">
+              <Typography variant="caption" color="text.secondary">
+                Trainer assignment (applied to the System CP only)
+              </Typography>
+            </Divider>
+
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+              <FormControl fullWidth>
+                <InputLabel>Theory Trainer Name</InputLabel>
+                <Select
+                  label="Theory Trainer Name"
+                  value={theoryTrainerName}
+                  onChange={(e) => handleTheoryName(e.target.value)}
+                >
+                  {trainers.map((t) => (
+                    <MenuItem key={`th-${t.name}`} value={t.name}>
+                      {t.name}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <TextField
+                label="Theory Trainer Email ID"
+                value={theoryTrainerEmail}
+                onChange={(e) => setTheoryTrainerEmail(e.target.value)}
+                placeholder="auto-filled from name (editable)"
+                fullWidth
+              />
+            </Stack>
+
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+              <FormControl fullWidth>
+                <InputLabel>Lab Trainer Name</InputLabel>
+                <Select
+                  label="Lab Trainer Name"
+                  value={labTrainerName}
+                  onChange={(e) => handleLabName(e.target.value)}
+                >
+                  {trainers.map((t) => (
+                    <MenuItem key={`lab-${t.name}`} value={t.name}>
+                      {t.name}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <TextField
+                label="Lab Trainer Email ID"
+                value={labTrainerEmail}
+                onChange={(e) => setLabTrainerEmail(e.target.value)}
+                placeholder="auto-filled from name (editable)"
+                fullWidth
+              />
+            </Stack>
 
             {error && <Alert severity="error">{error}</Alert>}
 

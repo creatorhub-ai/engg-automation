@@ -35,6 +35,7 @@ Requires:  pip install openpyxl
 
 import csv
 import datetime
+import json
 import os
 import re
 import sys
@@ -125,13 +126,41 @@ def split_title(raw):
     return full, full
 
 
-def trainer_for(module):
-    m = module.lower()
-    if "soft skill" in m:
-        return "Rani", "customer.success@chipedge.com"
-    if module == "Lab" or ("assessment" in m and "quiz" not in m):
-        return "Akanksha", "akanksha.kumbar@chipedge.com"
-    return "Obulesu", "obulesu.b@chipedge.com"
+# Keywords that classify a module as a "Lab" session (-> Lab trainer). Anything
+# else is a "Theory" session (-> Theory trainer). "Weekly Assessment" matches
+# "assessment"; "Weekly Quiz" matches "quiz".
+LAB_KEYWORDS = ("lab", "assessment", "quiz")
+
+
+def make_trainer_resolver(cfg):
+    """Return a function module -> (trainer_name, trainer_email).
+
+    When trainer overrides are supplied (from the "Generate CP for System"
+    action) the module is classified by keyword: Lab / Assessment / Quiz /
+    Weekly Assessment -> Lab trainer, everything else -> Theory trainer.
+    With no overrides it falls back to the original default assignment, so the
+    existing behaviour is unchanged."""
+    cfg = cfg or {}
+    theory_name = (cfg.get("theory_name") or "").strip()
+    theory_email = (cfg.get("theory_email") or "").strip()
+    lab_name = (cfg.get("lab_name") or "").strip()
+    lab_email = (cfg.get("lab_email") or "").strip()
+    has_override = any([theory_name, theory_email, lab_name, lab_email])
+
+    def resolve(module):
+        m = (module or "").lower()
+        if has_override:
+            if any(kw in m for kw in LAB_KEYWORDS):
+                return lab_name, lab_email
+            return theory_name, theory_email
+        # legacy default behaviour (unchanged)
+        if "soft skill" in m:
+            return "Rani", "customer.success@chipedge.com"
+        if module == "Lab" or ("assessment" in m and "quiz" not in m):
+            return "Akanksha", "akanksha.kumbar@chipedge.com"
+        return "Obulesu", "obulesu.b@chipedge.com"
+
+    return resolve
 
 
 # --------------------------------------------------------------------------- #
@@ -187,10 +216,11 @@ def read_times(ws, sessions, session_cols):
 # Core conversion
 # --------------------------------------------------------------------------- #
 
-def convert(xlsx_path, csv_path):
+def convert(xlsx_path, csv_path, trainer_cfg=None):
     wb = openpyxl.load_workbook(xlsx_path, data_only=True)
     ws = wb.active
     value, span = build_resolvers(ws)
+    trainer_for = make_trainer_resolver(trainer_cfg)
     batch_no, domain, sessions = read_batch_domain(ws)
     session_cols = SESSION_MAPS.get((domain or "").upper(), DEFAULT_MAP)
     times = read_times(ws, sessions, session_cols)
@@ -295,9 +325,15 @@ def convert(xlsx_path, csv_path):
 
 
 def main():
-    if len(sys.argv) != 3:
-        sys.exit("Usage: python course_planner_xlsx_to_csv.py in.xlsx out.csv")
-    n = convert(sys.argv[1], sys.argv[2])
+    if len(sys.argv) < 3:
+        sys.exit("Usage: python course_planner_xlsx_to_csv.py in.xlsx out.csv [trainer_cfg_json]")
+    trainer_cfg = {}
+    if len(sys.argv) >= 4 and sys.argv[3]:
+        try:
+            trainer_cfg = json.loads(sys.argv[3])
+        except (ValueError, TypeError):
+            trainer_cfg = {}
+    n = convert(sys.argv[1], sys.argv[2], trainer_cfg)
     print(f"Wrote {n} rows to {sys.argv[2]}")
 
 
