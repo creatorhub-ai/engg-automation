@@ -1148,6 +1148,75 @@ app.post("/api/marks/window-extension", (req, res) => {
   }
 });
 
+// ───────────────────────────────────────────────────────────────────────────
+// "Open Mark Entry" persistence (shared across users). Admin/Manager/Coordinator
+// unlock the mark-entry fields for TRAINERS for the current day only (till 11:59
+// PM), WITHOUT changing the window close date. Stored server-side (JSON file)
+// keyed by (batch_no, assessment_type, date) so trainers on any machine see it.
+// Kept separate from the window extension so the two actions stay independent.
+// ───────────────────────────────────────────────────────────────────────────
+const MARK_OPEN_FILE = path.join(MARK_EXT_DIR, "mark-entry-open.json");
+function readMarkOpenStore() {
+  try {
+    return JSON.parse(fs.readFileSync(MARK_OPEN_FILE, "utf-8")) || {};
+  } catch {
+    return {};
+  }
+}
+function writeMarkOpenStore(store) {
+  try {
+    fs.mkdirSync(MARK_EXT_DIR, { recursive: true });
+    fs.writeFileSync(MARK_OPEN_FILE, JSON.stringify(store));
+    return true;
+  } catch (e) {
+    console.error("mark-entry-open store write error:", e);
+    return false;
+  }
+}
+
+// GET the current "mark entry open" flag for a batch/assessment/date
+app.get("/api/marks/mark-entry-open", (req, res) => {
+  try {
+    const { batch_no, assessment_type, assessment_date } = req.query;
+    if (!batch_no || !assessment_type || !assessment_date) {
+      return res
+        .status(400)
+        .json({ error: "batch_no, assessment_type and assessment_date are required" });
+    }
+    const store = readMarkOpenStore();
+    const val = store[markExtKey(batch_no, assessment_type, assessment_date)] || null;
+    return res.json({ open_until: val });
+  } catch (err) {
+    console.error("mark-entry-open get error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// POST open the mark-entry fields (Admin/Manager/Coordinator). Latest write wins.
+app.post("/api/marks/mark-entry-open", (req, res) => {
+  try {
+    const { batch_no, assessment_type, assessment_date, open_until } = req.body || {};
+    if (!batch_no || !assessment_type || !assessment_date || !open_until) {
+      return res.status(400).json({
+        error: "batch_no, assessment_type, assessment_date and open_until are required",
+      });
+    }
+    const until = new Date(open_until);
+    if (isNaN(until.getTime())) {
+      return res.status(400).json({ error: "invalid open_until" });
+    }
+    const store = readMarkOpenStore();
+    store[markExtKey(batch_no, assessment_type, assessment_date)] = until.toISOString();
+    if (!writeMarkOpenStore(store)) {
+      return res.status(500).json({ error: "Could not open mark entry" });
+    }
+    return res.json({ success: true, open_until: until.toISOString() });
+  } catch (err) {
+    console.error("mark-entry-open set error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // 2) GET /api/marks/:assessmentType — load existing marks
 app.get("/api/marks/:assessmentType", async (req, res, next) => {
   const { assessmentType } = req.params;

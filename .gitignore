@@ -4,4 +4,5 @@ backend/node_modules/
 frontend/node_modules/
 backend/uploads/course-planner/
 backend/uploads/mark-window-extensions.json
+backend/uploads/mark-entry-open.json
 backend/scripts/__pycache__/

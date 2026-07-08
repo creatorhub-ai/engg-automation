@@ -165,6 +165,43 @@ async function writeWindowExtension(batchNo, assessmentType, date, until) {
     return res.ok;
   } catch { return false; }
 }
+
+/* ── "Open Mark Entry" (server-persisted) ────────────────────────────────────
+ * Admin / Manager / Coordinator unlock the mark-entry fields for TRAINERS for
+ * the current day only, without changing the window close date. Persisted on
+ * the SERVER (keyed by batch + type + date) so trainers on any machine see it —
+ * it used to be local-only React state, which is why it never opened for them. */
+async function readMarkEntryOpen(batchNo, assessmentType, date) {
+  if (!batchNo || !date) return null;
+  try {
+    const url =
+      `${API_BASE}/api/marks/mark-entry-open` +
+      `?batch_no=${encodeURIComponent(batchNo)}` +
+      `&assessment_type=${encodeURIComponent(assessmentType || "")}` +
+      `&assessment_date=${encodeURIComponent(date)}`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data?.open_until) return null;
+    const t = new Date(data.open_until);
+    return isNaN(t.getTime()) ? null : t;
+  } catch { return null; }
+}
+async function writeMarkEntryOpen(batchNo, assessmentType, date, until) {
+  try {
+    const res = await fetch(`${API_BASE}/api/marks/mark-entry-open`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        batch_no: batchNo,
+        assessment_type: assessmentType,
+        assessment_date: date,
+        open_until: until.toISOString(),
+      }),
+    });
+    return res.ok;
+  } catch { return false; }
+}
 function normalizeDate(dateStr) {
   if (!dateStr) return "";
   if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
@@ -448,6 +485,11 @@ function MarkSheet() {
     readWindowExtension(batchNo, assessmentType, selectedDate).then((ext) => {
       if (!ignore) setWindowExtendedUntil(ext);
     });
+    // Honour any server-saved "Open Mark Entry" (set by an Admin/Manager/
+    // Coordinator) so trainers see the fields unlocked for the day too.
+    readMarkEntryOpen(batchNo, assessmentType, selectedDate).then((openUntil) => {
+      if (!ignore) setManualEntryOpenUntil(openUntil);
+    });
     return () => { ignore = true; };
   }, [selectedDate, assessmentType, isAutoDateAssessment, batchNo]);
 
@@ -686,12 +728,18 @@ function MarkSheet() {
    * CURRENT DAY only — until 11:59 PM of the day the button is clicked — WITHOUT
    * changing/extending the window close date. The button stays active so it can
    * be clicked again to re-open. */
-  const handleOpenMarkEntry = () => {
-    if (!isPrivileged) return;
+  const handleOpenMarkEntry = async () => {
+    if (!isPrivileged || isAutoDateAssessment || !batchNo || !selectedDate) return;
     const until = new Date();
     until.setHours(23, 59, 59, 999); // today only, till 11:59 PM
+    const ok = await writeMarkEntryOpen(batchNo, assessmentType, selectedDate, until);
+    if (!ok) {
+      setMessage("❌ Could not open mark entry. Please try again.");
+      setTimeout(() => setMessage(""), 5000);
+      return;
+    }
     setManualEntryOpenUntil(until);
-    setMessage(`✅ Mark entry opened for today till ${until.toLocaleDateString("en-GB")} 11:59 PM. The window date is unchanged.`);
+    setMessage(`✅ Mark entry opened for today till ${until.toLocaleDateString("en-GB")} 11:59 PM for trainers. The window date is unchanged.`);
     setTimeout(() => setMessage(""), 5000);
   };
 
