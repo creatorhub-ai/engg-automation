@@ -180,6 +180,11 @@ export default function HomeDashboard({ user }) {
   const [classRoom, setClassRoom] = useState("");
   const [mockInterviewOffset, setMockInterviewOffset] = useState("7");
 
+  // Editable email templates loaded once batch/mode (+ batch type) are chosen.
+  const [templates, setTemplates] = useState([]);
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
+  const [templatesMsg, setTemplatesMsg] = useState("");
+
   /* ── FIX: Robust batch loading ── */
   useEffect(() => {
     const fetchBatches = async () => {
@@ -237,6 +242,42 @@ export default function HomeDashboard({ user }) {
     };
     fetchPlannerMeta();
   }, [selectedBatch]);
+
+  /* ── Load editable email templates once batch + mode (+ batch type) set ── */
+  useEffect(() => {
+    const canLoad = selectedBatch && mode && (mode !== "Offline" || batchType);
+    if (!canLoad) { setTemplates([]); setTemplatesMsg(""); return; }
+
+    let ignore = false;
+    const loadTemplates = async () => {
+      setLoadingTemplates(true); setTemplatesMsg("");
+      try {
+        const params = new URLSearchParams({ mode });
+        if (mode === "Offline") params.set("batch_type", batchType);
+        const res = await fetch(`${API_BASE}/api/email-templates?${params.toString()}`);
+        const data = await res.json();
+        if (ignore) return;
+        if (!res.ok) {
+          setTemplates([]);
+          setTemplatesMsg(`❌ ${data.error || "Failed to load templates"}`);
+          return;
+        }
+        const list = Array.isArray(data) ? data : [];
+        setTemplates(list);
+        if (list.length === 0) setTemplatesMsg("⚠️ No templates found for this mode/batch type");
+      } catch (err) {
+        if (!ignore) { setTemplates([]); setTemplatesMsg(`❌ ${err.message}`); }
+      } finally {
+        if (!ignore) setLoadingTemplates(false);
+      }
+    };
+    loadTemplates();
+    return () => { ignore = true; };
+  }, [selectedBatch, mode, batchType]);
+
+  const updateTemplateField = (idx, field, value) => {
+    setTemplates(prev => prev.map((t, i) => (i === idx ? { ...t, [field]: value } : t)));
+  };
 
   const handleUploadLearners = () => {
     setUploadMsg("");
@@ -341,6 +382,15 @@ export default function HomeDashboard({ user }) {
           batch_type:            mode === "Offline" ? batchType : null,
           class_room:            classRoom,
           mock_interview_offset: Number(mockInterviewOffset) || 7,
+          // Send the (possibly edited) templates so the scheduled mails use them.
+          templates: templates.map(t => ({
+            id:            t.id,
+            template_name: t.template_name,
+            subject:       t.subject,
+            body_html:     t.body_html,
+            offset_days:   t.offset_days,
+            send_time:     t.send_time,
+          })),
         }),
       });
       const data = await res.json();
@@ -581,6 +631,71 @@ export default function HomeDashboard({ user }) {
                 }}
               />
             </Box>
+
+            {/* ── Editable Email Templates ── */}
+            {(loadingTemplates || templates.length > 0 || templatesMsg) && (
+              <Box sx={{ mt: 2, pt: 2, borderTop: `1px dashed ${TOKENS.border}` }}>
+                <Typography sx={{ ...labelSx, mb: 1 }}>
+                  Email Templates{templates.length > 0 ? ` (${templates.length}) — editable` : ""}
+                </Typography>
+
+                {loadingTemplates && (
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1, color: TOKENS.textSub, py: 1 }}>
+                    <CircularProgress size={16} />
+                    <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12 }}>Loading templates…</Typography>
+                  </Box>
+                )}
+
+                {!loadingTemplates && templatesMsg && (
+                  <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, color: templatesMsg.startsWith("⚠️") ? TOKENS.warning.text : TOKENS.error.text, mb: 1 }}>
+                    {templatesMsg}
+                  </Typography>
+                )}
+
+                {!loadingTemplates && templates.map((t, idx) => (
+                  <Box key={t.id ?? idx} sx={{ border: `1px solid ${TOKENS.border}`, borderRadius: "12px", p: 2, mb: 2, background: TOKENS.surfaceAlt }}>
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1.5, flexWrap: "wrap" }}>
+                      <Chip label={t.template_name || `Template ${idx + 1}`} size="small"
+                        sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 11, background: TOKENS.accentLight, color: TOKENS.accent }} />
+                    </Box>
+
+                    <TextField
+                      label="Subject"
+                      value={t.subject || ""}
+                      onChange={e => updateTemplateField(idx, "subject", e.target.value)}
+                      size="small" fullWidth sx={{ mb: 1.5, "& .MuiInputBase-root": inputSx }}
+                    />
+                    <TextField
+                      label="Body (HTML)"
+                      value={t.body_html || ""}
+                      onChange={e => updateTemplateField(idx, "body_html", e.target.value)}
+                      size="small" fullWidth multiline minRows={4}
+                      sx={{ mb: 1.5, "& .MuiInputBase-root": { ...inputSx, fontFamily: "'DM Mono', monospace", fontSize: 12 } }}
+                    />
+                    <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 2 }}>
+                      <TextField
+                        label="Offset Days"
+                        type="number"
+                        value={t.offset_days ?? 0}
+                        onChange={e => updateTemplateField(idx, "offset_days", e.target.value)}
+                        size="small" fullWidth
+                        helperText="Days from batch start date"
+                        sx={{ "& .MuiInputBase-root": inputSx }}
+                      />
+                      <TextField
+                        label="Send Time"
+                        type="time"
+                        value={t.send_time || "09:00"}
+                        onChange={e => updateTemplateField(idx, "send_time", e.target.value)}
+                        size="small" fullWidth
+                        InputLabelProps={{ shrink: true }}
+                        sx={{ "& .MuiInputBase-root": inputSx }}
+                      />
+                    </Box>
+                  </Box>
+                ))}
+              </Box>
+            )}
 
             {/* Action Buttons */}
             <Box sx={{ display: "flex", gap: 1.5, flexWrap: "wrap", mt: 1 }}>

@@ -3666,6 +3666,46 @@ app.get("/api/templates", async (req, res) => {
   }
 });
 
+// Full email templates (subject/body/offset/send_time) for the Home Dashboard
+// schedule editor. Filtered exactly like /api/schedule-email so what you edit
+// is what gets scheduled. Returns [] (200) when none exist.
+app.get("/api/email-templates", async (req, res) => {
+  try {
+    const { mode, batch_type } = req.query;
+    if (!mode || !["Online", "Offline"].includes(mode)) {
+      return res.status(400).json({ error: "Invalid or missing mode parameter" });
+    }
+
+    let query = supabase
+      .from("email_templates")
+      .select("id, template_name, subject, body_html, offset_days, send_time, mode, batch_type, active")
+      .eq("mode", mode)
+      .eq("active", true);
+
+    if (mode === "Offline") {
+      if (!batch_type) {
+        return res.status(400).json({ error: "batch_type is required for Offline mode" });
+      }
+      query = query.eq("batch_type", batch_type);
+    } else {
+      query = query.is("batch_type", null);
+    }
+
+    const { data, error } = await query
+      .order("offset_days", { ascending: true })
+      .order("template_name", { ascending: true });
+
+    if (error) {
+      console.error("Error fetching full email templates:", error);
+      return res.status(500).json({ error: "Failed to fetch templates" });
+    }
+    res.json(data || []);
+  } catch (error) {
+    console.error("Unexpected error fetching full email templates:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // Express + Supabase (ESM syntax)
 // === Login API ===
 app.post('/api/login', async (req, res) => {
@@ -6392,7 +6432,7 @@ app.get("/api/test-email", async (req, res) => {
 // ==================== 1. SCHEDULE EMAIL API ====================
 app.post("/api/schedule-email", async (req, res) => {
   try {
-    const { batch_no, mode, batch_type, class_room } = req.body;
+    const { batch_no, mode, batch_type, class_room, templates: templateOverrides } = req.body;
 
     if (!batch_no || !mode) {
       return res.status(400).json({ error: "Batch No and Mode are required" });
@@ -6432,27 +6472,44 @@ app.post("/api/schedule-email", async (req, res) => {
       return res.status(404).json({ error: "No learners found for this batch" });
     }
 
-    // ── Fetch email templates ─────────────────────────────────────
-    let query = supabase
-      .from("email_templates")
-      .select("*")
-      .eq("mode", mode)
-      .eq("active", true);
-
-    if (mode === "Offline") {
-      if (!batch_type) {
-        return res.status(400).json({ error: "Batch type is required for Offline mode" });
-      }
-      query = query.eq("batch_type", batch_type);
+    // ── Email templates ───────────────────────────────────────────
+    // Use the edited templates coming from the Home Dashboard editor when
+    // provided; otherwise fall back to the active templates in the DB
+    // (unchanged original behaviour).
+    let templates;
+    if (Array.isArray(templateOverrides) && templateOverrides.length > 0) {
+      templates = templateOverrides.map((t) => ({
+        id:            t.id ?? null,
+        template_name: t.template_name || "",
+        subject:       t.subject || "",
+        body_html:     t.body_html || "",
+        offset_days:   Number.isFinite(Number(t.offset_days)) ? Number(t.offset_days) : 0,
+        send_time:     t.send_time || "09:00",
+      }));
     } else {
-      query = query.is("batch_type", null);
+      let query = supabase
+        .from("email_templates")
+        .select("*")
+        .eq("mode", mode)
+        .eq("active", true);
+
+      if (mode === "Offline") {
+        if (!batch_type) {
+          return res.status(400).json({ error: "Batch type is required for Offline mode" });
+        }
+        query = query.eq("batch_type", batch_type);
+      } else {
+        query = query.is("batch_type", null);
+      }
+
+      const { data: dbTemplates, error: templateError } = await query;
+      if (templateError) {
+        console.error("Error fetching email templates:", templateError);
+        return res.status(500).json({ error: "Failed to fetch email templates" });
+      }
+      templates = dbTemplates;
     }
 
-    const { data: templates, error: templateError } = await query;
-    if (templateError) {
-      console.error("Error fetching email templates:", templateError);
-      return res.status(500).json({ error: "Failed to fetch email templates" });
-    }
     if (!templates || templates.length === 0) {
       return res.status(404).json({ error: "No templates found for this batch/mode" });
     }
