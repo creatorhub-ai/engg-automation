@@ -4,16 +4,26 @@ import {
   Box, Typography, FormControl, InputLabel, Select, MenuItem,
   Table, TableHead, TableBody, TableRow, TableCell, TableContainer,
   CircularProgress, Dialog, DialogTitle, DialogContent, DialogActions,
-  Button, IconButton,
+  Button, IconButton, Menu,
 } from "@mui/material";
 import {
   PeopleAlt      as PeopleIcon,
   EventAvailable as SessionIcon,
   Close          as CloseIcon,
   Person         as PersonIcon,
+  Download       as DownloadIcon,
+  CalendarMonth  as DayIcon,
 } from "@mui/icons-material";
+import * as XLSX from "xlsx";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 
 const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
+
+// Each teaching day has 3 sessions. A learner is "present" for a day when they
+// attended at least 2 of the 3 sessions (1 session present = day absent).
+const SESSIONS_PER_DAY = 3;
+const MIN_SESSIONS_FOR_DAY_PRESENT = 2;
 
 /* ─── Design tokens (matches CourseProgress) ────────────────────────────── */
 const TOKENS = {
@@ -159,6 +169,7 @@ export default function AttendanceReport({ user, token }) {
   const [loading,            setLoading]            = useState(false);
   const [selectedLearner,    setSelectedLearner]    = useState(null);
   const [detailDialogOpen,   setDetailDialogOpen]   = useState(false);
+  const [downloadAnchor,     setDownloadAnchor]     = useState(null);
 
   const headers = { Authorization: `Bearer ${token}` };
 
@@ -204,45 +215,121 @@ export default function AttendanceReport({ user, token }) {
     fetchData();
   }, [batchNo, token]);
 
-  /* ── Summary ── */
+  /* ── Report (session-wise + day-wise) ───────────────────────────────────
+   * Total days   = unique dates in course_planner_data for the batch.
+   * Total sessions = 3 × total days (SESSIONS_PER_DAY).
+   * Session-wise: how many of the conducted sessions the learner attended.
+   * Day-wise: a day counts as present when ≥ 2 of its 3 sessions were present;
+   *           1 session present = that day is absent. */
+  const isPresentStatus = (s) => {
+    const v = (s || "").toString().trim().toUpperCase();
+    return v === "P" || v === "PRESENT";
+  };
+
   const summary = useMemo(() => {
     const today = new Date().toISOString().split("T")[0];
-    const stats = {};
-    attendanceData.forEach(row => {
-      if (!row.learner_email || row.date > today) return;
-      const email = row.learner_email.trim().toLowerCase();
-      if (!stats[email]) stats[email] = { name: "", email: row.learner_email, present: 0 };
-      if (row.status?.toUpperCase() === "P" || row.status?.toUpperCase() === "PRESENT") {
-        stats[email].present++;
-      }
-    });
-    Object.keys(stats).forEach(k => {
-      const l = learnersData.find(l => l.email?.trim().toLowerCase() === k);
-      stats[k].name = l?.name || k.split("@")[0];
-    });
-    return { learners: Object.values(stats) };
-  }, [attendanceData, learnersData]);
 
-  /* ── Per-learner detail ── */
-  const calculateLearnerDetails = (learnerEmail) => {
-    const today = new Date().toISOString().split("T")[0];
-    const email = learnerEmail.trim().toLowerCase();
-    const distinctDates      = [...new Set(plannerDates)];
+    const distinctDates      = [...new Set(plannerDates.filter(Boolean))];
     const totalBatchDays     = distinctDates.length;
     const totalDaysTillToday = distinctDates.filter(d => d <= today).length;
-    const learnerRows        = attendanceData.filter(r =>
-      r.learner_email?.trim().toLowerCase() === email && r.date <= today
-    );
-    const presentDays = new Set(
-      learnerRows
-        .filter(r => r.status?.toUpperCase() === "P" || r.status?.toUpperCase() === "PRESENT")
-        .map(r => r.date)
-    ).size;
+    const totalSessionsAll   = totalBatchDays * SESSIONS_PER_DAY;
+    const totalSessionsTillToday = totalDaysTillToday * SESSIONS_PER_DAY;
+
+    // Group attendance by learner → date → set of present sessions.
+    const byLearner = {};
+    attendanceData.forEach((row, i) => {
+      if (!row.learner_email || row.date > today) return;
+      const email = row.learner_email.trim().toLowerCase();
+      if (!byLearner[email]) byLearner[email] = { email: row.learner_email, dates: {} };
+      const dayMap = byLearner[email].dates;
+      if (!dayMap[row.date]) dayMap[row.date] = new Set();
+      if (isPresentStatus(row.status)) {
+        // Dedupe by session id; fall back to a unique token when absent.
+        const sess = (row.session ?? "").toString().trim() || `__${i}`;
+        dayMap[row.date].add(sess);
+      }
+    });
+
+    const learners = Object.values(byLearner).map((l) => {
+      let sessionsPresent = 0;
+      let daysPresent = 0;
+      Object.values(l.dates).forEach((set) => {
+        const c = Math.min(set.size, SESSIONS_PER_DAY);
+        sessionsPresent += c;
+        if (c >= MIN_SESSIONS_FOR_DAY_PRESENT) daysPresent++;
+      });
+      const name = learnersData.find(x =>
+        x.email?.trim().toLowerCase() === l.email.trim().toLowerCase()
+      )?.name || l.email.split("@")[0];
+      const sessionPct = totalSessionsTillToday > 0 ? (sessionsPresent / totalSessionsTillToday) * 100 : 0;
+      const dayPct     = totalDaysTillToday     > 0 ? (daysPresent     / totalDaysTillToday)     * 100 : 0;
+      return { name, email: l.email, sessionsPresent, daysPresent, sessionPct, dayPct };
+    }).sort((a, b) => a.name.localeCompare(b.name));
+
     return {
-      totalBatchSessions, sessionsTillToday,
-      sessionsPresent: summary.learners.find(l => l.email === learnerEmail)?.present || 0,
-      totalBatchDays, totalDaysTillToday, presentDays,
+      learners,
+      totalBatchDays, totalDaysTillToday,
+      totalSessionsAll, totalSessionsTillToday,
     };
+  }, [attendanceData, learnersData, plannerDates]);
+
+  /* ── Per-learner detail (for the dialog) ── */
+  const calculateLearnerDetails = (learnerEmail) => {
+    const l = summary.learners.find(x => x.email === learnerEmail) || { sessionsPresent: 0, daysPresent: 0 };
+    return {
+      sessionsPresent:      l.sessionsPresent,
+      totalSessionsAll:     summary.totalSessionsAll,
+      totalSessionsTillToday: summary.totalSessionsTillToday,
+      daysPresent:          l.daysPresent,
+      totalBatchDays:       summary.totalBatchDays,
+      totalDaysTillToday:   summary.totalDaysTillToday,
+    };
+  };
+
+  /* ── Download helpers (xlsx / pdf) ── */
+  const buildReportRows = () => summary.learners.map((l, i) => ({
+    "#": i + 1,
+    "Learner": l.name,
+    "Email": l.email,
+    "Sessions Present": l.sessionsPresent,
+    "Total Sessions": summary.totalSessionsTillToday,
+    "Session %": Number(l.sessionPct.toFixed(1)),
+    "Days Present": l.daysPresent,
+    "Total Days": summary.totalDaysTillToday,
+    "Day %": Number(l.dayPct.toFixed(1)),
+  }));
+
+  const downloadXlsx = () => {
+    const ws = XLSX.utils.json_to_sheet(buildReportRows());
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Attendance");
+    XLSX.writeFile(wb, `Attendance_${batchNo || "report"}.xlsx`);
+    setDownloadAnchor(null);
+  };
+
+  const downloadPdf = () => {
+    const doc = new jsPDF();
+    doc.setFontSize(14);
+    doc.text(`Attendance Report — ${batchNo || ""}`, 14, 16);
+    doc.setFontSize(9);
+    doc.text(
+      `Days till today: ${summary.totalDaysTillToday}/${summary.totalBatchDays}   ` +
+      `Sessions till today: ${summary.totalSessionsTillToday}/${summary.totalSessionsAll}`,
+      14, 22
+    );
+    autoTable(doc, {
+      startY: 27,
+      head: [["#", "Learner", "Email", "Sess. Present", "Total Sess.", "Session %", "Days Present", "Total Days", "Day %"]],
+      body: summary.learners.map((l, i) => [
+        i + 1, l.name, l.email,
+        l.sessionsPresent, summary.totalSessionsTillToday, `${l.sessionPct.toFixed(1)}%`,
+        l.daysPresent, summary.totalDaysTillToday, `${l.dayPct.toFixed(1)}%`,
+      ]),
+      styles: { fontSize: 8, cellPadding: 2 },
+      headStyles: { fillColor: [61, 90, 254] },
+    });
+    doc.save(`Attendance_${batchNo || "report"}.pdf`);
+    setDownloadAnchor(null);
   };
 
   /* ════════════════════════════════════════════════════════════════════════ */
@@ -279,17 +366,47 @@ export default function AttendanceReport({ user, token }) {
             {batchNo && !loading && (
               <>
                 <StatPill
+                  icon={<DayIcon sx={{ fontSize: 16 }} />}
+                  label="Days Conducted"
+                  value={summary.totalDaysTillToday}
+                  sub={` / ${summary.totalBatchDays}`}
+                  accent
+                />
+                <StatPill
                   icon={<SessionIcon sx={{ fontSize: 16 }} />}
                   label="Sessions Conducted"
-                  value={sessionsTillToday}
-                  sub={` / ${totalBatchSessions}`}
-                  accent
+                  value={summary.totalSessionsTillToday}
+                  sub={` / ${summary.totalSessionsAll}`}
                 />
                 <StatPill
                   icon={<PeopleIcon sx={{ fontSize: 16 }} />}
                   label="Learners"
                   value={summary.learners.length}
                 />
+
+                <Box sx={{ ml: "auto" }}>
+                  <Button
+                    variant="contained"
+                    startIcon={<DownloadIcon sx={{ fontSize: 16 }} />}
+                    onClick={(e) => setDownloadAnchor(e.currentTarget)}
+                    disabled={summary.learners.length === 0}
+                    sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 13, borderRadius: "10px", textTransform: "none", px: 2.5, background: TOKENS.accent, "&:hover": { background: "#2a3fd4" } }}
+                  >
+                    Download
+                  </Button>
+                  <Menu
+                    anchorEl={downloadAnchor}
+                    open={Boolean(downloadAnchor)}
+                    onClose={() => setDownloadAnchor(null)}
+                  >
+                    <MenuItem onClick={downloadXlsx} sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>
+                      Download as XLSX
+                    </MenuItem>
+                    <MenuItem onClick={downloadPdf} sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>
+                      Download as PDF
+                    </MenuItem>
+                  </Menu>
+                </Box>
               </>
             )}
           </Box>
@@ -334,25 +451,23 @@ export default function AttendanceReport({ user, token }) {
                     <TableCell sx={{ ...tableHeadSx, width: 56 }}>#</TableCell>
                     <TableCell sx={tableHeadSx}>Learner</TableCell>
                     <TableCell sx={tableHeadSx}>Email</TableCell>
-                    <TableCell align="center" sx={tableHeadSx}>Present / {sessionsTillToday}</TableCell>
-                    <TableCell align="center" sx={tableHeadSx}>Attendance %</TableCell>
+                    <TableCell align="center" sx={tableHeadSx}>Sessions</TableCell>
+                    <TableCell align="center" sx={tableHeadSx}>Session %</TableCell>
+                    <TableCell align="center" sx={tableHeadSx}>Days</TableCell>
+                    <TableCell align="center" sx={tableHeadSx}>Day %</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {summary.learners.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={5} align="center" sx={{ py: 7 }}>
+                      <TableCell colSpan={7} align="center" sx={{ py: 7 }}>
                         <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TOKENS.textSub }}>
                           No attendance records found for this batch.
                         </Typography>
                       </TableCell>
                     </TableRow>
                   ) : (
-                    summary.learners.map((learner, idx) => {
-                      const pct = sessionsTillToday > 0
-                        ? (learner.present / sessionsTillToday) * 100
-                        : 0;
-                      return (
+                    summary.learners.map((learner, idx) => (
                         <TableRow
                           key={learner.email}
                           onClick={() => { setSelectedLearner(learner); setDetailDialogOpen(true); }}
@@ -370,16 +485,24 @@ export default function AttendanceReport({ user, token }) {
                           <TableCell sx={{ ...tableCellSx, fontSize: 12, color: TOKENS.textSub }}>{learner.email}</TableCell>
                           <TableCell align="center" sx={tableCellSx}>
                             <Typography sx={{ fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 700, color: TOKENS.text }}>
-                              {learner.present}
-                              <span style={{ color: TOKENS.textSub, fontWeight: 400 }}> / {sessionsTillToday}</span>
+                              {learner.sessionsPresent}
+                              <span style={{ color: TOKENS.textSub, fontWeight: 400 }}> / {summary.totalSessionsTillToday}</span>
                             </Typography>
                           </TableCell>
                           <TableCell align="center" sx={tableCellSx}>
-                            <PctBadge pct={pct} />
+                            <PctBadge pct={learner.sessionPct} />
+                          </TableCell>
+                          <TableCell align="center" sx={tableCellSx}>
+                            <Typography sx={{ fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 700, color: TOKENS.text }}>
+                              {learner.daysPresent}
+                              <span style={{ color: TOKENS.textSub, fontWeight: 400 }}> / {summary.totalDaysTillToday}</span>
+                            </Typography>
+                          </TableCell>
+                          <TableCell align="center" sx={tableCellSx}>
+                            <PctBadge pct={learner.dayPct} />
                           </TableCell>
                         </TableRow>
-                      );
-                    })
+                    ))
                   )}
                 </TableBody>
               </Table>
@@ -431,18 +554,16 @@ export default function AttendanceReport({ user, token }) {
             const d = calculateLearnerDetails(selectedLearner.email);
             return (
               <Box>
-                <Typography sx={{ ...labelSx, mb: 1.5 }}>Sessions</Typography>
+                <Typography sx={{ ...labelSx, mb: 1.5 }}>Session-wise (3 sessions / day)</Typography>
                 <Box sx={{ mb: 3, border: `1px solid ${TOKENS.border}`, borderRadius: "10px", overflow: "hidden" }}>
-                  <DetailRow label="Total Batch Sessions" value={d.sessionsPresent} total={d.totalBatchSessions} />
-                  <DetailRow label="Sessions Till Today"  value={d.sessionsPresent} total={d.sessionsTillToday}  />
-                  <DetailRow label="Sessions Present"     value={d.sessionsPresent} total={d.sessionsTillToday}  />
+                  <DetailRow label="Total Batch Sessions" value={d.sessionsPresent} total={d.totalSessionsAll} />
+                  <DetailRow label="Sessions Present (till today)" value={d.sessionsPresent} total={d.totalSessionsTillToday} />
                 </Box>
 
-                <Typography sx={{ ...labelSx, mb: 1.5 }}>Days</Typography>
+                <Typography sx={{ ...labelSx, mb: 1.5 }}>Day-wise (present = ≥ 2 of 3 sessions)</Typography>
                 <Box sx={{ border: `1px solid ${TOKENS.border}`, borderRadius: "10px", overflow: "hidden" }}>
-                  <DetailRow label="Total Batch Days"  value={d.presentDays} total={d.totalBatchDays}     />
-                  <DetailRow label="Days Till Today"   value={d.presentDays} total={d.totalDaysTillToday} />
-                  <DetailRow label="Days Present"      value={d.presentDays} total={d.totalDaysTillToday} />
+                  <DetailRow label="Total Batch Days"  value={d.daysPresent} total={d.totalBatchDays} />
+                  <DetailRow label="Days Present (till today)" value={d.daysPresent} total={d.totalDaysTillToday} />
                 </Box>
               </Box>
             );

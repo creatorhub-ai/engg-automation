@@ -28,7 +28,12 @@
       "Bash(curl -s -m 60 -o - -w '\\\\nHTTP %{http_code}\\\\n' 'https://engg-automation.onrender.com/api/marks/window-status?batch_no=DVFT13&assessment_type=weekly&week_no=1')",
       "Bash(curl -s -m 60 -o - -w '\\\\nHTTP %{http_code}\\\\n' 'https://engg-automation.onrender.com/api/marks/window-extension?batch_no=DVFT13&assessment_type=weekly&assessment_date=2026-07-03')",
       "Bash(node --check backend/routes/coursePlanner.js)",
-      "Bash(BABEL_ENV=development NODE_ENV=development node -e \"require\\('@babel/core'\\).transformFileSync\\('src/pages/MarkSheet.js',{presets:[require.resolve\\('babel-preset-react-app'\\)]}\\); console.log\\('MarkSheet.js compiles OK'\\);\")"
+      "Bash(BABEL_ENV=development NODE_ENV=development node -e \"require\\('@babel/core'\\).transformFileSync\\('src/pages/MarkSheet.js',{presets:[require.resolve\\('babel-preset-react-app'\\)]}\\); console.log\\('MarkSheet.js compiles OK'\\);\")",
+      "Bash(node -e \"const p=require\\('jspdf-autotable/package.json'\\); console.log\\('version', p.version, '| main', p.main, '| module', p.module\\)\")",
+      "Bash(node -e \"const a=require\\('jspdf-autotable'\\); console.log\\('default type:', typeof \\(a.default||a\\), '| has .autoTable:', typeof a.autoTable\\)\")",
+      "Bash(node -e \"const a=require\\('jspdf-autotable'\\); console.log\\('typeof module:', typeof a, '| typeof default:', typeof a.default, '| typeof autoTable named:', typeof a.autoTable\\);\")",
+      "Bash(node -e \"let s='';process.stdin.on\\('data',d=>s+=d\\).on\\('end',\\(\\)=>{const p=JSON.parse\\(s\\);console.log\\('version',p.version\\);console.log\\('main',p.main\\);console.log\\('module',p.module\\);console.log\\('exports',JSON.stringify\\(p.exports\\)\\);}\\)\")",
+      "Bash(BABEL_ENV=development NODE_ENV=development node -e \"require\\('@babel/core'\\).transformFileSync\\('src/pages/AttendanceReport.js',{presets:[require.resolve\\('babel-preset-react-app'\\)]}\\); console.log\\('AttendanceReport.js compiles OK'\\);\")"
     ]
   }
 }
