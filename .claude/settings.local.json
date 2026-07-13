@@ -27,7 +27,8 @@
       "Bash(git add *)",
       "Bash(curl -s -m 60 -o - -w '\\\\nHTTP %{http_code}\\\\n' 'https://engg-automation.onrender.com/api/marks/window-status?batch_no=DVFT13&assessment_type=weekly&week_no=1')",
       "Bash(curl -s -m 60 -o - -w '\\\\nHTTP %{http_code}\\\\n' 'https://engg-automation.onrender.com/api/marks/window-extension?batch_no=DVFT13&assessment_type=weekly&assessment_date=2026-07-03')",
-      "Bash(node --check backend/routes/coursePlanner.js)"
+      "Bash(node --check backend/routes/coursePlanner.js)",
+      "Bash(BABEL_ENV=development NODE_ENV=development node -e \"require\\('@babel/core'\\).transformFileSync\\('src/pages/MarkSheet.js',{presets:[require.resolve\\('babel-preset-react-app'\\)]}\\); console.log\\('MarkSheet.js compiles OK'\\);\")"
     ]
   }
 }

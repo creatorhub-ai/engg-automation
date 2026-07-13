@@ -461,15 +461,27 @@ function MarkSheet() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [batchNo, assessmentType]);
 
-  /* ── Window close date ── */
+  /* ── Window close date + server "Open Mark Entry" flag ── */
   useEffect(() => {
+    let ignore = false;
     setManualEntryOpenUntil(null); // a manual open never carries across selections
+
+    // "Open Mark Entry" applies to EVERY assessment type (including the
+    // auto-date ones — final_project / viva), so honour any server-saved flag
+    // whenever we have a date to key on, before the window-only logic below.
+    if (selectedDate) {
+      readMarkEntryOpen(batchNo, assessmentType, selectedDate).then((openUntil) => {
+        if (!ignore) setManualEntryOpenUntil(openUntil);
+      });
+    }
+
+    // The auto-close window only applies to date-based assessments.
     if (isAutoDateAssessment || !selectedDate) {
       setWindowCloseDate(""); setWindowCloseAt(null); setWindowExtendedUntil(null);
-      return;
+      return () => { ignore = true; };
     }
     const d = new Date(selectedDate + "T00:00:00");
-    if (isNaN(d.getTime())) return;
+    if (isNaN(d.getTime())) return () => { ignore = true; };
     const close = new Date(d);
     const type = ASSESSMENT_MAP[assessmentType]?.type;
     if (type === "weekly")     close.setDate(close.getDate() + 3);
@@ -480,15 +492,9 @@ function MarkSheet() {
     setWindowCloseAt(close);
     // Honour any server-saved extension (set by an Admin/Manager/Coordinator).
     // Fetched async so trainers pick up an extension made on another machine.
-    let ignore = false;
     setWindowExtendedUntil(null);
     readWindowExtension(batchNo, assessmentType, selectedDate).then((ext) => {
       if (!ignore) setWindowExtendedUntil(ext);
-    });
-    // Honour any server-saved "Open Mark Entry" (set by an Admin/Manager/
-    // Coordinator) so trainers see the fields unlocked for the day too.
-    readMarkEntryOpen(batchNo, assessmentType, selectedDate).then((openUntil) => {
-      if (!ignore) setManualEntryOpenUntil(openUntil);
     });
     return () => { ignore = true; };
   }, [selectedDate, assessmentType, isAutoDateAssessment, batchNo]);
@@ -729,7 +735,7 @@ function MarkSheet() {
    * changing/extending the window close date. The button stays active so it can
    * be clicked again to re-open. */
   const handleOpenMarkEntry = async () => {
-    if (!isPrivileged || isAutoDateAssessment || !batchNo || !selectedDate) return;
+    if (!isPrivileged || !batchNo || !selectedDate) return;
     const until = new Date();
     until.setHours(23, 59, 59, 999); // today only, till 11:59 PM
     const ok = await writeMarkEntryOpen(batchNo, assessmentType, selectedDate, until);
@@ -862,7 +868,7 @@ function MarkSheet() {
                       </Button>
                     </Tooltip>
                   )}
-                  {isPrivileged && !isAutoDateAssessment && selectedDate && (
+                  {isPrivileged && selectedDate && (
                     <Tooltip title="Unlock the mark entry fields for today only (till 11:59 PM), without changing the window close date. Click again anytime to re-open.">
                       <Button variant="outlined" size="small" onClick={handleOpenMarkEntry}
                         startIcon={<LockOpenIcon sx={{ fontSize: 14 }} />}
