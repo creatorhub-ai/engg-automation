@@ -652,8 +652,10 @@ export default function HomeDashboard({ user }) {
                   </Typography>
                 )}
 
-                {!loadingTemplates && templates.map((t, idx) => (
-                  <Box key={t.id ?? idx} sx={{ border: `1px solid ${TOKENS.border}`, borderRadius: "12px", p: 2, mb: 2, background: TOKENS.surfaceAlt }}>
+                {!loadingTemplates && templates.length > 0 && (
+                  <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" }, gap: 2 }}>
+                    {templates.map((t, idx) => (
+                  <Box key={t.id ?? idx} sx={{ border: `1px solid ${TOKENS.border}`, borderRadius: "12px", p: 2, background: TOKENS.surfaceAlt }}>
                     <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1.5, flexWrap: "wrap" }}>
                       <Chip label={t.template_name || `Template ${idx + 1}`} size="small"
                         sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 11, background: TOKENS.accentLight, color: TOKENS.accent }} />
@@ -693,7 +695,9 @@ export default function HomeDashboard({ user }) {
                       />
                     </Box>
                   </Box>
-                ))}
+                    ))}
+                  </Box>
+                )}
               </Box>
             )}
 
