@@ -51,7 +51,7 @@ const router = express.Router();
 // ============================
 // 🔥 IMPORTANT: NO TRAILING /
 // ============================
-const FRONTEND_URL = "https://engg-automation-r1ke.onrender.com";
+const FRONTEND_URL = "https://engg-automation-6zzs.onrender.com";
 const LOCAL_URL = "http://localhost:3000";
 
 // File filter for Excel files
@@ -81,7 +81,7 @@ const authenticate = (req, res, next) => {
 // ✅ FIXED CORS — ONLY THIS IS ENOUGH (Render Friendly)
 // =====================================================
 const ALLOWED_ORIGINS = [
-  "https://engg-automation-r1ke.onrender.com",
+  "https://engg-automation-6zzs.onrender.com",
   "http://localhost:3000"
 ];
 
@@ -102,7 +102,7 @@ app.use((req, res, next) => {
 
 app.use(cors({
   origin: [
-    "https://engg-automation-r1ke.onrender.com",
+    "https://engg-automation-6zzs.onrender.com",
     "http://localhost:3000"
   ],
   credentials: true,
