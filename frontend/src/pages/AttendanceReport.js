@@ -17,6 +17,7 @@ import {
 import * as XLSX from "xlsx";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
+import { isInactiveLearnerStatus } from "../utils/learnerStatus";
 
 const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation-f191.onrender.com";
 
@@ -258,12 +259,14 @@ export default function AttendanceReport({ user, token }) {
         sessionsPresent += c;
         if (c >= MIN_SESSIONS_FOR_DAY_PRESENT) daysPresent++;
       });
-      const name = learnersData.find(x =>
+      const lr = learnersData.find(x =>
         x.email?.trim().toLowerCase() === l.email.trim().toLowerCase()
-      )?.name || l.email.split("@")[0];
+      );
+      const name = lr?.name || l.email.split("@")[0];
+      const inactive = isInactiveLearnerStatus(lr?.status);
       const sessionPct = totalSessionsTillToday > 0 ? (sessionsPresent / totalSessionsTillToday) * 100 : 0;
       const dayPct     = totalDaysTillToday     > 0 ? (daysPresent     / totalDaysTillToday)     * 100 : 0;
-      return { name, email: l.email, sessionsPresent, daysPresent, sessionPct, dayPct };
+      return { name, email: l.email, sessionsPresent, daysPresent, sessionPct, dayPct, inactive, status: lr?.status || "" };
     }).sort((a, b) => a.name.localeCompare(b.name));
 
     return {
@@ -473,6 +476,7 @@ export default function AttendanceReport({ user, token }) {
                           onClick={() => { setSelectedLearner(learner); setDetailDialogOpen(true); }}
                           sx={{
                             cursor: "pointer",
+                            ...(learner.inactive ? { opacity: 0.5 } : {}),
                             "&:nth-of-type(even)": { background: TOKENS.surfaceAlt },
                             "&:hover": { background: `${TOKENS.accent}08` },
                             transition: "background 0.15s",
@@ -481,7 +485,12 @@ export default function AttendanceReport({ user, token }) {
                           <TableCell sx={{ ...tableCellSx, fontFamily: "'DM Mono', monospace", fontSize: 12, color: TOKENS.textSub }}>
                             {idx + 1}
                           </TableCell>
-                          <TableCell sx={{ ...tableCellSx, fontWeight: 700 }}>{learner.name}</TableCell>
+                          <TableCell sx={{ ...tableCellSx, fontWeight: 700 }}>
+                            {learner.name}
+                            {learner.inactive && (
+                              <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 700, color: TOKENS.textSub }}>({learner.status})</span>
+                            )}
+                          </TableCell>
                           <TableCell sx={{ ...tableCellSx, fontSize: 12, color: TOKENS.textSub }}>{learner.email}</TableCell>
                           <TableCell align="center" sx={tableCellSx}>
                             <Typography sx={{ fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 700, color: TOKENS.text }}>

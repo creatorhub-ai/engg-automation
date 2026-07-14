@@ -27,6 +27,7 @@ import CalendarTodayIcon  from "@mui/icons-material/CalendarToday";
 import CheckCircleIcon    from "@mui/icons-material/CheckCircle";
 import ErrorIcon          from "@mui/icons-material/Error";
 import InfoOutlinedIcon   from "@mui/icons-material/InfoOutlined";
+import { isInactiveLearnerStatus } from "../utils/learnerStatus";
 const API_BASE =
   process.env.REACT_APP_API_URL || "https://engg-automation-f191.onrender.com";
 const TOKENS = {
@@ -1030,10 +1031,16 @@ function MarkSheet() {
                         const pctNum   = pct ? parseFloat(pct) : 0;
                         const isAbsent = points === "AB";
                         const pctColor = !hasMarks || pct === "" ? TOKENS.textSub : isAbsent ? TOKENS.warning.fill : pctNum >= 75 ? TOKENS.success.fill : pctNum >= 50 ? TOKENS.warning.fill : TOKENS.error.fill;
+                        const isInactive = isInactiveLearnerStatus(l.status);
                         return (
-                          <TableRow key={l.id} sx={{ "&:nth-of-type(even)": { background: TOKENS.surfaceAlt }, "&:hover": { background: TOKENS.accentLight + "66", transition: "background 0.15s" }, ...(hasMarks ? { borderLeft: `3px solid ${isAbsent ? TOKENS.warning.fill : TOKENS.accent}44` } : {}) }}>
+                          <TableRow key={l.id} sx={{ ...(isInactive ? { opacity: 0.5 } : {}), "&:nth-of-type(even)": { background: TOKENS.surfaceAlt }, "&:hover": { background: TOKENS.accentLight + "66", transition: "background 0.15s" }, ...(hasMarks ? { borderLeft: `3px solid ${isAbsent ? TOKENS.warning.fill : TOKENS.accent}44` } : {}) }}>
                             <TableCell sx={{ ...tableCellSx, color: TOKENS.textSub, fontFamily: "'DM Mono', monospace", fontSize: 11 }}>{idx + 1}</TableCell>
-                            <TableCell sx={{ ...tableCellSx, fontWeight: 600 }}>{l.name}</TableCell>
+                            <TableCell sx={{ ...tableCellSx, fontWeight: 600 }}>
+                              {l.name}
+                              {isInactive && (
+                                <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 700, color: TOKENS.textSub }}>({l.status})</span>
+                              )}
+                            </TableCell>
                             <TableCell sx={{ ...tableCellSx, color: TOKENS.textSub, fontSize: 12 }}>{l.email}</TableCell>
                             <TableCell sx={{ ...tableCellSx, color: TOKENS.textSub, fontFamily: "'DM Mono', monospace", fontSize: 12 }}>{l.server_id || "—"}</TableCell>
                             <TableCell sx={{ ...tableCellSx, py: 0.5 }}>
@@ -1041,8 +1048,8 @@ function MarkSheet() {
                                 <span>
                                   <TextField size="small" value={points}
                                     onChange={e => handleMarksInput(l.id, e.target.value)}
-                                    placeholder={marksEntryLocked ? "" : "e.g. 10.5 or AB"}
-                                    disabled={marksEntryLocked}
+                                    placeholder={(marksEntryLocked || isInactive) ? "" : "e.g. 10.5 or AB"}
+                                    disabled={marksEntryLocked || isInactive}
                                     inputProps={{ style: { fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 700, textTransform: "uppercase" } }}
                                     sx={{ width: 110, "& .MuiInputBase-root": { borderRadius: "8px", background: marksEntryLocked ? TOKENS.surfaceAlt : hasMarks ? (isAbsent ? "#fef3c7" : TOKENS.accentLight) : "transparent", "& .MuiOutlinedInput-notchedOutline": { borderColor: marksEntryLocked ? TOKENS.border : hasMarks ? (isAbsent ? TOKENS.warning.fill + "66" : TOKENS.accent + "44") : TOKENS.border }, "&:hover .MuiOutlinedInput-notchedOutline": { borderColor: marksEntryLocked ? TOKENS.border : TOKENS.accent } } }}
                                   />

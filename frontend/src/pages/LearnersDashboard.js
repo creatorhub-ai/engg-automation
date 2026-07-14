@@ -33,6 +33,7 @@ import SearchIcon from "@mui/icons-material/Search";
 import PersonAddIcon from "@mui/icons-material/PersonAdd";
 import MenuBookIcon from "@mui/icons-material/MenuBook";
 import EditIcon from "@mui/icons-material/Edit";
+import { isInactiveLearnerStatus } from "../utils/learnerStatus";
 
 const API_BASE = "https://engg-automation-f191.onrender.com";
 
@@ -84,6 +85,8 @@ export default function LearnersDashboard({ user, token }) {
       case "disabled":
         return "warning";
       case "dropout":
+        return "default";
+      case "batch movement":
         return "default";
       default:
         return "default";
@@ -313,6 +316,7 @@ export default function LearnersDashboard({ user, token }) {
                 <MenuItem value="Enabled">Enabled</MenuItem>
                 <MenuItem value="Disabled">Disabled</MenuItem>
                 <MenuItem value="Dropout">Dropout</MenuItem>
+                <MenuItem value="Batch Movement">Batch Movement</MenuItem>
               </Select>
             </FormControl>
           </Grid>
@@ -381,10 +385,13 @@ export default function LearnersDashboard({ user, token }) {
               <TableBody>
                 {batchLearners.map((raw, i) => {
                   const l = normalizeLearner(raw);
-                  const isDropout =
-                    (l.status || "").toLowerCase() === "dropout";
+                  const isInactive = isInactiveLearnerStatus(l.status);
                   return (
-                    <TableRow key={`${l.email}-${l.batch_no}`} hover>
+                    <TableRow
+                      key={`${l.email}-${l.batch_no}`}
+                      hover
+                      sx={isInactive ? { opacity: 0.55, background: "#f3f4f6" } : undefined}
+                    >
                       <TableCell>{i + 1}</TableCell>
                       <TableCell>{l.name}</TableCell>
                       <TableCell>{l.email}</TableCell>
@@ -404,7 +411,7 @@ export default function LearnersDashboard({ user, token }) {
                               <IconButton
                                 size="small"
                                 onClick={() => handleStatusChange(l)}
-                                disabled={statusUpdating || isDropout}
+                                disabled={statusUpdating}
                               >
                                 <EditIcon />
                               </IconButton>
@@ -511,6 +518,7 @@ export default function LearnersDashboard({ user, token }) {
               <MenuItem value="Enabled">Enabled</MenuItem>
               <MenuItem value="Disabled">Disabled</MenuItem>
               <MenuItem value="Dropout">Dropout</MenuItem>
+              <MenuItem value="Batch Movement">Batch Movement</MenuItem>
             </TextField>
           </DialogContent>
           <DialogActions>

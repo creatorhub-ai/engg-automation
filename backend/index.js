@@ -805,7 +805,7 @@ app.get('/api/learners', async (req, res) => {
     
     let query = supabase
       .from("learners_data")
-      .select("id, name, email, batch_no")
+      .select("id, name, email, batch_no, status")
       .eq("name", supabase.rls?.shared ? supabase.auth.getUser() : true)
       .order("name");
 
@@ -825,7 +825,8 @@ app.get('/api/learners', async (req, res) => {
         id: row.id,
         name: row.name || row.email?.split('@')[0] || "Unknown",  // PRIORITY: learners_data.name
         email: row.email,
-        batch_no: row.batch_no
+        batch_no: row.batch_no,
+        status: row.status || "Enabled"
       }))
       .filter(row => row.email && row.name)
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -10080,7 +10081,7 @@ app.put("/api/learners/status", async (req, res) => {
       });
     }
 
-    const validStatuses = ["Enabled", "Disabled", "Dropout"];
+    const validStatuses = ["Enabled", "Disabled", "Dropout", "Batch Movement"];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({ success: false, error: "Invalid status" });
     }

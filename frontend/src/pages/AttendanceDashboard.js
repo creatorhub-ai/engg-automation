@@ -1,5 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import axios from "axios";
+import { isInactiveLearnerStatus } from "../utils/learnerStatus";
+
+// A learner is "locked" (greyed, non-markable) when Disabled, or inactive
+// (Dropout / Batch Movement).
+const isLearnerLocked = (l) => l?.status === "Disabled" || isInactiveLearnerStatus(l?.status);
 import {
   Box,
   Typography,
@@ -181,8 +186,9 @@ export default function AttendanceDashboard({ token, user }) {
         ]);
 
         if (learnersResult.status === "fulfilled") {
-          const filteredLearners = (learnersResult.value.data || []).filter((l) => l.status !== "Dropout");
-          setLearners(filteredLearners);
+          // Keep inactive learners (Dropout / Batch Movement) in the list — they
+          // are shown greyed & locked rather than removed.
+          setLearners(learnersResult.value.data || []);
         } else {
           console.error(learnersResult.reason);
           setLearners([]);
@@ -257,7 +263,7 @@ export default function AttendanceDashboard({ token, user }) {
       learners.forEach((learner) => {
         newAttendance[learner.email] = { [today]: {} };
         for (let session = 1; session <= sessionsPerDay; session++) {
-          if (learner.status === "Disabled") {
+          if (isLearnerLocked(learner)) {
             newAttendance[learner.email][today][session] = {
               status:      "NA",
               savedStatus: "NA",
@@ -509,7 +515,7 @@ export default function AttendanceDashboard({ token, user }) {
   }
 
   /* ── Summary stats (counted per learner per day, not per session) ── */
-  const totalSessions = learners.filter((l) => l.status !== "Disabled").length * sessionsPerDay;
+  const totalSessions = learners.filter((l) => !isLearnerLocked(l)).length * sessionsPerDay;
 
   const markedCount = Object.values(attendance).reduce((sum, dates) =>
     sum + Object.values(dates).reduce((s2, sessions) =>
@@ -518,7 +524,7 @@ export default function AttendanceDashboard({ token, user }) {
   let presentCount = 0;
   let absentCount  = 0;
   learners.forEach((l) => {
-    if (l.status === "Disabled") return;
+    if (isLearnerLocked(l)) return;
     const daily = getDailyStatus(l.email);
     if (daily === "P") presentCount += 1;
     else if (daily === "A") absentCount += 1;
@@ -772,13 +778,15 @@ export default function AttendanceDashboard({ token, user }) {
               <TableBody>
                 {learners.map((learner, idx) => {
                   const isDirty       = dirtyEmails.has(learner.email);
-                  const isDisabled    = learner.status === "Disabled";
+                  const isDisabled    = isLearnerLocked(learner);
+                  const isInactive    = isInactiveLearnerStatus(learner.status);
                   const savedSessions = isDisabled ? 0 : getSavedCount(learner.email);
                   const fullySaved    = !isDisabled && savedSessions === sessionsPerDay;
                   return (
                     <TableRow
                       key={learner.email}
                       sx={{
+                        ...(isInactive ? { opacity: 0.5 } : {}),
                         "&:nth-of-type(even)": { background: T.surfaceAlt },
                         "&:hover":             { background: T.accentLight, transition: "background 0.15s" },
                         ...(isDirty
