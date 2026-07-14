@@ -14,7 +14,7 @@ import {
   Fade,
 } from "@mui/material";
 
-const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
+const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation-f191.onrender.com";
 
 export default function SoftSkillAnnouncement({ user }) {
   const [batches, setBatches] = useState([]);

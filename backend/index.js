@@ -6974,7 +6974,7 @@ app.post("/api/confirm-mock-interview", async (req, res) => {
     console.log('✅ [Trainer Confirmation] Coordinator found:', coordinators.email);
 
     // 5. Compose coordinator email
-    const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
+    const API_BASE = process.env.REACT_APP_API_URL || "https://engg-automation-f191.onrender.com";
     let mailHtml = "";
     let subject = "";
     

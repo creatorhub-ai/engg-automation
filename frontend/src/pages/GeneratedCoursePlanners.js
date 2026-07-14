@@ -32,7 +32,7 @@ import {
 } from "@mui/icons-material";
 
 const API_BASE =
-  process.env.REACT_APP_API_URL || "https://engg-automation.onrender.com";
+  process.env.REACT_APP_API_URL || "https://engg-automation-f191.onrender.com";
 
 // Lists course planners produced by the "Generate Course Planner" flow (run by
 // trainers) and lets Admin / Manager / Coordinator view or download each one.
