@@ -359,6 +359,7 @@ function MarkSheet() {
   // window close date. Stored as the "open until" timestamp so it auto-expires;
   // the button stays clickable to re-open. Reset on any selection change.
   const [manualEntryOpenUntil,    setManualEntryOpenUntil]    = useState(null);
+  const [requestingExt,           setRequestingExt]           = useState(false);
   // Incremented to force re-load when switching between final_project/viva
   // on the same batch+date (where no other dependency changes).
   const [autoLoadTrigger,         setAutoLoadTrigger]         = useState(0);
@@ -750,6 +751,43 @@ function MarkSheet() {
     setTimeout(() => setMessage(""), 5000);
   };
 
+  /* ── Request Extension (Trainer) ────────────────────────────────────────
+   * A trainer raises a request; it appears in the Mark Extension Report where
+   * an Admin/Manager/Coordinator can approve it (which opens the window for a
+   * day). Does not change the window itself — only files a request. */
+  const handleRequestExtension = async () => {
+    if (isPrivileged || isAutoDateAssessment || !batchNo || !selectedDate) return;
+    let su = {};
+    try { su = JSON.parse(localStorage.getItem("userSession") || "{}"); } catch { su = {}; }
+    setRequestingExt(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/mark-extension/request`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          batch_no: batchNo,
+          assessment_type: assessmentType,
+          assessment_date: selectedDate,
+          week_no: selectedWeekNo || null,
+          trainer_email: su.email || null,
+          trainer_name: su.name || null,
+          reason: null,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        setMessage("✅ Extension request sent. An Admin / Manager / Coordinator will review it.");
+      } else {
+        setMessage(`❌ ${data.error || "Could not send the request."}`);
+      }
+    } catch {
+      setMessage("❌ Could not send the request. Please try again.");
+    } finally {
+      setRequestingExt(false);
+      setTimeout(() => setMessage(""), 6000);
+    }
+  };
+
   /* ── Save Marks ─────────────────────────────────────────────────────────
    *
    * IMPORTANT: assessment_date is always included in the payload.
@@ -876,6 +914,18 @@ function MarkSheet() {
                         sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 12, borderRadius: "10px", textTransform: "none", color: TOKENS.accent, borderColor: `${TOKENS.accent}66`, whiteSpace: "nowrap", "&:hover": { borderColor: TOKENS.accent, background: `${TOKENS.accent}11` } }}>
                         Open Mark Entry
                       </Button>
+                    </Tooltip>
+                  )}
+                  {!isPrivileged && !isAutoDateAssessment && selectedDate && (
+                    <Tooltip title="Ask an Admin / Manager / Coordinator to re-open the mark entry window for this assessment.">
+                      <span>
+                        <Button variant="contained" size="small" onClick={handleRequestExtension}
+                          disabled={requestingExt}
+                          startIcon={<LockOpenIcon sx={{ fontSize: 14 }} />}
+                          sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 12, borderRadius: "10px", textTransform: "none", background: TOKENS.accent, whiteSpace: "nowrap", "&:hover": { background: "#2a3fd4" } }}>
+                          {requestingExt ? "Requesting…" : "Request Extension"}
+                        </Button>
+                      </span>
                     </Tooltip>
                   )}
                 </Box>

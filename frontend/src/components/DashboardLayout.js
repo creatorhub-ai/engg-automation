@@ -22,6 +22,7 @@ import {
   PersonAdd as TrainerAssignmentIcon,
   EditCalendar as CoursePlannerIcon,
   ListAlt as GeneratedPlannersIcon,
+  RuleFolder as MarkExtensionIcon,
 } from "@mui/icons-material";
 
 // Updated Icon mapping for all menu items
@@ -50,6 +51,7 @@ const ICON_MAP = {
   "/leave-apply": <PeopleIcon />,
   "/course-planner-generator": <CoursePlannerIcon />,
   "/generated-course-planners": <GeneratedPlannersIcon />,
+  "/mark-extension-report": <MarkExtensionIcon />,
 };
 
 // Define menus that match the routes in App.js
@@ -70,6 +72,7 @@ const MENUS_BY_ROLE = {
     { id: 14, name: "Announcement", path: "/announcement" },
     { id: 18, name: "Course Planner Generator", path: "/course-planner-generator" },
     { id: 19, name: "Generated Course Planners", path: "/generated-course-planners" },
+    { id: 20, name: "Mark Extension Report", path: "/mark-extension-report" },
     { id: 17, name: "Apply Leave", path: "/leave-apply" },
   ],
   manager: [
@@ -85,6 +88,7 @@ const MENUS_BY_ROLE = {
     { id: 12, name: "Announcement", path: "/announcement" },
     { id: 15, name: "Course Planner Generator", path: "/course-planner-generator" },
     { id: 16, name: "Generated Course Planners", path: "/generated-course-planners" },
+    { id: 21, name: "Mark Extension Report", path: "/mark-extension-report" },
     { id: 14, name: "Apply Leave", path: "/leave-apply" },
   ],
   trainer: [
@@ -103,6 +107,7 @@ const MENUS_BY_ROLE = {
     { id: 7, name: "Announcement", path: "/announcement" },
     { id: 9, name: "Course Planner Generator", path: "/course-planner-generator" },
     { id: 10, name: "Generated Course Planners", path: "/generated-course-planners" },
+    { id: 22, name: "Mark Extension Report", path: "/mark-extension-report" },
     { id: 8, name: "Apply Leave", path: "/leave-apply" },
   ],
   sales: [

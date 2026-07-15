@@ -1218,6 +1218,168 @@ app.post("/api/marks/mark-entry-open", (req, res) => {
   }
 });
 
+// ───────────────────────────────────────────────────────────────────────────
+// Mark-entry extension REQUESTS (trainer → admin/manager/coordinator approval).
+// A trainer whose window is closed clicks "Request Extension" in the Mark Sheet;
+// the request lands here and shows up in the Mark Extension Report. On approve,
+// we open the window for that (batch, assessment_type, date) until 11:59 PM of
+// the NEXT day (IST) by writing the same window-extension file store the Mark
+// Sheet reads. Persisted to a JSON file (no DB dependency), like the stores
+// above.
+// ───────────────────────────────────────────────────────────────────────────
+const MARK_REQ_FILE = path.join(MARK_EXT_DIR, "mark-extension-requests.json");
+function readMarkReqStore() {
+  try {
+    const arr = JSON.parse(fs.readFileSync(MARK_REQ_FILE, "utf-8"));
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+function writeMarkReqStore(list) {
+  try {
+    fs.mkdirSync(MARK_EXT_DIR, { recursive: true });
+    fs.writeFileSync(MARK_REQ_FILE, JSON.stringify(list));
+    return true;
+  } catch (e) {
+    console.error("mark-extension-requests store write error:", e);
+    return false;
+  }
+}
+// Tomorrow 23:59:59.999 in IST (UTC+5:30), returned as a UTC ISO string.
+function nextDayEndIstISO() {
+  const IST = 5.5 * 60 * 60 * 1000;
+  const nowIst = new Date(Date.now() + IST);
+  const y = nowIst.getUTCFullYear();
+  const m = nowIst.getUTCMonth();
+  const d = nowIst.getUTCDate();
+  return new Date(Date.UTC(y, m, d + 1, 23, 59, 59, 999) - IST).toISOString();
+}
+
+// Trainer raises an extension request.
+app.post("/api/mark-extension/request", (req, res) => {
+  try {
+    const {
+      batch_no, assessment_type, assessment_date,
+      week_no, trainer_email, trainer_name, reason,
+    } = req.body || {};
+    if (!batch_no || !assessment_type || !assessment_date) {
+      return res.status(400).json({
+        error: "batch_no, assessment_type and assessment_date are required",
+      });
+    }
+
+    const list = readMarkReqStore();
+
+    // Avoid duplicate pending requests for the same assessment instance.
+    const dup = list.find(
+      (r) =>
+        r.status === "pending" &&
+        r.batch_no === batch_no &&
+        r.assessment_type === assessment_type &&
+        r.assessment_date === assessment_date
+    );
+    if (dup) {
+      return res.json({ success: false, error: "A pending request already exists for this assessment." });
+    }
+
+    const request = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      batch_no,
+      assessment_type,
+      assessment_date,
+      week_no: week_no ?? null,
+      trainer_email: trainer_email || null,
+      trainer_name: trainer_name || null,
+      reason: reason || null,
+      status: "pending",
+      created_at: new Date().toISOString(),
+      decided_at: null,
+      decided_by: null,
+      extended_until: null,
+    };
+    list.unshift(request);
+    if (!writeMarkReqStore(list)) {
+      return res.status(500).json({ error: "Could not save the request" });
+    }
+    return res.json({ success: true, request_id: request.id });
+  } catch (err) {
+    console.error("mark-extension request error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// List requests (default: pending) for the Mark Extension Report.
+app.get("/api/mark-extension/list", (req, res) => {
+  try {
+    const status = req.query.status || "pending";
+    const list = readMarkReqStore();
+    const filtered = status === "all" ? list : list.filter((r) => r.status === status);
+    return res.json({ requests: filtered });
+  } catch (err) {
+    console.error("mark-extension list error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Approve a request → open the window until tomorrow 11:59 PM (IST).
+app.post("/api/mark-extension/:id/approve", (req, res) => {
+  try {
+    const { id } = req.params;
+    const decidedBy = (req.body && req.body.decided_by) || null;
+
+    const list = readMarkReqStore();
+    const reqRow = list.find((r) => r.id === id);
+    if (!reqRow) return res.status(404).json({ error: "Request not found" });
+    if (reqRow.status !== "pending") {
+      return res.status(400).json({ error: `Request already ${reqRow.status}` });
+    }
+
+    // Open the mark-entry window for this assessment (the store the Mark Sheet
+    // reads via GET /api/marks/window-extension).
+    const untilIso = nextDayEndIstISO();
+    const winStore = readMarkExtStore();
+    winStore[markExtKey(reqRow.batch_no, reqRow.assessment_type, reqRow.assessment_date)] = untilIso;
+    if (!writeMarkExtStore(winStore)) {
+      return res.status(500).json({ error: "Could not open the window" });
+    }
+
+    reqRow.status = "approved";
+    reqRow.decided_at = new Date().toISOString();
+    reqRow.decided_by = decidedBy;
+    reqRow.extended_until = untilIso;
+    writeMarkReqStore(list);
+
+    return res.json({ success: true, extended_until: untilIso });
+  } catch (err) {
+    console.error("mark-extension approve error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Reject a request.
+app.post("/api/mark-extension/:id/reject", (req, res) => {
+  try {
+    const { id } = req.params;
+    const decidedBy = (req.body && req.body.decided_by) || null;
+
+    const list = readMarkReqStore();
+    const reqRow = list.find((r) => r.id === id);
+    if (!reqRow) return res.status(404).json({ error: "Request not found" });
+    if (reqRow.status !== "pending") {
+      return res.status(400).json({ error: `Request already ${reqRow.status}` });
+    }
+    reqRow.status = "rejected";
+    reqRow.decided_at = new Date().toISOString();
+    reqRow.decided_by = decidedBy;
+    writeMarkReqStore(list);
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("mark-extension reject error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // 2) GET /api/marks/:assessmentType — load existing marks
 app.get("/api/marks/:assessmentType", async (req, res, next) => {
   const { assessmentType } = req.params;

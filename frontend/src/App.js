@@ -33,6 +33,7 @@ import ClassroomMatrixDashboard from "./pages/ClassroomMatrixDashboard";
 import LeaveApply from "./pages/LeaveApply";
 import CoursePlannerGenerator from "./pages/CoursePlannerGenerator";
 import GeneratedCoursePlanners from "./pages/GeneratedCoursePlanners";
+import MarkExtensionReport from "./pages/MarkExtensionReport";
 
 const roleMenus = {
   admin: [
@@ -60,6 +61,7 @@ const roleMenus = {
     { text: "Classroom Occupancy", path: "/classroom-matrix" },
     { text: "Course Planner Generator", path: "/course-planner-generator" },
     { text: "Generated Course Planners", path: "/generated-course-planners" },
+    { text: "Mark Extension Report", path: "/mark-extension-report" },
     { text: "Apply Leave", path: "/leave-apply" },
   ],
   manager: [
@@ -83,6 +85,7 @@ const roleMenus = {
     { text: "Marks Dashboard", path: "/marks/entry" },
     { text: "Course Planner Generator", path: "/course-planner-generator" },
     { text: "Generated Course Planners", path: "/generated-course-planners" },
+    { text: "Mark Extension Report", path: "/mark-extension-report" },
     { text: "Apply Leave", path: "/leave-apply" },
   ],
   trainer: [
@@ -106,6 +109,7 @@ const roleMenus = {
     { text: "Announcement", path: "/announcement" },
     { text: "Course Planner Generator", path: "/course-planner-generator" },
     { text: "Generated Course Planners", path: "/generated-course-planners" },
+    { text: "Mark Extension Report", path: "/mark-extension-report" },
     { text: "Apply Leave", path: "/leave-apply" },
   ],
   sales: [
@@ -198,6 +202,8 @@ function getComponentForPath(path, login) {
       return <CoursePlannerGenerator user={login} />;
     case "/generated-course-planners":
       return <GeneratedCoursePlanners user={login} />;
+    case "/mark-extension-report":
+      return <MarkExtensionReport user={login} />;
     default:
       return <div>Page not found</div>;
   }
