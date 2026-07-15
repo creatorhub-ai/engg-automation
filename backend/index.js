@@ -1338,11 +1338,20 @@ app.post("/api/mark-extension/:id/approve", (req, res) => {
     // Open the mark-entry window for this assessment (the store the Mark Sheet
     // reads via GET /api/marks/window-extension).
     const untilIso = nextDayEndIstISO();
+    const key = markExtKey(reqRow.batch_no, reqRow.assessment_type, reqRow.assessment_date);
+
     const winStore = readMarkExtStore();
-    winStore[markExtKey(reqRow.batch_no, reqRow.assessment_type, reqRow.assessment_date)] = untilIso;
+    winStore[key] = untilIso;
     if (!writeMarkExtStore(winStore)) {
       return res.status(500).json({ error: "Could not open the window" });
     }
+
+    // Also open the mark-entry FIELDS for the same period (the store the Mark
+    // Sheet reads via GET /api/marks/mark-entry-open), so approving unlocks
+    // editing even when the marks were already saved — not just the date.
+    const openStore = readMarkOpenStore();
+    openStore[key] = untilIso;
+    writeMarkOpenStore(openStore);
 
     reqRow.status = "approved";
     reqRow.decided_at = new Date().toISOString();
