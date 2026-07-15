@@ -34,7 +34,7 @@ const API_BASE =
 // next day.
 export default function MarkExtensionReport({ user }) {
   const [requests, setRequests] = useState([]);
-  const [statusFilter, setStatusFilter] = useState("pending");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState(null);
   const [message, setMessage] = useState("");

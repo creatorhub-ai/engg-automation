@@ -7,7 +7,7 @@ import {
   BarChart         as WeeklyIcon,
 } from "@mui/icons-material";
 import DateChangeReport     from "./DateChangeReport";
-import MarksExtensionReport from "./MarksExtensionReport";
+import MarkExtensionReport  from "./MarkExtensionReport";
 import AttendanceReport     from "./AttendanceReport";
 import WeeklyReports        from "./WeeklyReports";
 
@@ -73,7 +73,7 @@ export default function ReportsDashboard({ user, token }) {
       {/* Content — each sub-dashboard handles its own background */}
       <Box>
         {activeTab === "date-change"      && <DateChangeReport     user={user} token={token} />}
-        {activeTab === "marks-extension"  && <MarksExtensionReport user={user} token={token} />}
+        {activeTab === "marks-extension"  && <MarkExtensionReport  user={user} token={token} />}
         {activeTab === "attendance-report"&& <AttendanceReport     user={user} token={token} />}
         {activeTab === "weekly-reports"   && <WeeklyReports        user={user} token={token} />}
       </Box>
