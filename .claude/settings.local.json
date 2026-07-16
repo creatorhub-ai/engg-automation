@@ -36,7 +36,9 @@
       "Bash(BABEL_ENV=development NODE_ENV=development node -e \"require\\('@babel/core'\\).transformFileSync\\('src/pages/AttendanceReport.js',{presets:[require.resolve\\('babel-preset-react-app'\\)]}\\); console.log\\('AttendanceReport.js compiles OK'\\);\")",
       "Bash(BABEL_ENV=development NODE_ENV=development node -e \"require\\('@babel/core'\\).transformFileSync\\('src/utils/learnerStatus.js',{presets:[require.resolve\\('babel-preset-react-app'\\)]}\\); console.log\\('learnerStatus.js OK'\\);\")",
       "Bash(node --check src/utils/learnerStatus.js)",
-      "Bash(node --check backend/index.js)"
+      "Bash(node --check backend/index.js)",
+      "Bash(grep -n 'DashboardLayout\\\\|import '\\\\''./\\\\|import \"./' __TRACKED_VAR__/src/App.js)",
+      "Bash(BABEL_ENV=development NODE_ENV=development node -e ' *)"
     ]
   }
 }
