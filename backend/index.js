@@ -82,7 +82,11 @@ const authenticate = (req, res, next) => {
 // =====================================================
 const ALLOWED_ORIGINS = [
   "https://engg-automation-6zzs.onrender.com",
-  "http://localhost:3000"
+  "http://localhost:3000",
+  // Capacitor mobile app origins (APK / iOS)
+  "https://localhost",
+  "http://localhost",
+  "capacitor://localhost"
 ];
 
 app.use((req, res, next) => {
@@ -103,7 +107,11 @@ app.use((req, res, next) => {
 app.use(cors({
   origin: [
     "https://engg-automation-6zzs.onrender.com",
-    "http://localhost:3000"
+    "http://localhost:3000",
+    // Capacitor mobile app origins (APK / iOS)
+    "https://localhost",
+    "http://localhost",
+    "capacitor://localhost"
   ],
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE"],
