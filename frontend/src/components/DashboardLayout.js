@@ -51,7 +51,6 @@ const ICON_MAP = {
   "/leave-apply": <PeopleIcon />,
   "/course-planner-generator": <CoursePlannerIcon />,
   "/generated-course-planners": <GeneratedPlannersIcon />,
-  "/profile": <ProfileIcon />,
 };
 
 // Define menus that match the routes in App.js
