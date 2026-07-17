@@ -33,6 +33,7 @@ import ClassroomMatrixDashboard from "./pages/ClassroomMatrixDashboard";
 import LeaveApply from "./pages/LeaveApply";
 import CoursePlannerGenerator from "./pages/CoursePlannerGenerator";
 import GeneratedCoursePlanners from "./pages/GeneratedCoursePlanners";
+import ProfileDashboard from "./pages/ProfileDashboard";
 
 const roleMenus = {
   admin: [
@@ -214,6 +215,8 @@ function RoleRouter({ login, onLogout }) {
         {sidebarMenu.map(({ path }) => (
           <Route key={path} path={path} element={getComponentForPath(path, login)} />
         ))}
+        {/* Profile is available to every role */}
+        <Route path="/profile" element={<ProfileDashboard user={login} />} />
         <Route path="*" element={<Navigate to={defaultRoute} replace />} />
       </Routes>
     </DashboardLayout>

@@ -22,6 +22,7 @@ import {
   PersonAdd as TrainerAssignmentIcon,
   EditCalendar as CoursePlannerIcon,
   ListAlt as GeneratedPlannersIcon,
+  AccountCircle as ProfileIcon,
 } from "@mui/icons-material";
 
 // Updated Icon mapping for all menu items
@@ -50,6 +51,7 @@ const ICON_MAP = {
   "/leave-apply": <PeopleIcon />,
   "/course-planner-generator": <CoursePlannerIcon />,
   "/generated-course-planners": <GeneratedPlannersIcon />,
+  "/profile": <ProfileIcon />,
 };
 
 // Define menus that match the routes in App.js
@@ -176,7 +178,10 @@ export default function DashboardLayout({ user, logout, children }) {
   useEffect(() => {
     console.log("User object in DashboardLayout:", user);
     if (user && user.role) {
-      const menuItems = MENUS_BY_ROLE[user.role] || [];
+      const menuItems = [
+        ...(MENUS_BY_ROLE[user.role] || []),
+        { id: 9999, name: "Profile", path: "/profile" },
+      ];
       setMenu(menuItems);
       console.log("[DashboardLayout] Role:", user.role);
       console.log("[DashboardLayout] menu items loaded:", menuItems);
