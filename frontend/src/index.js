@@ -4,6 +4,7 @@ import { ThemeProvider, CssBaseline } from "@mui/material";
 import App from "./App";
 import theme from "./theme";
 import { AuthProvider } from "./context/AuthContext";
+import "./mobile.css";
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(

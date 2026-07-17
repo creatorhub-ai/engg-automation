@@ -1,5 +1,5 @@
 // frontend/src/components/DashboardLayout.js
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useNavigate, Outlet, useLocation } from "react-router-dom";
 import {
   Home as HomeIcon,
@@ -116,8 +116,62 @@ const MENUS_BY_ROLE = {
 export default function DashboardLayout({ user, logout, children }) {
   const [menu, setMenu] = useState([]);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isMobile, setIsMobile] = useState(
+    typeof window !== "undefined" ? window.innerWidth <= 768 : false
+  );
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const contentRef = useRef(null);
   const navigate = useNavigate();
   const location = useLocation();
+
+  // Track phone-sized viewports (drives the mobile nav + card tables).
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener("resize", onResize);
+    onResize();
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  // Close the drawer whenever the route changes.
+  useEffect(() => {
+    setDrawerOpen(false);
+  }, [location.pathname]);
+
+  // ── Auto-label table cells for the mobile "card" view ──
+  // On phones the CSS hides table headers and stacks each row as a card;
+  // this copies each column's header text onto its cells (data-label) so
+  // every card reads "Label: Value". Runs on every page, no per-page edits.
+  useEffect(() => {
+    if (!isMobile) return;
+    const root = contentRef.current;
+    if (!root) return;
+
+    const stamp = () => {
+      root.querySelectorAll("table").forEach((table) => {
+        const heads = table.querySelectorAll("thead th");
+        if (!heads.length) return;
+        const labels = Array.from(heads).map((th) =>
+          (th.textContent || "").trim()
+        );
+        table.querySelectorAll("tbody tr").forEach((tr) => {
+          let i = 0;
+          Array.from(tr.children).forEach((cell) => {
+            if (cell.tagName === "TD") {
+              cell.setAttribute("data-label", labels[i] || "");
+              i += 1;
+            }
+          });
+        });
+      });
+    };
+
+    stamp();
+    const observer = new MutationObserver(() =>
+      window.requestAnimationFrame(stamp)
+    );
+    observer.observe(root, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [isMobile, location.pathname]);
 
   useEffect(() => {
     console.log("User object in DashboardLayout:", user);
@@ -155,7 +209,8 @@ export default function DashboardLayout({ user, logout, children }) {
   // Inline styles for guaranteed rendering
   const containerStyle = {
     display: "flex",
-    height: "100vh",
+    flexDirection: isMobile ? "column" : "row",
+    height: "100dvh",
     backgroundColor: "#749fcaff",
   };
 
@@ -261,6 +316,7 @@ export default function DashboardLayout({ user, logout, children }) {
           50% { transform: translateY(-16px); }
         }
         @keyframes eaSpinSlow { to { transform: rotate(360deg); } }
+        @keyframes eaSlideIn { from { transform: translateX(-100%); } to { transform: translateX(0); } }
         .ea-sidebar nav::-webkit-scrollbar { width: 6px; }
         .ea-sidebar nav::-webkit-scrollbar-thumb {
           background: rgba(120,160,230,0.35); border-radius: 6px;
@@ -272,7 +328,266 @@ export default function DashboardLayout({ user, logout, children }) {
         .ea-logo-badge:hover { transform: rotate(-8deg) scale(1.05); }
       `}</style>
 
-      {/* Collapsible Sidebar */}
+      {/* ── Mobile top app bar (phones only) ── */}
+      {isMobile && (
+        <header
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "12px",
+            padding: "calc(10px + var(--ea-safe-top)) 14px 10px",
+            background: "linear-gradient(160deg, #075399 0%, #0a3e74 100%)",
+            color: "#fff",
+            boxShadow: "0 2px 12px rgba(0, 21, 90, 0.35)",
+            zIndex: 20,
+            flexShrink: 0,
+          }}
+        >
+          <button
+            onClick={() => setDrawerOpen(true)}
+            aria-label="Open menu"
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "#fff",
+              cursor: "pointer",
+              display: "flex",
+              padding: "6px",
+            }}
+          >
+            <MenuIcon style={{ fontSize: "28px" }} />
+          </button>
+          <span
+            style={{
+              fontWeight: 700,
+              fontSize: "16px",
+              flex: 1,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            Engineering Automation
+          </span>
+          <button
+            onClick={handleLogout}
+            aria-label="Logout"
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "#fff",
+              cursor: "pointer",
+              display: "flex",
+              padding: "6px",
+            }}
+          >
+            <LogoutIcon />
+          </button>
+        </header>
+      )}
+
+      {/* ── Mobile slide-in drawer (phones only) ── */}
+      {isMobile && drawerOpen && (
+        <>
+          <div
+            onClick={() => setDrawerOpen(false)}
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(2, 17, 46, 0.5)",
+              zIndex: 30,
+            }}
+          />
+          <aside
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              bottom: 0,
+              width: "82%",
+              maxWidth: "300px",
+              background:
+                "linear-gradient(160deg, #075399 0%, #0a3e74 55%, #0f2747 100%)",
+              color: "#fff",
+              zIndex: 31,
+              display: "flex",
+              flexDirection: "column",
+              paddingTop: "var(--ea-safe-top)",
+              boxShadow: "8px 0 32px -8px rgba(0, 21, 90, 0.55)",
+              animation: "eaSlideIn 0.25s ease",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "12px",
+                padding: "16px",
+                borderBottom: "1px solid rgba(120,160,230,0.18)",
+              }}
+            >
+              <div
+                style={{
+                  width: "40px",
+                  height: "40px",
+                  borderRadius: "12px",
+                  background: "linear-gradient(135deg, #096dca, #fc5b32)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
+                }}
+              >
+                <MenuIcon style={{ color: "#fff", fontSize: "24px" }} />
+              </div>
+              <span style={{ fontWeight: "bold", fontSize: "16px", flex: 1 }}>
+                Engineering Automation
+              </span>
+              <button
+                onClick={() => setDrawerOpen(false)}
+                aria-label="Close menu"
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "#fff",
+                  cursor: "pointer",
+                  fontSize: "22px",
+                  lineHeight: 1,
+                  padding: "4px 8px",
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Profile badge */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "12px",
+                padding: "14px 16px",
+                margin: "12px",
+                borderRadius: "16px",
+                background: "rgba(255,255,255,0.06)",
+                border: "1px solid rgba(120,160,230,0.18)",
+              }}
+            >
+              <div
+                style={{
+                  width: "42px",
+                  height: "42px",
+                  borderRadius: "50%",
+                  flexShrink: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontWeight: 700,
+                  fontSize: "15px",
+                  color: "#fff",
+                  background: "linear-gradient(135deg, #ff8160, #fc5b32)",
+                }}
+              >
+                {initials}
+              </div>
+              <div style={{ overflow: "hidden" }}>
+                <div
+                  style={{
+                    fontSize: "14px",
+                    fontWeight: 700,
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  {displayName}
+                </div>
+                {roleLabel && (
+                  <span
+                    style={{
+                      display: "inline-block",
+                      marginTop: "3px",
+                      fontSize: "10px",
+                      fontWeight: 700,
+                      letterSpacing: "0.06em",
+                      textTransform: "uppercase",
+                      padding: "2px 8px",
+                      borderRadius: "20px",
+                      color: "#bfd3ff",
+                      background: "rgba(9,109,202,0.25)",
+                      border: "1px solid rgba(9,109,202,0.4)",
+                    }}
+                  >
+                    {roleLabel}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Menu items */}
+            <nav
+              style={{
+                flex: 1,
+                overflowY: "auto",
+                padding: "8px 12px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "6px",
+              }}
+            >
+              {menu.map((item) => {
+                const active = isActivePath(item.path);
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      navigate(item.path);
+                      setDrawerOpen(false);
+                    }}
+                    style={{
+                      width: "100%",
+                      display: "flex",
+                      alignItems: "center",
+                      padding: "13px 14px",
+                      borderRadius: "12px",
+                      background: active
+                        ? "linear-gradient(135deg, rgba(9,109,202,0.95), rgba(7,83,153,0.85))"
+                        : "transparent",
+                      border: "none",
+                      color: "#fff",
+                      fontSize: "15px",
+                      fontWeight: active ? 700 : 500,
+                      cursor: "pointer",
+                      textAlign: "left",
+                    }}
+                  >
+                    <span style={{ display: "flex", flexShrink: 0 }}>
+                      {ICON_MAP[item.path] || <HomeIcon />}
+                    </span>
+                    <span style={{ marginLeft: "16px" }}>{item.name}</span>
+                  </button>
+                );
+              })}
+            </nav>
+
+            {/* Logout */}
+            <div
+              style={{
+                padding: "16px 12px",
+                borderTop: "1px solid rgba(120,160,230,0.18)",
+              }}
+            >
+              <button onClick={handleLogout} style={logoutButtonStyle}>
+                <LogoutIcon />
+                <span style={{ marginLeft: "16px" }}>Logout</span>
+              </button>
+            </div>
+          </aside>
+        </>
+      )}
+
+      {/* Collapsible Sidebar (desktop only) */}
+      {!isMobile && (
       <aside
         className="ea-sidebar"
         style={sidebarStyle}
@@ -498,6 +813,7 @@ export default function DashboardLayout({ user, logout, children }) {
           </button>
         </div>
       </aside>
+      )}
 
       {/* Main Content */}
       <main style={mainStyle}>
@@ -534,7 +850,7 @@ export default function DashboardLayout({ user, logout, children }) {
             zIndex: 0,
           }}
         />
-        <div style={contentStyle}>
+        <div style={contentStyle} className="ea-content" ref={contentRef}>
           {children}
           <Outlet />
         </div>

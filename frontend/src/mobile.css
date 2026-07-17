@@ -1,0 +1,223 @@
+/* mobile.css — responsive adaptations for phone-sized screens.
+   Everything is scoped under @media (max-width: 768px), so the desktop
+   web UI is completely unchanged. Loaded globally from index.js.
+   Works for BOTH the website (on a phone) and the Capacitor APK, since
+   the app loads this same deployed site. */
+
+:root {
+  --ea-safe-top: env(safe-area-inset-top, 0px);
+  --ea-safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+@media (max-width: 768px) {
+  /* ---------- Global guards ---------- */
+  html,
+  body,
+  #root {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  .ea-content {
+    padding: 14px 12px calc(20px + var(--ea-safe-bottom)) !important;
+  }
+
+  .ea-content img,
+  .ea-content video,
+  .ea-content canvas,
+  .ea-content svg {
+    max-width: 100% !important;
+    height: auto;
+  }
+  .ea-content pre {
+    overflow-x: auto;
+    max-width: 100%;
+  }
+  .ea-content > * {
+    max-width: 100% !important;
+  }
+
+  /* ---------- Headings / typography ---------- */
+  .ea-content h1,
+  .ea-content .MuiTypography-h1,
+  .ea-content .MuiTypography-h2 {
+    font-size: 1.4rem !important;
+    line-height: 1.25 !important;
+  }
+  .ea-content h2,
+  .ea-content .MuiTypography-h3,
+  .ea-content .MuiTypography-h4 {
+    font-size: 1.2rem !important;
+    line-height: 1.3 !important;
+  }
+  .ea-content h3,
+  .ea-content .MuiTypography-h5,
+  .ea-content .MuiTypography-h6 {
+    font-size: 1.05rem !important;
+  }
+
+  /* ---------- Containers / cards / paper ---------- */
+  .ea-content .MuiContainer-root {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    max-width: 100% !important;
+  }
+  .ea-content .MuiPaper-root,
+  .ea-content .MuiCard-root {
+    max-width: 100% !important;
+    box-sizing: border-box;
+  }
+  .ea-content .MuiCardContent-root {
+    padding: 12px !important;
+  }
+
+  /* ---------- Grid / flex rows: stack vertically ---------- */
+  .ea-content .MuiGrid-container {
+    margin: 0 !important;
+    width: 100% !important;
+  }
+  .ea-content .MuiGrid-item {
+    max-width: 100% !important;
+    flex-basis: 100% !important;
+    padding-left: 0 !important;
+    padding-top: 10px !important;
+  }
+
+  /* ---------- Toolbars / filter bars: wrap instead of overflow ---------- */
+  .ea-content .MuiToolbar-root,
+  .ea-content .MuiCardHeader-root,
+  .ea-content .MuiStack-root[style*="row"] {
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+  }
+
+  /* ---------- Form controls: full width & tappable ---------- */
+  .ea-content .MuiFormControl-root,
+  .ea-content .MuiTextField-root,
+  .ea-content .MuiSelect-root,
+  .ea-content .MuiAutocomplete-root {
+    width: 100% !important;
+  }
+  .ea-content .MuiInputBase-input {
+    font-size: 16px !important; /* prevents iOS/Android zoom-on-focus */
+  }
+
+  /* ---------- Buttons: comfortable tap targets, wrap groups ---------- */
+  .ea-content .MuiButtonGroup-root {
+    flex-wrap: wrap;
+  }
+  .ea-content .MuiButton-root {
+    min-height: 42px;
+  }
+  /* Opt-in helper: add className="ea-block" to make a button full width */
+  .ea-content .MuiButton-root.ea-block,
+  .ea-content button.ea-block {
+    width: 100% !important;
+    margin: 4px 0 !important;
+  }
+
+  /* ---------- Tabs: let them scroll horizontally ---------- */
+  .ea-content .MuiTabs-root .MuiTabs-scroller {
+    overflow-x: auto !important;
+  }
+  .ea-content .MuiTab-root {
+    min-width: auto !important;
+    padding: 8px 12px !important;
+  }
+
+  /* ---------- Charts (recharts): never overflow ---------- */
+  .ea-content .recharts-wrapper,
+  .ea-content .recharts-surface {
+    max-width: 100% !important;
+  }
+
+  /* ============================================================
+     Data tables -> stacked cards.
+     Header row is hidden; each cell shows its column label
+     (injected as data-label by DashboardLayout) then its value.
+     ============================================================ */
+  .ea-content .MuiTableContainer-root {
+    overflow-x: visible !important;
+    box-shadow: none !important;
+    background: transparent !important;
+  }
+  .ea-content table {
+    width: 100% !important;
+    min-width: 0 !important;
+    border: 0 !important;
+    display: block;
+  }
+  .ea-content .MuiTable-root {
+    min-width: 0 !important;
+  }
+  .ea-content thead {
+    display: none !important;
+  }
+  .ea-content tbody {
+    display: block;
+    width: 100%;
+  }
+  .ea-content tbody tr {
+    display: block;
+    width: 100%;
+    margin: 0 0 12px 0;
+    padding: 4px 6px;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    background: #ffffff;
+    box-shadow: 0 1px 4px rgba(2, 32, 71, 0.08);
+    box-sizing: border-box;
+  }
+  .ea-content tbody td {
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: center;
+    gap: 12px;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    text-align: right !important;
+    white-space: normal !important;
+    word-break: break-word;
+    border: 0 !important;
+    border-bottom: 1px solid #f1f5f9 !important;
+    padding: 9px 10px !important;
+    font-size: 13px !important;
+  }
+  .ea-content tbody tr td:last-child {
+    border-bottom: 0 !important;
+  }
+  .ea-content tbody td::before {
+    content: attr(data-label);
+    flex: 0 0 42%;
+    text-align: left;
+    font-weight: 700;
+    color: #475569;
+    padding-right: 10px;
+  }
+  .ea-content tbody td[data-label=""]::before,
+  .ea-content tbody td:not([data-label])::before {
+    content: "";
+    flex: 0;
+    padding: 0;
+  }
+
+  /* ---------- Dialogs / modals: fit the screen ---------- */
+  .MuiDialog-paper {
+    margin: 10px !important;
+    width: calc(100% - 20px) !important;
+    max-width: calc(100% - 20px) !important;
+    max-height: calc(100% - 20px) !important;
+  }
+  .MuiMenu-paper,
+  .MuiPopover-paper {
+    max-width: calc(100vw - 24px) !important;
+  }
+
+  /* ---------- Snackbars stay within screen ---------- */
+  .MuiSnackbar-root {
+    left: 8px !important;
+    right: 8px !important;
+    bottom: calc(8px + var(--ea-safe-bottom)) !important;
+  }
+}
