@@ -177,10 +177,7 @@ export default function DashboardLayout({ user, logout, children }) {
   useEffect(() => {
     console.log("User object in DashboardLayout:", user);
     if (user && user.role) {
-      const menuItems = [
-        ...(MENUS_BY_ROLE[user.role] || []),
-        { id: 9999, name: "Profile", path: "/profile" },
-      ];
+      const menuItems = MENUS_BY_ROLE[user.role] || [];
       setMenu(menuItems);
       console.log("[DashboardLayout] Role:", user.role);
       console.log("[DashboardLayout] menu items loaded:", menuItems);
