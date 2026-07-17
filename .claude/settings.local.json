@@ -38,7 +38,9 @@
       "Bash(node --check src/utils/learnerStatus.js)",
       "Bash(node --check backend/index.js)",
       "Bash(grep -n 'DashboardLayout\\\\|import '\\\\''./\\\\|import \"./' __TRACKED_VAR__/src/App.js)",
-      "Bash(BABEL_ENV=development NODE_ENV=development node -e ' *)"
+      "Bash(BABEL_ENV=development NODE_ENV=development node -e ' *)",
+      "Bash(grep -iE @capacitor __TRACKED_VAR__/package.json)",
+      "Bash(grep -niE 'signingConfig|storeFile|keystore|release \\\\{|debug \\\\{' __TRACKED_VAR__/android/app/build.gradle)"
     ]
   }
 }
