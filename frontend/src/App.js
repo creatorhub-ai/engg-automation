@@ -34,6 +34,7 @@ import LeaveApply from "./pages/LeaveApply";
 import CoursePlannerGenerator from "./pages/CoursePlannerGenerator";
 import GeneratedCoursePlanners from "./pages/GeneratedCoursePlanners";
 import ProfileDashboard from "./pages/ProfileDashboard";
+import { initPush, teardownPush, bindHardwareBack } from "./push/pushClient";
 
 const roleMenus = {
   admin: [
@@ -257,6 +258,16 @@ export default function App() {
     checkSession();
   }, []);
 
+  // Register for native push notifications once logged in (no-op on the web).
+  useEffect(() => {
+    if (login) initPush(login);
+  }, [login]);
+
+  // Android hardware back button: minimise the app instead of closing it.
+  useEffect(() => {
+    bindHardwareBack();
+  }, []);
+
   function handleLogin(arg1, arg2, arg3) {
     let payload;
     if (typeof arg1 === "object" && arg1 !== null && !arg2 && !arg3) {
@@ -279,6 +290,7 @@ export default function App() {
   }
 
   function handleLogout() {
+    teardownPush();
     localStorage.removeItem("userSession");
     setLogin(null);
   }

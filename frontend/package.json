@@ -4,6 +4,10 @@
   "proxy": "http://localhost:5000",
   "private": true,
   "dependencies": {
+    "@capacitor/app": "^6.0.2",
+    "@capacitor/core": "^6.2.0",
+    "@capacitor/local-notifications": "^6.1.2",
+    "@capacitor/push-notifications": "^6.0.4",
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
     "@fullcalendar/daygrid": "^6.1.20",

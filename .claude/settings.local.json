@@ -40,7 +40,12 @@
       "Bash(grep -n 'DashboardLayout\\\\|import '\\\\''./\\\\|import \"./' __TRACKED_VAR__/src/App.js)",
       "Bash(BABEL_ENV=development NODE_ENV=development node -e ' *)",
       "Bash(grep -iE @capacitor __TRACKED_VAR__/package.json)",
-      "Bash(grep -niE 'signingConfig|storeFile|keystore|release \\\\{|debug \\\\{' __TRACKED_VAR__/android/app/build.gradle)"
+      "Bash(grep -niE 'signingConfig|storeFile|keystore|release \\\\{|debug \\\\{' __TRACKED_VAR__/android/app/build.gradle)",
+      "Bash(grep -rl initPush __TRACKED_VAR__/frontend/src)",
+      "Bash(grep -l initPush __TRACKED_VAR__/frontend/src/App.js)",
+      "Bash(cp '/c/Users/hariharan_chipedge/Music/engg-automation-git-file - Copy \\(2\\)/backend/push/firebaseAdmin.js' /c/Users/hariharan_chipedge/Music/engg-automation-git-file/backend/push/)",
+      "Bash(cp '/c/Users/hariharan_chipedge/Music/engg-automation-git-file - Copy \\(2\\)/backend/push/sendPush.js' /c/Users/hariharan_chipedge/Music/engg-automation-git-file/backend/push/)",
+      "Bash(cp '/c/Users/hariharan_chipedge/Music/engg-automation-git-file - Copy \\(2\\)/backend/routes/pushTokens.js' /c/Users/hariharan_chipedge/Music/engg-automation-git-file/backend/routes/)"
     ]
   }
 }
