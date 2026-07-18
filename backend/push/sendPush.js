@@ -123,4 +123,58 @@ export async function sendPushToEmails(emails, payload) {
   }
 }
 
+/**
+ * Look up the emails of all active users holding any of the given roles.
+ * Roles in `internal_users` are capitalized, e.g. "Manager", "Management",
+ * "Coordinator", "Trainer". Never throws — returns [] on any error.
+ * @param {string[]} roles
+ * @returns {Promise<string[]>}
+ */
+export async function getRoleEmails(roles) {
+  try {
+    const wanted = (Array.isArray(roles) ? roles : [roles]).filter(Boolean);
+    if (wanted.length === 0) return [];
+    const { data, error } = await supabase
+      .from("internal_users")
+      .select("email,is_active,role")
+      .in("role", wanted)
+      .eq("is_active", true);
+    if (error) {
+      console.error("❌ [push] getRoleEmails error:", error.message);
+      return [];
+    }
+    return (data || [])
+      .map((u) => (u.email || "").trim())
+      .filter((e) => e.includes("@"));
+  } catch (err) {
+    console.error("❌ [push] getRoleEmails exception:", err.message);
+    return [];
+  }
+}
+
+/** The roles that should receive "request / needs-action" notifications. */
+export const APPROVER_ROLES = ["Management", "Manager", "Coordinator"];
+
+/**
+ * Emails of everyone who approves requests (Admin/Management, Manager,
+ * Coordinator). Use for REQUEST-type events. Never throws.
+ * @returns {Promise<string[]>}
+ */
+export async function getApproverEmails() {
+  return getRoleEmails(APPROVER_ROLES);
+}
+
+/**
+ * Fire-and-forget helper: resolve recipients then push, never throwing and
+ * never blocking the response. Accepts a single email, an array, or a
+ * promise that resolves to either.
+ * @param {string|string[]|Promise<string|string[]>} emailsOrPromise
+ * @param {{title:string, body:string, data?:object}} payload
+ */
+export function notify(emailsOrPromise, payload) {
+  Promise.resolve(emailsOrPromise)
+    .then((emails) => sendPushToEmails(emails, payload))
+    .catch((err) => console.error("❌ [push] notify error:", err.message));
+}
+
 export default sendPushToEmails;

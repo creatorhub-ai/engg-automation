@@ -35,6 +35,7 @@ import CoursePlannerGenerator from "./pages/CoursePlannerGenerator";
 import GeneratedCoursePlanners from "./pages/GeneratedCoursePlanners";
 import ProfileDashboard from "./pages/ProfileDashboard";
 import { initPush, teardownPush, bindHardwareBack } from "./push/pushClient";
+import { initWebPush, teardownWebPush } from "./push/webPush";
 
 const roleMenus = {
   admin: [
@@ -258,9 +259,13 @@ export default function App() {
     checkSession();
   }, []);
 
-  // Register for native push notifications once logged in (no-op on the web).
+  // Register for push once logged in: native plugin on the app, Web Push in
+  // the browser. Each self-guards to its own platform, so both are safe here.
   useEffect(() => {
-    if (login) initPush(login);
+    if (login) {
+      initPush(login);
+      initWebPush(login);
+    }
   }, [login]);
 
   // Android hardware back button: minimise the app instead of closing it.
@@ -291,6 +296,7 @@ export default function App() {
 
   function handleLogout() {
     teardownPush();
+    teardownWebPush();
     localStorage.removeItem("userSession");
     setLogin(null);
   }

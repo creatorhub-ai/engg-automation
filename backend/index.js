@@ -37,6 +37,7 @@ import holidaysRoutes from "./routes/holidaysRoutes.js";
 import internalUsersRoutes from "./routes/internalUsersRoutes.js";
 import coursePlannerRoutes from "./routes/coursePlanner.js";
 import pushTokensRouter from "./routes/pushTokens.js";
+import { notify, getRoleEmails, getApproverEmails } from "./push/sendPush.js";
 
 dotenv.config();
 
@@ -929,6 +930,13 @@ app.post('/api/scheduleBatch', async (req, res) => {
     });
     if (insertError) throw insertError;
 
+    // 🔔 Notify approvers that a new batch was scheduled.
+    notify(getApproverEmails(), {
+      title: "New batch scheduled",
+      body: `Batch ${batch_no} (${domain}) was scheduled.`,
+      data: { type: "batch_scheduled", batch_no: String(batch_no) },
+    });
+
     res.json({
       message: 'Batch scheduled successfully',
       classroom: classroom.name,
@@ -1152,6 +1160,12 @@ app.post("/api/marks/window-extension", (req, res) => {
     if (!writeMarkExtStore(store)) {
       return res.status(500).json({ error: "Could not save the extension" });
     }
+    // 🔔 Notify the batch's trainers that their mark-entry window was extended.
+    notify(getDistinctTrainersForBatch(batch_no), {
+      title: "Mark-entry window extended",
+      body: `The window for ${batch_no} · ${assessment_type} is open until ${until.toLocaleString("en-IN")}.`,
+      data: { type: "window_extended", batch_no },
+    });
     return res.json({ success: true, extended_until: until.toISOString() });
   } catch (err) {
     console.error("window-extension set error:", err);
@@ -1221,6 +1235,12 @@ app.post("/api/marks/mark-entry-open", (req, res) => {
     if (!writeMarkOpenStore(store)) {
       return res.status(500).json({ error: "Could not open mark entry" });
     }
+    // 🔔 Notify the batch's trainers their mark-entry was opened.
+    notify(getDistinctTrainersForBatch(batch_no), {
+      title: "Mark entry opened",
+      body: `Mark entry for ${batch_no} · ${assessment_type} is now open.`,
+      data: { type: "mark_entry_open", batch_no: String(batch_no) },
+    });
     return res.json({ success: true, open_until: until.toISOString() });
   } catch (err) {
     console.error("mark-entry-open set error:", err);
@@ -1312,6 +1332,12 @@ app.post("/api/mark-extension/request", (req, res) => {
     if (!writeMarkReqStore(list)) {
       return res.status(500).json({ error: "Could not save the request" });
     }
+    // 🔔 Notify approvers that a new mark-extension request needs action.
+    notify(getApproverEmails(), {
+      title: "New mark-extension request",
+      body: `${trainer_name || trainer_email || "A trainer"} requested an extension for ${batch_no} · ${assessment_type}.`,
+      data: { type: "mark_extension_request", request_id: request.id, batch_no },
+    });
     return res.json({ success: true, request_id: request.id });
   } catch (err) {
     console.error("mark-extension request error:", err);
@@ -1369,6 +1395,14 @@ app.post("/api/mark-extension/:id/approve", (req, res) => {
     reqRow.extended_until = untilIso;
     writeMarkReqStore(list);
 
+    // 🔔 Notify the requesting trainer that their extension was approved.
+    if (reqRow.trainer_email) {
+      notify(reqRow.trainer_email, {
+        title: "Mark-extension approved ✅",
+        body: `Your mark-entry window for ${reqRow.batch_no} · ${reqRow.assessment_type} is now open until ${new Date(untilIso).toLocaleString("en-IN")}.`,
+        data: { type: "mark_extension_approved", batch_no: reqRow.batch_no },
+      });
+    }
     return res.json({ success: true, extended_until: untilIso });
   } catch (err) {
     console.error("mark-extension approve error:", err);
@@ -1392,6 +1426,14 @@ app.post("/api/mark-extension/:id/reject", (req, res) => {
     reqRow.decided_at = new Date().toISOString();
     reqRow.decided_by = decidedBy;
     writeMarkReqStore(list);
+    // 🔔 Notify the requesting trainer that their extension was declined.
+    if (reqRow.trainer_email) {
+      notify(reqRow.trainer_email, {
+        title: "Mark-extension request declined",
+        body: `Your extension request for ${reqRow.batch_no} · ${reqRow.assessment_type} was not approved.`,
+        data: { type: "mark_extension_rejected", batch_no: reqRow.batch_no },
+      });
+    }
     return res.json({ success: true });
   } catch (err) {
     console.error("mark-extension reject error:", err);
@@ -1859,6 +1901,13 @@ app.post("/upload-course-planner", async (req, res) => {
       .insert(rows);
 
     if (insError) throw insError;
+
+    // 🔔 Notify the batch's trainers a course planner was uploaded.
+    notify(getDistinctTrainersForBatch(batchNo), {
+      title: "Course planner uploaded",
+      body: `A course planner was uploaded for ${batchNo}.`,
+      data: { type: "course_planner_uploaded", batch_no: String(batchNo) },
+    });
 
     return res.json({
       message: `Inserted ${rows.length} course planner rows for ${batchNo}`,
@@ -4878,6 +4927,17 @@ app.post("/api/announcement/send", async (req, res) => {
       });
     }
 
+    // 🔔 Push the announcement to the batch's trainers (learners get email).
+    if (batch_no) {
+      notify(getDistinctTrainersForBatch(batch_no), {
+        title: subject || "New announcement",
+        body: message
+          ? String(message).replace(/<[^>]+>/g, "").slice(0, 140)
+          : "New announcement",
+        data: { type: "announcement", batch_no: String(batch_no) },
+      });
+    }
+
     let learners = [];
 
     // ====================
@@ -5073,6 +5133,13 @@ app.post("/api/update-learner-status", async (req, res) => {
       if (delError) throw delError;
     }
 
+    // 🔔 Notify the batch's trainers of the learner status change.
+    notify(getDistinctTrainersForBatch(batch_no), {
+      title: "Learner status updated",
+      body: `${learner_email} in ${batch_no} is now ${new_status}.`,
+      data: { type: "learner_status", batch_no: String(batch_no) },
+    });
+
     res.json({ success: true });
   } catch (err) {
     console.error("Error updating learner status:", err);
@@ -5124,6 +5191,24 @@ app.post('/api/leave/apply', async (req, res) => {
     );
 
     console.log('Inserted leave:', result.rows[0]);
+
+    // 🔔 Notify the approving manager that a new leave request needs action.
+    try {
+      const { data: mgr } = await supabase
+        .from("internal_users")
+        .select("email")
+        .eq("id", manager_id)
+        .single();
+      if (mgr?.email) {
+        notify(mgr.email, {
+          title: "New leave request",
+          body: `A trainer applied for leave from ${from_date} to ${to_date}.`,
+          data: { type: "leave_request", leave_id: String(result.rows[0]?.id ?? "") },
+        });
+      }
+    } catch (e) {
+      console.error("[push] leave/apply notify error:", e.message);
+    }
 
     res.json(result.rows[0]);
   } catch (err) {
@@ -5672,6 +5757,31 @@ app.post("/api/assign-topics-to-trainer", async (req, res) => {
       return res.status(500).json({ error: uaError.message });
     }
 
+    // 🔔 Notify the trainer whose leave was approved, and the substitute assigned.
+    try {
+      const { data: ua } = await supabase
+        .from("trainer_unavailability")
+        .select("trainer_email, start_date, end_date")
+        .eq("id", unavailability_id)
+        .single();
+      if (ua?.trainer_email) {
+        notify(ua.trainer_email, {
+          title: "Leave approved ✅",
+          body: `Your leave${ua.start_date ? ` (${ua.start_date} to ${ua.end_date})` : ""} has been approved and your sessions reassigned.`,
+          data: { type: "leave_approved", leave_id: String(unavailability_id) },
+        });
+      }
+    } catch (e) {
+      console.error("[push] assign notify error:", e.message);
+    }
+    if (trainer_email) {
+      notify(trainer_email, {
+        title: "New assignment",
+        body: "You've been assigned to cover sessions for a trainer on leave.",
+        data: { type: "assignment", leave_id: String(unavailability_id) },
+      });
+    }
+
     res.json({ success: true, message: "Topics assigned successfully" });
   } catch (err) {
     console.error("Assign error:", err);
@@ -5875,6 +5985,13 @@ app.post("/api/trainer-leaves", async (req, res) => {
       return res.status(500).json({ error: error.message || "Failed to apply leave" });
     }
 
+    // 🔔 Notify approvers that a new leave request needs approval.
+    notify(getApproverEmails(), {
+      title: "New leave request",
+      body: `${safeTrainerName} requested leave from ${start_date} to ${end_date}.`,
+      data: { type: "leave_request", leave_id: String(data?.id ?? "") },
+    });
+
     res.json({ success: true, leave: data });
   } catch (err) {
     console.error("Error applying leave:", err);
@@ -5925,6 +6042,13 @@ app.put("/api/trainer-leaves/:id", async (req, res) => {
       console.error("Error updating leave:", error);
       return res.status(500).json({ error: error.message });
     }
+
+    // 🔔 Notify approvers that a pending leave request was edited.
+    notify(getApproverEmails(), {
+      title: "Leave request updated",
+      body: `A pending leave request was updated (dates ${start_date} to ${end_date}).`,
+      data: { type: "leave_updated", leave_id: String(id) },
+    });
 
     res.json({ success: true, leave: data });
   } catch (err) {
@@ -9042,6 +9166,18 @@ app.post("/api/course-closure", async (req, res) => {
       return res.status(404).json({ error: "No admins found" });
     }
 
+    // 🔔 Push the closure alert to admins (and Management) too.
+    notify(admins.map((a) => a.email), {
+      title: "Course closing soon",
+      body: `${batch_no} ends on ${end_date}. Kindly disable VPN access.`,
+      data: { type: "course_closure", batch_no: String(batch_no) },
+    });
+    notify(getRoleEmails(["Management"]), {
+      title: "Course closing soon",
+      body: `${batch_no} ends on ${end_date}.`,
+      data: { type: "course_closure", batch_no: String(batch_no) },
+    });
+
     // 3️⃣ Send emails to admins (you can reuse your sendRawEmail function)
     let sentCount = 0;
     for (const admin of admins) {
@@ -9684,6 +9820,14 @@ app.put("/api/final-assessments/:id", async (req, res) => {
     if (error) throw error;
     if (!data) return res.status(404).json({ error: "Topic not found" });
 
+    // 🔔 Notify the batch's trainers of the assessment date change.
+    if (data.batch_no) {
+      notify(getDistinctTrainersForBatch(data.batch_no), {
+        title: "Assessment date updated",
+        body: `A final-assessment date for ${data.batch_no} was updated.`,
+        data: { type: "final_assessment_updated", batch_no: String(data.batch_no) },
+      });
+    }
     res.json({ message: "✅ Date updated", topic: data });
   } catch (err) {
     console.error("❌ Error updating final assessment:", err.message);
@@ -9925,6 +10069,19 @@ app.post('/api/tutors/add', async (req, res) => {
       .select();
     
     if (error) throw error;
+    // 🔔 Welcome the new trainer and inform approvers.
+    if (email) {
+      notify(email, {
+        title: "Account created",
+        body: `Welcome ${name || ""}! Your trainer account is ready.`,
+        data: { type: "account_created" },
+      });
+    }
+    notify(getApproverEmails(), {
+      title: "New trainer added",
+      body: `${name || email} was added as a Trainer.`,
+      data: { type: "trainer_added" },
+    });
     res.json({ success: true, data });
   } catch (error) {
     console.error('Error adding tutor:', error);
@@ -9960,6 +10117,14 @@ app.put("/api/tutors/:id", async (req, res) => {
       return res.status(500).json({ success: false, error: "Update failed" });
     }
 
+    // 🔔 Notify the affected user their account was updated.
+    if (data?.email) {
+      notify(data.email, {
+        title: "Account updated",
+        body: "Your account details were updated.",
+        data: { type: "account_updated" },
+      });
+    }
     return res.status(200).json({ success: true, data });
   } catch (err) {
     console.error("Unhandled error in PUT /api/tutors/:id:", err);
@@ -10241,6 +10406,12 @@ app.post("/api/learners/add", async (req, res) => {
     };
 
     console.log("Added learner:", added);
+    // 🔔 Notify the batch's trainers a learner was added.
+    notify(getDistinctTrainersForBatch(normalized.batch_no), {
+      title: "New learner added",
+      body: `${normalized.name} was added to ${normalized.batch_no}.`,
+      data: { type: "learner_added", batch_no: normalized.batch_no },
+    });
     return res.json({ success: true, data: added });
   } catch (err) {
     console.error("POST /api/learners/add CRASH:", err);
@@ -10279,6 +10450,12 @@ app.put("/api/learners/status", async (req, res) => {
     }
 
     console.log(`Status updated: ${learneremail} / ${batch_no} → ${status}`);
+    // 🔔 Notify the batch's trainers of the learner status change.
+    notify(getDistinctTrainersForBatch(batch_no), {
+      title: "Learner status updated",
+      body: `${learneremail} in ${batch_no} is now ${status}.`,
+      data: { type: "learner_status", batch_no: String(batch_no) },
+    });
     return res.json({ success: true });
   } catch (err) {
     console.error("PUT /api/learners/status CRASH:", err);
