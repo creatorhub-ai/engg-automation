@@ -112,6 +112,15 @@ export default function AttendanceDashboard({ token, user }) {
     [roleLower]
   );
 
+  /* ── Bulk marking is available only to Admin / Manager / Coordinator ── */
+  const canBulkMark = useMemo(
+    () =>
+      ["admin", "manager", "management", "coordinator", "corrdinator"].includes(
+        roleLower
+      ),
+    [roleLower]
+  );
+
   const todayLocal = useMemo(() => getLocalToday(), []);
 
   const [domains,         setDomains]         = useState([]);
@@ -137,6 +146,12 @@ export default function AttendanceDashboard({ token, user }) {
 
   /* Track which learners have unsaved changes (to show a dirty indicator) */
   const [dirtyEmails, setDirtyEmails] = useState(new Set());
+
+  /* ── Bulk-mark controls (Admin / Manager / Coordinator only) ── */
+  const [bulkFrom,   setBulkFrom]   = useState("");
+  const [bulkTo,     setBulkTo]     = useState("");
+  const [bulkStatus, setBulkStatus] = useState("P");
+  const [bulkSaving, setBulkSaving] = useState(false);
 
   const authHeaders = () => (token ? { Authorization: `Bearer ${token}` } : {});
 
@@ -371,6 +386,86 @@ export default function AttendanceDashboard({ token, user }) {
     }
 
     setSaving(false);
+  }
+
+  /* ── Bulk mark: set the same status for every active learner across a
+   *    From→To date range. Reuses the existing /api/save_attendance_ui
+   *    endpoint (one request per day), so nothing about single-day marking
+   *    changes. Admin / Manager / Coordinator only. ── */
+  async function bulkMarkAttendance() {
+    if (!batchNo) { setMessage("Select a domain and batch first."); return; }
+    if (!bulkFrom || !bulkTo) { setMessage("Please fill both From and To dates."); return; }
+    if (bulkTo < bulkFrom) { setMessage("❌ 'To' date cannot be before 'From' date."); return; }
+    if (bulkTo > todayLocal) { setMessage("❌ Future dates are not allowed."); return; }
+    if (courseStartDate && bulkFrom < courseStartDate) {
+      setMessage(`❌ 'From' date is before the course start (${courseStartDate}).`); return;
+    }
+    if (courseEndDate && bulkTo > courseEndDate) {
+      setMessage(`❌ 'To' date is after the course end (${courseEndDate}).`); return;
+    }
+
+    const activeLearners = learners.filter((l) => !isLearnerLocked(l));
+    if (activeLearners.length === 0) { setMessage("No active learners to mark."); return; }
+
+    /* Build the inclusive list of dates from bulkFrom → bulkTo. */
+    const dates = [];
+    for (let d = new Date(`${bulkFrom}T00:00:00`); ; d.setDate(d.getDate() + 1)) {
+      const y   = d.getFullYear();
+      const m   = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      const iso = `${y}-${m}-${day}`;
+      dates.push(iso);
+      if (iso >= bulkTo) break;
+    }
+
+    setBulkSaving(true);
+    setMessage("");
+    try {
+      for (const date of dates) {
+        const saveObj = {};
+        activeLearners.forEach((l) => {
+          saveObj[l.email] = { [date]: {} };
+          for (let session = 1; session <= sessionsPerDay; session++) {
+            saveObj[l.email][date][session] = bulkStatus;
+          }
+        });
+        await axios.post(
+          `${API_BASE}/api/save_attendance_ui`,
+          {
+            batch_no:          batchNo,
+            attendance:        saveObj,
+            course_start_date: courseStartDate,
+            course_end_date:   courseEndDate,
+          },
+          { headers: authHeaders() }
+        );
+      }
+
+      const label = bulkStatus === "P" ? "Present" : bulkStatus === "A" ? "Absent" : "Leave";
+
+      /* If the date currently on screen is inside the range, reflect the
+       * change in the grid immediately (without refetching). */
+      if (todayDate && todayDate >= bulkFrom && todayDate <= bulkTo) {
+        setAttendance((prev) => {
+          const updated = { ...prev };
+          activeLearners.forEach((l) => {
+            const day = { ...(updated[l.email]?.[todayDate] || {}) };
+            for (let s = 1; s <= sessionsPerDay; s++) {
+              day[s] = { ...(day[s] || {}), status: bulkStatus, savedStatus: bulkStatus, locked: false };
+            }
+            updated[l.email] = { ...updated[l.email], [todayDate]: day };
+          });
+          return updated;
+        });
+        setDirtyEmails(new Set());
+      }
+
+      setMessage(`✅ Marked ${label} for ${activeLearners.length} learner(s) across ${dates.length} day(s).`);
+    } catch (err) {
+      console.error(err);
+      setMessage("❌ Failed to bulk mark attendance. Please try again.");
+    }
+    setBulkSaving(false);
   }
 
   /* ── Session cell renderer ── */
@@ -695,6 +790,89 @@ export default function AttendanceDashboard({ token, user }) {
           </Box>
         )}
       </Box>
+
+      {/* ── Bulk-mark card (Admin / Manager / Coordinator only) ── */}
+      {canBulkMark && batchNo && learners.length > 0 && (
+        <Box sx={{ ...cardSx, p: { xs: 2.5, md: 3 }, mb: 2.5 }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, mb: 2 }}>
+            <Box sx={{ width: 40, height: 40, borderRadius: "12px", background: `linear-gradient(135deg, #d97706, #b45309)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, boxShadow: "0 3px 12px #d9770644" }}>
+              ⚡
+            </Box>
+            <Box>
+              <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 800, fontSize: 16, color: T.text, lineHeight: 1.1 }}>
+                Bulk Mark Attendance
+              </Typography>
+              <Typography sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: T.textSub }}>
+                Set the same status for all active learners in {batchNo} across a date range.
+              </Typography>
+            </Box>
+          </Box>
+
+          <Grid container spacing={2} alignItems="flex-end">
+            <Grid item xs={12} sm={6} md={3}>
+              <Typography sx={{ ...labelSx, mb: 0.8 }}>From Date</Typography>
+              <TextField
+                type="date"
+                size="small"
+                fullWidth
+                value={bulkFrom}
+                onChange={(e) => setBulkFrom(e.target.value)}
+                inputProps={{ max: todayLocal, min: courseStartDate || undefined }}
+                sx={{ "& .MuiInputBase-root": { borderRadius: "10px", fontFamily: "'DM Mono', monospace", fontSize: 13, background: T.surfaceAlt }, "& fieldset": { borderColor: T.border } }}
+              />
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <Typography sx={{ ...labelSx, mb: 0.8 }}>To Date</Typography>
+              <TextField
+                type="date"
+                size="small"
+                fullWidth
+                value={bulkTo}
+                onChange={(e) => setBulkTo(e.target.value)}
+                inputProps={{ max: todayLocal, min: bulkFrom || courseStartDate || undefined }}
+                sx={{ "& .MuiInputBase-root": { borderRadius: "10px", fontFamily: "'DM Mono', monospace", fontSize: 13, background: T.surfaceAlt }, "& fieldset": { borderColor: T.border } }}
+              />
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <Typography sx={{ ...labelSx, mb: 0.8 }}>Attendance</Typography>
+              <FormControl fullWidth size="small">
+                <Select
+                  value={bulkStatus}
+                  onChange={(e) => setBulkStatus(e.target.value)}
+                  sx={selectSx}
+                  MenuProps={{ PaperProps: { sx: { borderRadius: "12px" } } }}
+                >
+                  <MenuItem value="P" sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Present</MenuItem>
+                  <MenuItem value="A" sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Absent</MenuItem>
+                  <MenuItem value="L" sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Leave</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <Button
+                variant="contained"
+                fullWidth
+                onClick={bulkMarkAttendance}
+                disabled={bulkSaving || !bulkFrom || !bulkTo}
+                sx={{
+                  fontFamily: "'DM Sans', sans-serif",
+                  fontWeight: 800,
+                  fontSize: 14,
+                  borderRadius: "12px",
+                  py: 1.2,
+                  textTransform: "none",
+                  background: `linear-gradient(135deg, #d97706 0%, #b45309 100%)`,
+                  boxShadow: "0 4px 16px #d9770644",
+                  "&:hover": { background: `linear-gradient(135deg, #b45309 0%, #d97706 100%)` },
+                  "&.Mui-disabled": { background: T.border, color: T.textSub, boxShadow: "none" },
+                }}
+              >
+                {bulkSaving ? <CircularProgress size={20} color="inherit" /> : "Mark"}
+              </Button>
+            </Grid>
+          </Grid>
+        </Box>
+      )}
 
       {/* ── Loading ── */}
       {loading && (
