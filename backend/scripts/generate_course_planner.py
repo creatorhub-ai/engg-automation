@@ -177,23 +177,34 @@ def weekend_of(d):
     return sat, sat + datetime.timedelta(days=1)
 
 
-def replace_current_weekend(ws, r, last_stamped):
-    """If row `r` carries the "(current_weekend)" placeholder (the Course Break
-    banner in Online templates), replace it with the Saturday & Sunday dates of
-    the previous stamped date's weekend.  Returns True when the row was a break
-    row (handled), so the caller skips normal date stamping for it."""
+def next_weekend_after(d):
+    """Sat & Sun of the weekend FOLLOWING the weekend that `d` belongs to."""
+    sat, sun = weekend_of(d)
+    return sat + datetime.timedelta(days=7), sun + datetime.timedelta(days=7)
+
+
+def fill_course_break(ws, r, last_stamped, current):
+    """Handle the Course Break banner (the "(current_weekend)" placeholder in the
+    Online templates).
+
+    The break takes the weekend AFTER the last class weekend, so it forms a real
+    gap in the schedule: classes stop, that whole weekend is the break, and the
+    course resumes the weekend after it.
+
+    Returns (handled, resume_from) -- resume_from is the date the caller should
+    continue stamping from, i.e. the day after the break's Sunday."""
     for c in range(1, ws.max_column + 1):
         tc = target_cell(ws, r, c)
         v = tc.value
         if isinstance(v, str) and "(current_weekend)" in v:
             if last_stamped is not None:
-                sat, sun = weekend_of(last_stamped)
-                label = f"{sat.strftime('%d-%b-%Y')} & {sun.strftime('%d-%b-%Y')}"
-            else:
-                label = ""
+                sat, sun = next_weekend_after(last_stamped)
+            else:                              # break before any class row
+                sat, sun = weekend_of(current)
+            label = f"{sat.strftime('%d-%b-%Y')} & {sun.strftime('%d-%b-%Y')}"
             tc.value = v.replace("(current_weekend)", label)
-            return True
-    return False
+            return True, sun + datetime.timedelta(days=1)
+    return False, None
 
 
 # --------------------------------------------------------------------------- #
@@ -343,7 +354,9 @@ def fill_dates(ws, start_date, holidays, date_col, online=False):
     Offline (default): classes run Mon-Fri, so weekday dates are stamped and
     weekends are rolled past.
     Online: classes run on weekends, so ONLY Saturday/Sunday dates are stamped
-    and weekdays are skipped.  Each row is pinned by its Theory/Lab column --
+    and weekdays are skipped.  A company holiday landing on a weekend does not
+    cancel an online session -- the class is scheduled that day regardless.
+    Each row is pinned by its Theory/Lab column --
     Theory to Saturday, Lab to Sunday -- rather than by row order, so a
     template that carries an extra row inside the week grid (the DFT
     orientation session) cannot shift Theory onto Sunday.  The Course Break
@@ -371,10 +384,15 @@ def fill_dates(ws, start_date, holidays, date_col, online=False):
     banner_start = date_col + 1         # first topic/schedule column
     ws.cell(header_row, note_col).value = "Remarks"
     for r in range(data_start, ws.max_row + 1):
-        # Online Course Break: fill "(current_weekend)" from the previous
-        # weekend and skip normal date stamping for this banner row.
-        if online and replace_current_weekend(ws, r, last_stamped):
-            continue
+        # Online Course Break: the banner takes the weekend after the last class
+        # weekend and the schedule resumes past it, so the break is a real gap.
+        if online:
+            handled, resume_from = fill_course_break(ws, r, last_stamped, current)
+            if handled:
+                if resume_from is not None:
+                    current = resume_from
+                    last_stamped = None    # next weekend is fresh, not a break
+                continue
         if not is_day_row(ws, value, span, r, date_col, topic_cols):
             continue
         if online:
@@ -393,7 +411,10 @@ def fill_dates(ws, start_date, holidays, date_col, online=False):
         set_cell(ws, r, date_col, current)
         ws.cell(r, date_col).number_format = "m/d/yyyy"
         last_stamped = current
-        if current in holidays:
+        # Online batches already run on the weekend, so a company holiday that
+        # falls on one does NOT cancel the session -- the class is scheduled that
+        # day anyway.  Offline (weekday) holidays keep the banner behaviour.
+        if not online and current in holidays:
             # Company holiday: this is a non-teaching day.  Drop the topic that
             # fell here and show a "HOLIDAY - <name>" banner across the topic
             # columns (shaded), so the day is clearly marked as a holiday.

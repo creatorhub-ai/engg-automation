@@ -139,6 +139,7 @@ router.post("/generate", async (req, res) => {
     return res.json({
       id,
       filename,
+      batchType: batchType || "",
       template: summary.template || null,
       holidaysMarked: summary.holidays_marked || 0,
       startDate: summary.start_date || null,
@@ -151,6 +152,62 @@ router.post("/generate", async (req, res) => {
     return res
       .status(missingTemplate ? 400 : 500)
       .json({ error: err.message || "Generation failed" });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/course-planner/preview/:id
+// -> { sheet, maxRow, maxCol, rows } for the in-page editable grid (Online).
+// ---------------------------------------------------------------------------
+router.get("/preview/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!isId(id)) return res.status(400).json({ error: "valid id is required" });
+
+    const xlsxPath = path.join(WORK_DIR, `${id}.xlsx`);
+    if (!fs.existsSync(xlsxPath)) {
+      return res.status(404).json({ error: "Generated planner not found. Generate it first." });
+    }
+
+    const { stdout } = await runPython("course_planner_grid.py", ["dump", xlsxPath]);
+    return res.json(JSON.parse(stdout));
+  } catch (err) {
+    console.error("Course planner preview error:", err);
+    return res.status(500).json({ error: err.message || "Preview failed" });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/course-planner/save/:id   body: { edits: [{ r, c, v }] }
+// -> writes the edited cells back into the generated .xlsx, in place, so the
+//    download always serves the edited planner.
+// ---------------------------------------------------------------------------
+router.post("/save/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!isId(id)) return res.status(400).json({ error: "valid id is required" });
+
+    const edits = Array.isArray(req.body?.edits) ? req.body.edits : [];
+    const xlsxPath = path.join(WORK_DIR, `${id}.xlsx`);
+    if (!fs.existsSync(xlsxPath)) {
+      return res.status(404).json({ error: "Generated planner not found. Generate it first." });
+    }
+
+    const { stdout } = await runPython(
+      "course_planner_grid.py",
+      ["apply", xlsxPath],
+      JSON.stringify({ edits })
+    );
+    const summary = JSON.parse(stdout);
+
+    // The .xlsx changed, so any previously converted CSV is now stale.
+    const csvPath = path.join(WORK_DIR, `${id}.csv`);
+    if (fs.existsSync(csvPath)) fs.unlinkSync(csvPath);
+
+    return res.json({ id, saved: summary.saved || 0 });
+  } catch (err) {
+    console.error("Course planner save error:", err);
+    return res.status(500).json({ error: err.message || "Save failed" });
   }
 });
 

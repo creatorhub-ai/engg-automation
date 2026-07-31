@@ -52,6 +52,15 @@ export default function CoursePlannerGenerator({ user }) {
   const [result, setResult] = useState(null); // { id, filename, template, holidaysMarked }
   const [csv, setCsv] = useState(null); // { csvFilename, rows }
 
+  // Online only: the generated planner is shown in-page as an editable grid.
+  // `edits` holds the pending cell changes keyed "row:col"; saving writes them
+  // back into the same .xlsx on the server, so the download serves the edits.
+  const [grid, setGrid] = useState(null); // { maxRow, maxCol, rows }
+  const [gridLoading, setGridLoading] = useState(false);
+  const [edits, setEdits] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [savedNote, setSavedNote] = useState("");
+
   // Trainer pickers (Theory / Lab). Names come from internal_users; the email
   // auto-fills from the selected name but stays editable. These are applied to
   // trainer_name / trainer_email only in the system CSV ("Generate CP for
@@ -83,10 +92,28 @@ export default function CoursePlannerGenerator({ user }) {
 
   const showSession3 = domain === "PD"; // Session 3 only for the PD domain
 
+  // Pull the generated workbook back as a grid so it can be reviewed and edited
+  // in the page before downloading (Online batches only).
+  const loadGrid = async (id) => {
+    setGridLoading(true);
+    try {
+      const { data } = await axios.get(`${API_BASE}/api/course-planner/preview/${id}`);
+      setGrid(data);
+      setEdits({});
+    } catch (e) {
+      setError(e.response?.data?.error || e.message || "Could not load the planner preview");
+    } finally {
+      setGridLoading(false);
+    }
+  };
+
   const handleGenerate = async () => {
     setError("");
     setResult(null);
     setCsv(null);
+    setGrid(null);
+    setEdits({});
+    setSavedNote("");
     if (!domain || !batchType || !batchNo) {
       setError("Please select a Domain, a Batch Type and enter a Batch No.");
       return;
@@ -104,6 +131,7 @@ export default function CoursePlannerGenerator({ user }) {
         startDate, // "" is allowed; dates are only stamped when provided
       });
       setResult(data);
+      if (data?.batchType === "Online" && data?.id) await loadGrid(data.id);
     } catch (e) {
       setError(e.response?.data?.error || e.message || "Generation failed");
     } finally {
@@ -111,8 +139,71 @@ export default function CoursePlannerGenerator({ user }) {
     }
   };
 
+  const cellKey = (r, c) => `${r}:${c}`;
+  const editCount = Object.keys(edits).length;
+
+  // contentEditable hands back non-breaking spaces and a trailing newline that
+  // the template never had, so compare normalised forms -- otherwise merely
+  // clicking into a cell would look like an edit (several template headings
+  // genuinely contain NBSPs) and saving would strip them.
+  const normalizeCell = (s) =>
+    (s || "").replace(/\u00a0/g, " ").replace(/\r\n/g, "\n").replace(/\s+$/, "");
+
+  // Commit a cell on blur, but only when the text actually changed.
+  const handleCellBlur = (cell, e) => {
+    const text = normalizeCell(e.currentTarget.innerText);
+    const key = cellKey(cell.r, cell.c);
+    setEdits((prev) => {
+      if (text === normalizeCell(cell.v)) {
+        if (!(key in prev)) return prev;
+        const { [key]: _drop, ...rest } = prev; // reverted back to the original
+        return rest;
+      }
+      return { ...prev, [key]: text };
+    });
+    setSavedNote("");
+  };
+
+  // Write the pending edits into the .xlsx on the server. Returns true when the
+  // planner on disk is up to date (nothing to save counts as up to date).
+  const saveEdits = async () => {
+    if (!result?.id || editCount === 0) return true;
+    setError("");
+    setSaving(true);
+    try {
+      const payload = Object.entries(edits).map(([key, v]) => {
+        const [r, c] = key.split(":");
+        return { r: Number(r), c: Number(c), v };
+      });
+      const { data } = await axios.post(
+        `${API_BASE}/api/course-planner/save/${result.id}`,
+        { edits: payload }
+      );
+      setEdits({});
+      setCsv(null); // the workbook changed, so the old CSV no longer matches
+      setSavedNote(`Saved ${data?.saved ?? payload.length} change(s) to the planner.`);
+      // Re-read the workbook so the grid shows exactly what is now on disk
+      // (dates re-formatted, blanked cells cleared) instead of the stale dump.
+      await loadGrid(result.id);
+      return true;
+    } catch (e) {
+      setError(e.response?.data?.error || e.message || "Save failed");
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Always save first: the file that downloads must include the edits.
+  const handleDownloadXlsx = async () => {
+    if (!(await saveEdits())) return;
+    window.location.href = downloadUrl("xlsx");
+  };
+
   const handleConvert = async () => {
     if (!result?.id) return;
+    // Convert from the edited planner, never from a stale one.
+    if (!(await saveEdits())) return;
     setError("");
     setConverting(true);
     try {
@@ -363,9 +454,15 @@ export default function CoursePlannerGenerator({ user }) {
             <Button
               variant="contained"
               color="success"
-              href={downloadUrl("xlsx")}
+              onClick={handleDownloadXlsx}
+              disabled={saving}
+              startIcon={saving ? <CircularProgress size={18} /> : null}
             >
-              Download Course Planner (.xlsx)
+              {saving
+                ? "Saving..."
+                : editCount > 0
+                ? "Save & Download Course Planner (.xlsx)"
+                : "Download Course Planner (.xlsx)"}
             </Button>
 
             {csv && (
@@ -383,6 +480,127 @@ export default function CoursePlannerGenerator({ user }) {
                   Download CP for System (.csv)
                 </Button>
               </>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Online batches: review and edit the generated planner in-page. Edits
+          are written back into the same .xlsx, so the download serves them. */}
+      {result?.batchType === "Online" && (
+        <Card variant="outlined" sx={{ mt: 2 }}>
+          <CardContent>
+            <Stack
+              direction={{ xs: "column", sm: "row" }}
+              spacing={2}
+              alignItems={{ sm: "center" }}
+              justifyContent="space-between"
+              sx={{ mb: 1 }}
+            >
+              <Box>
+                <Typography variant="subtitle1" fontWeight={600}>
+                  Course Planner — {result.filename}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Click any cell to edit it, then save. Changes are stored in the
+                  generated planner itself.
+                </Typography>
+              </Box>
+              <Button
+                variant="contained"
+                onClick={saveEdits}
+                disabled={saving || editCount === 0}
+                startIcon={saving ? <CircularProgress size={18} /> : null}
+              >
+                {saving
+                  ? "Saving..."
+                  : editCount > 0
+                  ? `Save ${editCount} change(s)`
+                  : "Saved"}
+              </Button>
+            </Stack>
+
+            {savedNote && (
+              <Alert severity="success" sx={{ mb: 1 }}>
+                {savedNote}
+              </Alert>
+            )}
+            {editCount > 0 && (
+              <Alert severity="info" sx={{ mb: 1 }}>
+                {editCount} unsaved change(s). Downloading will save them first.
+              </Alert>
+            )}
+
+            {gridLoading && (
+              <Stack direction="row" spacing={1} alignItems="center" sx={{ py: 2 }}>
+                <CircularProgress size={18} />
+                <Typography variant="body2">Loading planner…</Typography>
+              </Stack>
+            )}
+
+            {grid && (
+              <Box
+                sx={{
+                  maxHeight: 560,
+                  overflow: "auto",
+                  border: "1px solid",
+                  borderColor: "divider",
+                  borderRadius: 1,
+                }}
+              >
+                <Box
+                  component="table"
+                  sx={{
+                    borderCollapse: "collapse",
+                    width: "max-content",
+                    fontSize: 12,
+                    "& td": {
+                      border: "1px solid",
+                      borderColor: "divider",
+                      p: "4px 6px",
+                      verticalAlign: "top",
+                      minWidth: 90,
+                      maxWidth: 280,
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-word",
+                    },
+                    "& td:focus": {
+                      outline: "2px solid",
+                      outlineColor: "primary.main",
+                      backgroundColor: "action.hover",
+                    },
+                  }}
+                >
+                  <tbody>
+                    {grid.rows.map((row, ri) => (
+                      <tr key={`r-${ri}`}>
+                        {row.map((cell, ci) => {
+                          if (!cell) return null; // swallowed by a merged range
+                          const key = cellKey(cell.r, cell.c);
+                          const dirty = key in edits;
+                          return (
+                            <Box
+                              component="td"
+                              key={`c-${cell.r}-${cell.c}`}
+                              rowSpan={cell.rs || undefined}
+                              colSpan={cell.cs || undefined}
+                              contentEditable
+                              suppressContentEditableWarning
+                              onBlur={(e) => handleCellBlur(cell, e)}
+                              sx={{
+                                backgroundColor: dirty ? "warning.light" : undefined,
+                                fontWeight: cell.t === "date" ? 600 : undefined,
+                              }}
+                            >
+                              {dirty ? edits[key] : cell.v}
+                            </Box>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </Box>
+              </Box>
             )}
           </CardContent>
         </Card>
