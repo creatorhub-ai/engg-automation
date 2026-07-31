@@ -95,12 +95,12 @@ const readMeta = (id) => {
 
 // ---------------------------------------------------------------------------
 // POST /api/course-planner/generate
-// body: { domain, batchNo, session1, session2, session3, labTimings, startDate }
+// body: { domain, batchType, batchNo, session1, session2, session3, labTimings, startDate }
 // -> generates the .xlsx, returns { id, filename, template, holidaysMarked }
 // ---------------------------------------------------------------------------
 router.post("/generate", async (req, res) => {
   try {
-    const { domain, batchNo, session1, session2, session3, labTimings, startDate } = req.body || {};
+    const { domain, batchType, batchNo, session1, session2, session3, labTimings, startDate } = req.body || {};
     if (!domain || !batchNo) {
       return res.status(400).json({ error: "domain and batchNo are required" });
     }
@@ -110,6 +110,7 @@ router.post("/generate", async (req, res) => {
 
     const cfg = {
       domain,
+      batch_type: batchType || "",
       batch_no: batchNo,
       session1: session1 || "",
       session2: session2 || "",
@@ -132,7 +133,7 @@ router.post("/generate", async (req, res) => {
     const filename = `${batchNo} Course Planner.xlsx`;
     fs.writeFileSync(
       path.join(WORK_DIR, `${id}.json`),
-      JSON.stringify({ id, batchNo, domain, filename })
+      JSON.stringify({ id, batchNo, domain, batchType: batchType || "", filename })
     );
 
     return res.json({
@@ -144,7 +145,12 @@ router.post("/generate", async (req, res) => {
     });
   } catch (err) {
     console.error("Course planner generate error:", err);
-    return res.status(500).json({ error: err.message || "Generation failed" });
+    // A missing domain/batch-type template is a configuration problem the user
+    // can act on, not a server fault -> 400 with the script's own message.
+    const missingTemplate = /no .*course planner template is available/i.test(err.message || "");
+    return res
+      .status(missingTemplate ? 400 : 500)
+      .json({ error: err.message || "Generation failed" });
   }
 });
 

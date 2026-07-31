@@ -22,6 +22,7 @@ const API_BASE =
 
 // Dropdown options (exactly as specified for the generator)
 const DOMAINS = ["PD", "DV", "DFT"];
+const BATCH_TYPES = ["Offline", "Online"];
 const SESSION1 = ["7.30AM to 9.00AM", "1.30PM to 3.00PM"];
 const SESSION2 = ["9.30AM to 11.00AM", "3.30PM to 5.00PM"];
 const SESSION3 = ["11.15AM to 1.15PM", "5.30PM to 7.00PM"];
@@ -37,6 +38,7 @@ export default function CoursePlannerGenerator({ user }) {
   const canConvert = role === "admin";
 
   const [domain, setDomain] = useState("");
+  const [batchType, setBatchType] = useState("");
   const [batchNo, setBatchNo] = useState("");
   const [session1, setSession1] = useState("");
   const [session2, setSession2] = useState("");
@@ -85,14 +87,15 @@ export default function CoursePlannerGenerator({ user }) {
     setError("");
     setResult(null);
     setCsv(null);
-    if (!domain || !batchNo) {
-      setError("Please select a Domain and enter a Batch No.");
+    if (!domain || !batchType || !batchNo) {
+      setError("Please select a Domain, a Batch Type and enter a Batch No.");
       return;
     }
     setGenerating(true);
     try {
       const { data } = await axios.post(`${API_BASE}/api/course-planner/generate`, {
         domain,
+        batchType,
         batchNo: batchNo.trim(),
         session1,
         session2,
@@ -155,6 +158,21 @@ export default function CoursePlannerGenerator({ user }) {
                 {DOMAINS.map((d) => (
                   <MenuItem key={d} value={d}>
                     {d}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+
+            <FormControl fullWidth required>
+              <InputLabel>Batch Type</InputLabel>
+              <Select
+                label="Batch Type"
+                value={batchType}
+                onChange={(e) => setBatchType(e.target.value)}
+              >
+                {BATCH_TYPES.map((b) => (
+                  <MenuItem key={b} value={b}>
+                    {b}
                   </MenuItem>
                 ))}
               </Select>
@@ -237,7 +255,11 @@ export default function CoursePlannerGenerator({ user }) {
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
               InputLabelProps={{ shrink: true }}
-              helperText="Used to place weekday dates, weekends and holidays on the grid."
+              helperText={
+                batchType === "Online"
+                  ? "Online batches run on weekends: only Saturday (Theory) and Sunday (Lab) dates are stamped."
+                  : "Used to place weekday dates, weekends and holidays on the grid."
+              }
               fullWidth
             />
 
