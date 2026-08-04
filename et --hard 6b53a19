@@ -1,0 +1,46 @@
+[33mf7b1915[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mrollback-stable[m[33m, [m[1;31morigin/rollback-stable[m[33m)[m change all the codes from static base api to dynamic base api
+[33m6b53a19[m update the course planner generator for the online with the dates
+[33mc671a82[m update the course planner generator for the online batch
+[33m02fe88b[m update he attendance marking sheet with the overall percentage of the attendance for the learners
+[33m51d932d[m update the mark sheet with the server id
+[33mc92ab05[m AttendanceDashboard: bulk-mark attendance by date range (Admin/Manager/Coordinator)
+[33maf1db2f[m Notifications for all events + web pus
+[33m3631814[m Add FCM push notifications (register + send, works when app closed)
+[33mce28bd9[m Remove Profile from dashboard menu update
+[33m2b3bf16[m Remove Profile from dashboard menu update
+[33m13e2fe9[m Remove Profile from dashboard menu
+[33me63570b[m Delete .github/workflows/keep-alive.yml
+[33m8a4eea3[m Remove the profile menu from dashboard
+[33ma654dc7[m Add Profile dashboard showing logged-in user details
+[33m21552ee[m Mobile: hamburger nav + per-item responsive UI
+[33m80752f4[m Mobile: responsive UI + load live site via server.url
+[33mb6fb204[m Mobile: responsive UI + load live site via server.url
+[33m104c5f0[m Change the UI for mobile
+[33mf1f275e[m Allow Capacitor mobile app origins in CORS
+[33m5b61d10[m Allow Capacitor mobile app origins in CORS
+[33m12566b5[m Approve extension: also open mark-entry fields (mark-entry-open store), not just the window date
+[33m6d6b7f2[m Move Mark Extension Report into Reports tab; fix approve to open window (file store); list all statuses
+[33ma32b0a2[m Mark-entry extension requests: trainer Request Extension -> admin approval opens window till next-day 11:59 PM
+[33mf516eb1[m Add Batch Movement status; grey/lock Dropout & Batch Movement learners across attendance, mark entry, reports
+[33m67235de[m update the links with the new frontend and backend link
+[33m6143cbe[m update the links with the new frontend and backend link
+[33m0766672[m AttendanceReport: session-wise + day-wise (>=2/3) attendance from unique planner dates; add XLSX/PDF download
+[33mcd0af02[m HomeDashboard: render email templates two per row (responsive grid)
+[33m6dcd66b[m MarkSheet: Open Mark Entry available for all assessment types (incl. final_project/viva)
+[33mab21f39[m HomeDashboard: load & edit email templates before scheduling; schedule uses edited content
+[33m4fdb63f[m Course Planner: trainers dropdown lists only role=Trainer users
+[33mbde0f8f[m Course Planner: Theory/Lab trainer inputs applied to system CSV by module keyword
+[33mb547b9f[m Update the mark sheet with the mark entry field open for 1 day when the button is clicked
+[33m6b29778[m Update the mark sheet with the mark entry field open for 1 day when the button is clicked
+[33mbbdb5d6[m Update the mark sheet with the button to open the mark entry after saving
+[33m59ef8f5[m update the mark sheet for mark entry window
+[33md59867b[m Extend Mark entry window for trainers which is not extending the entry
+[33m42653b4[m Update the course planner generator dashboard with the list of course planner generated
+[33m66cd5dc[m Course Planner revert to openpyxl
+[33m38695be[m Course Planner revert to openpyxl
+[33m825f5df[m Update Course Planner template
+[33m2a22590[m Course Planner revert to openpyxl
+[33mf7ab01e[m Add new dashboard for course planner generator
+[33m9e4be05[m Add new dashboard for course planner generator
+[33m85535fd[m Add new dashboard for course planner generator
+[33mef7eab4[m Add new dashboard for course planner generator

@@ -46,7 +46,9 @@
       "Bash(cp '/c/Users/hariharan_chipedge/Music/engg-automation-git-file - Copy \\(2\\)/backend/push/firebaseAdmin.js' /c/Users/hariharan_chipedge/Music/engg-automation-git-file/backend/push/)",
       "Bash(cp '/c/Users/hariharan_chipedge/Music/engg-automation-git-file - Copy \\(2\\)/backend/push/sendPush.js' /c/Users/hariharan_chipedge/Music/engg-automation-git-file/backend/push/)",
       "Bash(cp '/c/Users/hariharan_chipedge/Music/engg-automation-git-file - Copy \\(2\\)/backend/routes/pushTokens.js' /c/Users/hariharan_chipedge/Music/engg-automation-git-file/backend/routes/)",
-      "PowerShell(Get-ChildItem -Path . -Recurse -Filter \"CoursePlannerGenerator.js\" -File -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch 'node_modules' } | Select-Object -ExpandProperty FullName)"
+      "PowerShell(Get-ChildItem -Path . -Recurse -Filter \"CoursePlannerGenerator.js\" -File -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch 'node_modules' } | Select-Object -ExpandProperty FullName)",
+      "Bash(npx --no-install eslint --no-eslintrc --config '{\"extends\":[\"react-app\"],\"parserOptions\":{\"ecmaVersion\":2022,\"sourceType\":\"module\",\"ecmaFeatures\":{\"jsx\":true}}}' src/pages/MarksDashboard.js)",
+      "PowerShell(git *)"
     ]
   }
 }

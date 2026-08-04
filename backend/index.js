@@ -4299,6 +4299,226 @@ app.get('/api/download/csv/:batchNo/:assessmentType', async (req, res) => {
 // All marks converted to /100 before weightage
 // Weightage: Intermediate 10% | Theory(D+C+T) 20% | Physical 30% | Project 30% | Viva 10%
 // ==============================
+// ==============================
+// SCORECARD OVERRIDES — Admin / Manager / Coordinator edits
+//
+// Purely additive layer: the calculations below are untouched. Any saved
+// override is merged on top of the computed row and the derived fields
+// (group %, Overall %, Grade, Certification, Placement) are recalculated
+// from the merged component percentages.
+//
+// Required table (run once in Supabase):
+//   create table if not exists scorecard_overrides (
+//     id            bigserial   primary key,
+//     batch_no      text        not null,
+//     learner_email text        not null,
+//     overrides     jsonb       not null default '{}'::jsonb,
+//     remarks       text        not null,
+//     edited_by     text,
+//     edited_at     timestamptz not null default now(),
+//     unique (batch_no, learner_email)
+//   );
+// ==============================
+
+/* Tolerates the "Corrdinator" typo that exists in the internal_users table. */
+const SCORECARD_EDIT_ROLES = ["admin", "manager", "coordinator", "corrdinator"];
+
+/* Component marks that may be overridden, per scorecard flavour. Group
+ * averages, Overall % and Grade are always re-derived, never stored. */
+const SCORECARD_OVERRIDE_FIELDS = {
+  pdft: ["intermediate", "digital", "cmos", "tcl", "physical", "project", "viva", "certification", "placement"],
+  dvft: ["intermediate", "digital", "verilog", "sv", "uvm", "python", "project", "viva", "certification", "placement"],
+};
+const SCORECARD_YESNO_FIELDS = ["certification", "placement"];
+const SCORECARD_TOP_FIELDS   = ["intermediate", "project", "viva"];
+
+const scNum   = (v) => { const x = parseFloat(v); return isNaN(x) ? 0 : x; };
+const scGrade = (o) => (o >= 90 ? "A" : o >= 80 ? "B" : o >= 70 ? "C" : o >= 60 ? "D" : "F");
+
+/* Re-derives group %, Overall %, Grade, Certification and Placement from a set
+ * of component percentages. `weights` carries the original out_off totals per
+ * theory subject (PDFT) so an unedited row reproduces exactly the same Theory %
+ * the calculation above produced. */
+function recalcScorecardRow(kind, comp, weights) {
+  const v       = (f) => scNum(comp[f]);
+  const inter   = v("intermediate");
+  const project = v("project");
+  const viva    = v("viva");
+
+  let derived, overall;
+  if (kind === "dvft") {
+    const g1 = (v("digital") + v("verilog")) / 2;
+    const g2 = (v("sv") + v("uvm") + v("python")) / 3;
+    overall  = inter * 0.10 + g1 * 0.20 + g2 * 0.30 + project * 0.30 + viva * 0.10;
+    derived  = { dvGroup1: g1.toFixed(2), dvGroup2: g2.toFixed(2) };
+  } else {
+    const w    = weights || {};
+    const wn   = (k) => scNum(w[k]);
+    const wSum = wn("digital") + wn("cmos") + wn("tcl");
+    const theory = wSum > 0
+      ? (v("digital") * wn("digital") + v("cmos") * wn("cmos") + v("tcl") * wn("tcl")) / wSum
+      : (v("digital") + v("cmos") + v("tcl")) / 3;
+    overall = inter * 0.10 + theory * 0.20 + v("physical") * 0.30 + project * 0.30 + viva * 0.10;
+    derived = { theory: theory.toFixed(2) };
+  }
+
+  return {
+    ...derived,
+    overall:       overall.toFixed(2),
+    grade:         scGrade(overall),
+    certification: project >= 70 && overall >= 70 ? "YES" : "NO",
+    placement:     project >= 70 && viva >= 70 && overall >= 80 ? "YES" : "NO",
+  };
+}
+
+/* Reads the saved overrides for a batch. A missing table or any read failure
+ * degrades to "no overrides" so the scorecard keeps working. */
+async function fetchScorecardOverrides(batchNo) {
+  try {
+    const { data, error } = await supabase
+      .from("scorecard_overrides")
+      .select("learner_email, overrides, remarks, edited_by, edited_at")
+      .eq("batch_no", batchNo);
+
+    if (error) {
+      console.error("SCORECARD overrides read error:", error.message);
+      return {};
+    }
+    const map = {};
+    (data || []).forEach((r) => {
+      map[(r.learner_email || "").trim().toLowerCase()] = {
+        overrides: (r.overrides && typeof r.overrides === "object") ? r.overrides : {},
+        remarks:   r.remarks   || "",
+        edited_by: r.edited_by || "",
+        edited_at: r.edited_at || null,
+      };
+    });
+    return map;
+  } catch (err) {
+    console.error("SCORECARD overrides exception:", err.message);
+    return {};
+  }
+}
+
+/* Merges saved overrides into the computed rows. Rows without an override
+ * entry are returned untouched. */
+function mergeScorecardOverrides(rows, overrideMap, kind) {
+  if (!overrideMap || !Object.keys(overrideMap).length) return rows;
+  const allowed = SCORECARD_OVERRIDE_FIELDS[kind] || [];
+
+  return rows.map((row) => {
+    const entry = overrideMap[(row.email || "").trim().toLowerCase()];
+    if (!entry) return row;
+
+    const applied = {};
+    allowed.forEach((f) => {
+      const val = entry.overrides?.[f];
+      if (val !== undefined && val !== null && val !== "") applied[f] = val;
+    });
+
+    const meta = {
+      remarks:   entry.remarks,
+      edited_by: entry.edited_by,
+      edited_at: entry.edited_at,
+      overrides: applied,
+    };
+    if (!Object.keys(applied).length) return { ...row, ...meta };
+
+    const breakdown = { ...(row.breakdown || {}) };
+    const comp      = { ...breakdown, intermediate: row.intermediate, project: row.project, viva: row.viva };
+    const merged    = { ...row, breakdown };
+
+    Object.entries(applied).forEach(([f, val]) => {
+      if (SCORECARD_YESNO_FIELDS.includes(f)) return;
+      const pct = scNum(val).toFixed(2);
+      comp[f] = pct;
+      if (SCORECARD_TOP_FIELDS.includes(f)) merged[f] = pct; else breakdown[f] = pct;
+    });
+
+    const out = { ...merged, ...recalcScorecardRow(kind, comp, row.breakdownOut), ...meta };
+    /* An explicit Certification / Placement override wins over the rule. */
+    if (applied.certification) out.certification = applied.certification;
+    if (applied.placement)     out.placement     = applied.placement;
+    return out;
+  });
+}
+
+/* Save scorecard edits. Remarks are mandatory for every learner in the batch. */
+app.post("/api/scorecard/override", async (req, res) => {
+  try {
+    const { batch_no, kind, updates, edited_by, role } = req.body || {};
+
+    if (!batch_no) return res.status(400).json({ error: "batch_no is required" });
+    if (!Array.isArray(updates) || updates.length === 0) {
+      return res.status(400).json({ error: "No changes to save" });
+    }
+    if (!SCORECARD_EDIT_ROLES.includes((role || "").toString().trim().toLowerCase())) {
+      return res.status(403).json({ error: "Only Admin, Manager or Coordinator can edit the scorecard" });
+    }
+
+    const k       = (kind || "").toString().toLowerCase() === "dvft" ? "dvft" : "pdft";
+    const allowed = SCORECARD_OVERRIDE_FIELDS[k];
+    const nowIso  = new Date().toISOString();
+    const rows    = [];
+
+    for (const u of updates) {
+      const email = (u?.learner_email || "").trim();
+      if (!email) return res.status(400).json({ error: "learner_email is required for every change" });
+
+      const remarks = (u?.remarks || "").toString().trim();
+      if (!remarks) return res.status(400).json({ error: `Remarks are mandatory (missing for ${email})` });
+
+      const clean = {};
+      for (const [f, v] of Object.entries(u?.overrides || {})) {
+        if (!allowed.includes(f))              continue;
+        if (v === null || v === undefined || v === "") continue;
+
+        if (SCORECARD_YESNO_FIELDS.includes(f)) {
+          const yn = String(v).trim().toUpperCase();
+          if (yn !== "YES" && yn !== "NO") {
+            return res.status(400).json({ error: `${f} must be YES or NO (${email})` });
+          }
+          clean[f] = yn;
+          continue;
+        }
+
+        const num = parseFloat(v);
+        if (isNaN(num) || num < 0 || num > 100) {
+          return res.status(400).json({ error: `${f} must be a number between 0 and 100 (${email})` });
+        }
+        clean[f] = Number(num.toFixed(2));
+      }
+
+      if (!Object.keys(clean).length) {
+        return res.status(400).json({ error: `No valid changes to save for ${email}` });
+      }
+
+      rows.push({
+        batch_no,
+        learner_email: email,
+        overrides:     clean,
+        remarks,
+        edited_by:     edited_by || null,
+        edited_at:     nowIso,
+      });
+    }
+
+    const { error } = await supabase
+      .from("scorecard_overrides")
+      .upsert(rows, { onConflict: "batch_no,learner_email" });
+
+    if (error) {
+      console.error("SCORECARD override save error:", error);
+      return res.status(500).json({ error: "Failed to save scorecard changes", details: error.message });
+    }
+
+    res.json({ success: true, saved: rows.length });
+  } catch (err) {
+    console.error("SCORECARD override exception:", err);
+    res.status(500).json({ error: "Failed to save scorecard changes", details: err.message });
+  }
+});
+
 app.get("/api/scorecard/:batchNo", async (req, res) => {
   const { batchNo } = req.params;
 
@@ -4553,6 +4773,14 @@ app.get("/api/scorecard/:batchNo", async (req, res) => {
           physical: physicalOutOf100.toFixed(2),
         },
 
+        // Raw out_off totals per theory subject — used to re-derive Theory %
+        // with the original weighting when a subject mark is overridden.
+        breakdownOut: {
+          digital: buckets.digital.out,
+          cmos:    buckets.cmos.out,
+          tcl:     buckets.tcl.out,
+        },
+
         // Group percentages used in weightage formula
         intermediate: intermediateOutOf100.toFixed(2),
         theory:       theoryOutOf100.toFixed(2),
@@ -4566,7 +4794,9 @@ app.get("/api/scorecard/:batchNo", async (req, res) => {
       });
     }
 
-    res.json({ data: results });
+    // ── 8. Merge any saved Admin / Manager / Coordinator overrides ───────────
+    const overrideMap = await fetchScorecardOverrides(batchNo);
+    res.json({ data: mergeScorecardOverrides(results, overrideMap, "pdft") });
   } catch (err) {
     console.error("SCORECARD ERROR:", err);
     res.status(500).json({
@@ -4744,7 +4974,9 @@ app.get("/api/scorecard-dvft/:batchNo", async (req, res) => {
       })
     }
 
-    res.json({ data: results });
+    // Merge any saved Admin / Manager / Coordinator overrides
+    const overrideMap = await fetchScorecardOverrides(batchNo);
+    res.json({ data: mergeScorecardOverrides(results, overrideMap, "dvft") });
 
   } catch(err){
     console.error("DVFT SCORECARD ERROR",err)

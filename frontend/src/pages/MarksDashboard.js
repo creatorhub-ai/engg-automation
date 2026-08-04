@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
@@ -20,6 +20,7 @@ import {
   TableRow,
   CircularProgress,
   Chip,
+  TextField,
 } from "@mui/material";
 import {
   Download         as DownloadIcon,
@@ -32,6 +33,10 @@ import {
   EmojiEvents      as TrophyIcon,
   School           as SchoolIcon,
   WorkspacePremium as CertIcon,
+  Save             as SaveIcon,
+  Undo             as UndoIcon,
+  LockOpen         as LockOpenIcon,
+  Lock             as LockIcon,
 } from "@mui/icons-material";
 
 const API_BASE =
@@ -134,6 +139,88 @@ function n(val) {
 function ab(val) {
   if (val === null || val === undefined || val === "") return val;
   return parseFloat(val) === 0 ? "AB" : val;
+}
+
+/* ─── Scorecard editing ──────────────────────────────────────────────────────
+ * Admin / Manager / Coordinator may override the computed scorecard values.
+ * Edits are held locally until Save; every learner whose row changed must
+ * carry a Remarks note before the save is allowed through.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/* Tolerates the "Corrdinator" typo that exists in the internal_users table. */
+const SCORECARD_EDIT_ROLES = ["admin", "manager", "coordinator", "corrdinator"];
+
+/* The active LoginPage stores under "userSession"; an older flow uses "user". */
+function getSessionUser() {
+  try {
+    const sess = JSON.parse(localStorage.getItem("userSession") || "null");
+    if (sess && (sess.role || sess.email)) return sess;
+  } catch { /* ignore */ }
+  try {
+    const u = JSON.parse(localStorage.getItem("user") || "null");
+    if (u) return u;
+  } catch { /* ignore */ }
+  return {};
+}
+
+/* Editable component marks are wired up per column in the scorecard tables:
+ *   PDFT — intermediate, digital, cmos, tcl, physical, project, viva
+ *   DVFT — intermediate, digital, verilog, sv, uvm, python, project, viva
+ * Group averages (Theory / Grp1 / Grp2), Overall % and Grade are always
+ * re-derived from those, never edited directly. */
+const SCORECARD_YESNO_FIELDS = ["certification", "placement"];
+/* Fields that live on the row itself; everything else sits under row.breakdown */
+const SCORECARD_TOP_FIELDS = ["intermediate", "project", "viva"];
+
+function scorecardFieldValue(row, field) {
+  if (!row) return undefined;
+  if (SCORECARD_TOP_FIELDS.includes(field) || SCORECARD_YESNO_FIELDS.includes(field)) return row[field];
+  return row.breakdown?.[field];
+}
+
+function scGrade(overall) {
+  if (overall >= 90) return "A";
+  if (overall >= 80) return "B";
+  if (overall >= 70) return "C";
+  if (overall >= 60) return "D";
+  return "F";
+}
+
+/* Re-derives group %, Overall %, Grade, Certification and Placement from a set
+ * of component percentages — mirrors the backend scorecard formulas exactly so
+ * the table updates live while editing. `weights` carries the original out_off
+ * totals per theory subject (PDFT only) so an untouched row recomputes to the
+ * same Theory % the backend produced. */
+function recalcScorecard(kind, comp, weights) {
+  const v       = f => { const x = parseFloat(comp[f]); return isNaN(x) ? 0 : x; };
+  const inter   = v("intermediate");
+  const project = v("project");
+  const viva    = v("viva");
+
+  let derived, overall;
+  if (kind === "dvft") {
+    const g1 = (v("digital") + v("verilog")) / 2;
+    const g2 = (v("sv") + v("uvm") + v("python")) / 3;
+    overall  = inter * 0.10 + g1 * 0.20 + g2 * 0.30 + project * 0.30 + viva * 0.10;
+    derived  = { dvGroup1: g1.toFixed(2), dvGroup2: g2.toFixed(2) };
+  } else {
+    const w    = weights || {};
+    const wn   = k => { const x = parseFloat(w[k]); return isNaN(x) ? 0 : x; };
+    const wSum = wn("digital") + wn("cmos") + wn("tcl");
+    const theory = wSum > 0
+      ? (v("digital") * wn("digital") + v("cmos") * wn("cmos") + v("tcl") * wn("tcl")) / wSum
+      : (v("digital") + v("cmos") + v("tcl")) / 3;
+    overall = inter * 0.10 + theory * 0.20 + v("physical") * 0.30 + project * 0.30 + viva * 0.10;
+    derived = { theory: theory.toFixed(2) };
+  }
+
+  return {
+    ...derived,
+    overall:       overall.toFixed(2),
+    grade:         scGrade(overall),
+    certification: project >= 70 && overall >= 70 ? "YES" : "NO",
+    placement:     project >= 70 && viva >= 70 && overall >= 80 ? "YES" : "NO",
+  };
 }
 
 /* ─── Sub-components ─────────────────────────────────────────────────────── */
@@ -253,6 +340,93 @@ function GradeChip({ grade }) {
   return <Chip label={grade || "F"} size="small" sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 800, fontSize: 12, background: `${c}18`, color: c, border: `1px solid ${c}44`, minWidth: 34 }} />;
 }
 
+/* Editable percentage cell — renders the read-only PctCell unless the current
+ * user is allowed to edit the scorecard. */
+function EditablePctCell({ value, editable, changed, onChange, absentOnZero }) {
+  if (!editable) return <PctCell value={value} absentOnZero={absentOnZero} />;
+  const invalid = value === "" || value === null || value === undefined ||
+                  isNaN(parseFloat(value)) || parseFloat(value) < 0 || parseFloat(value) > 100;
+  const bc = invalid ? TOKENS.error.fill : changed ? TOKENS.warning.fill : TOKENS.border;
+  return (
+    <TableCell align="center" sx={{ ...tableCellSx, py: 0.5, px: 0.5 }}>
+      <TextField
+        value={value ?? ""} onChange={e => onChange(e.target.value)}
+        type="number" size="small"
+        inputProps={{ min: 0, max: 100, step: "0.01",
+          style: { textAlign: "center", padding: "6px 4px", fontFamily: "'DM Mono', monospace", fontSize: 12, fontWeight: 700 } }}
+        sx={{
+          width: 82,
+          "& .MuiOutlinedInput-root": { borderRadius: "8px", background: changed ? TOKENS.warning.light : TOKENS.surface },
+          "& .MuiOutlinedInput-notchedOutline": { borderColor: bc },
+          "&:hover .MuiOutlinedInput-notchedOutline": { borderColor: invalid ? TOKENS.error.fill : TOKENS.accent },
+        }}
+      />
+    </TableCell>
+  );
+}
+
+/* Editable YES / NO cell — falls back to the read-only chip. */
+function EditableYesNoCell({ value, editable, changed, onChange }) {
+  if (!editable) return <TableCell align="center" sx={tableCellSx}><YesNoChip value={value} /></TableCell>;
+  return (
+    <TableCell align="center" sx={{ ...tableCellSx, py: 0.5, px: 0.5 }}>
+      <Select value={value === "YES" ? "YES" : "NO"} onChange={e => onChange(e.target.value)} size="small"
+        sx={{ ...inputSx, width: 88, fontWeight: 700, background: changed ? TOKENS.warning.light : TOKENS.surface,
+              "& .MuiSelect-select": { py: 0.7 },
+              "& .MuiOutlinedInput-notchedOutline": { borderColor: changed ? TOKENS.warning.fill : TOKENS.border } }}>
+        <MenuItem value="YES" sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700 }}>YES</MenuItem>
+        <MenuItem value="NO"  sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700 }}>NO</MenuItem>
+      </Select>
+    </TableCell>
+  );
+}
+
+/* Remarks cell — mandatory whenever any value on the learner's row changed. */
+function RemarksCell({ value, editable, required, error, onChange }) {
+  if (!editable) {
+    return (
+      <TableCell sx={{ ...tableCellSx, whiteSpace: "normal", minWidth: 180, maxWidth: 280,
+                       color: value ? TOKENS.text : TOKENS.textSub, fontSize: 12 }}>
+        {value || "—"}
+      </TableCell>
+    );
+  }
+  return (
+    <TableCell sx={{ ...tableCellSx, py: 0.5, minWidth: 220 }}>
+      <TextField
+        value={value ?? ""} onChange={e => onChange(e.target.value)}
+        size="small" multiline maxRows={3} error={!!error}
+        placeholder={required ? "Remarks required *" : "Remarks"}
+        helperText={error ? "Mandatory — a mark was changed" : ""}
+        inputProps={{ style: { fontFamily: "'DM Sans', sans-serif", fontSize: 12 } }}
+        sx={{
+          width: "100%", minWidth: 210,
+          "& .MuiOutlinedInput-root": { borderRadius: "8px", background: required ? TOKENS.warning.light : TOKENS.surface, py: 0.4 },
+          "& .MuiOutlinedInput-notchedOutline": { borderColor: error ? TOKENS.error.fill : required ? TOKENS.warning.fill : TOKENS.border },
+          "& .MuiFormHelperText-root": { fontFamily: "'DM Sans', sans-serif", fontSize: 10, mx: 0.4 },
+        }}
+      />
+    </TableCell>
+  );
+}
+
+/* Access badge for the scorecard header */
+function ScorecardRoleBadge({ allowed, editing }) {
+  const tok   = editing ? TOKENS.warning : allowed ? TOKENS.accent : null;
+  const label = editing ? "Editing" : allowed ? "Edit allowed" : "View only";
+  const color = editing ? TOKENS.warning.fill : allowed ? TOKENS.accent : TOKENS.textSub;
+  const bg    = editing ? TOKENS.warning.light : allowed ? TOKENS.accentLight : TOKENS.surfaceAlt;
+  return (
+    <Chip
+      size="small"
+      icon={allowed ? <LockOpenIcon sx={{ fontSize: 13 }} /> : <LockIcon sx={{ fontSize: 13 }} />}
+      label={label}
+      sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 11,
+            background: bg, color, border: `1px solid ${tok ? color + "44" : TOKENS.border}` }}
+    />
+  );
+}
+
 /* Column group header */
 function ColGroupHeader({ label, color, colSpan }) {
   return (
@@ -276,7 +450,8 @@ function BatchPill({ batchNo }) {
 }
 
 /* ─── PDFT Scorecard Table ───────────────────────────────────────────────── */
-function PdftScorecardTable({ data, batchNo }) {
+function PdftScorecardTable({ data, batchNo, edit }) {
+  const canEdit = !!edit?.enabled;
   return (
     <Box sx={{ ...cardSx }}>
       <SectionHeader
@@ -285,6 +460,7 @@ function PdftScorecardTable({ data, batchNo }) {
         subtitle={`Batch ${batchNo} · ${data.length} learner${data.length !== 1 ? "s" : ""}`}
         right={
           <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+            {edit && <ScorecardRoleBadge allowed={edit.allowed} editing={canEdit} />}
             {[
               { label: "Intermediate 10%", color: "#e3f2fd" },
               { label: "Theory 20%",       color: "#f3e5f5" },
@@ -308,7 +484,7 @@ function PdftScorecardTable({ data, batchNo }) {
               <ColGroupHeader label="Physical"      color="#fff3e0" colSpan={1} />
               <ColGroupHeader label="Project"       color="#fce4ec" colSpan={1} />
               <ColGroupHeader label="Viva"          color="#e0f7fa" colSpan={1} />
-              <TableCell colSpan={3} sx={{ ...tableHeadSx }} />
+              <TableCell colSpan={5} sx={{ ...tableHeadSx }} />
             </TableRow>
             <TableRow>
               {[
@@ -326,6 +502,7 @@ function PdftScorecardTable({ data, batchNo }) {
                 { l: "Grade",          align: "center" },
                 { l: "Certification",  align: "center" },
                 { l: "Placement",      align: "center" },
+                { l: "Remarks",        align: "left"   },
               ].map(h => (
                 <TableCell key={h.l} align={h.align}
                   sx={{ ...tableHeadSx, background: h.bg || TOKENS.surfaceAlt }}>{h.l}</TableCell>
@@ -333,24 +510,42 @@ function PdftScorecardTable({ data, batchNo }) {
             </TableRow>
           </TableHead>
           <TableBody>
-            {data.map((row, i) => (
-              <TableRow key={i} sx={{ "&:nth-of-type(even)": { background: TOKENS.surfaceAlt }, "&:hover": { background: `${TOKENS.accent}08` } }}>
-                <TableCell sx={{ ...tableCellSx, fontWeight: 600 }}>{row.name}</TableCell>
-                <TableCell sx={{ ...tableCellSx, color: TOKENS.textSub, fontSize: 12 }}>{row.email}</TableCell>
-                <PctCell value={row.intermediate} absentOnZero />
-                <PctCell value={row.breakdown?.digital} absentOnZero />
-                <PctCell value={row.breakdown?.cmos} absentOnZero />
-                <PctCell value={row.breakdown?.tcl} absentOnZero />
-                <PctCell value={row.theory} absentOnZero />
-                <PctCell value={row.breakdown?.physical} absentOnZero />
-                <PctCell value={row.project} absentOnZero />
-                <PctCell value={row.viva} absentOnZero />
-                <OverallCell value={row.overall} absentOnZero />
-                <TableCell align="center" sx={tableCellSx}><GradeChip grade={row.grade} /></TableCell>
-                <TableCell align="center" sx={tableCellSx}><YesNoChip value={row.certification} /></TableCell>
-                <TableCell align="center" sx={tableCellSx}><YesNoChip value={row.placement} /></TableCell>
-              </TableRow>
-            ))}
+            {data.map((row, i) => {
+              const em   = row.email;
+              const cell = (field, value) => (
+                <EditablePctCell value={value} editable={canEdit} absentOnZero
+                  changed={canEdit && edit.changed(em, field)}
+                  onChange={v => edit.onField(em, field, v)} />
+              );
+              return (
+                <TableRow key={i} sx={{ "&:nth-of-type(even)": { background: TOKENS.surfaceAlt }, "&:hover": { background: `${TOKENS.accent}08` } }}>
+                  <TableCell sx={{ ...tableCellSx, fontWeight: 600 }}>{row.name}</TableCell>
+                  <TableCell sx={{ ...tableCellSx, color: TOKENS.textSub, fontSize: 12 }}>{row.email}</TableCell>
+                  {cell("intermediate", row.intermediate)}
+                  {cell("digital",  row.breakdown?.digital)}
+                  {cell("cmos",     row.breakdown?.cmos)}
+                  {cell("tcl",      row.breakdown?.tcl)}
+                  {/* Theory Grp %, Overall % and Grade stay derived — never edited directly */}
+                  <PctCell value={row.theory} absentOnZero />
+                  {cell("physical", row.breakdown?.physical)}
+                  {cell("project",  row.project)}
+                  {cell("viva",     row.viva)}
+                  <OverallCell value={row.overall} absentOnZero />
+                  <TableCell align="center" sx={tableCellSx}><GradeChip grade={row.grade} /></TableCell>
+                  <EditableYesNoCell value={row.certification} editable={canEdit}
+                    changed={canEdit && edit.changed(em, "certification")}
+                    onChange={v => edit.onField(em, "certification", v)} />
+                  <EditableYesNoCell value={row.placement} editable={canEdit}
+                    changed={canEdit && edit.changed(em, "placement")}
+                    onChange={v => edit.onField(em, "placement", v)} />
+                  <RemarksCell editable={canEdit}
+                    value={canEdit ? edit.remarks(em) : row.remarks}
+                    required={canEdit && edit.rowChanged(em)}
+                    error={canEdit && edit.remarksError(em)}
+                    onChange={v => edit.onRemarks(em, v)} />
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       </TableContainer>
@@ -373,7 +568,8 @@ function PdftScorecardTable({ data, batchNo }) {
 }
 
 /* ─── DVFT Scorecard Table ───────────────────────────────────────────────── */
-function DvftScorecardTable({ data, batchNo }) {
+function DvftScorecardTable({ data, batchNo, edit }) {
+  const canEdit = !!edit?.enabled;
   return (
     <Box sx={{ ...cardSx }}>
       <SectionHeader
@@ -382,6 +578,7 @@ function DvftScorecardTable({ data, batchNo }) {
         subtitle={`Batch ${batchNo} · ${data.length} learner${data.length !== 1 ? "s" : ""}`}
         right={
           <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+            {edit && <ScorecardRoleBadge allowed={edit.allowed} editing={canEdit} />}
             {[
               { label: "Intermediate 10%",      color: "#e3f2fd" },
               { label: "Digital + Verilog 20%", color: "#f3e5f5" },
@@ -405,7 +602,7 @@ function DvftScorecardTable({ data, batchNo }) {
               <ColGroupHeader label="Group 2 — SV + UVM + Python" color="#fff3e0" colSpan={4} />
               <ColGroupHeader label="Project"                    color="#fce4ec" colSpan={1} />
               <ColGroupHeader label="Viva"                       color="#e0f7fa" colSpan={1} />
-              <TableCell colSpan={3} sx={{ ...tableHeadSx }} />
+              <TableCell colSpan={5} sx={{ ...tableHeadSx }} />
             </TableRow>
             <TableRow>
               {[
@@ -425,6 +622,7 @@ function DvftScorecardTable({ data, batchNo }) {
                 { l: "Grade",          align: "center" },
                 { l: "Certification",  align: "center" },
                 { l: "Placement",      align: "center" },
+                { l: "Remarks",        align: "left"   },
               ].map(h => (
                 <TableCell key={h.l} align={h.align}
                   sx={{ ...tableHeadSx, background: h.bg || TOKENS.surfaceAlt }}>{h.l}</TableCell>
@@ -432,26 +630,44 @@ function DvftScorecardTable({ data, batchNo }) {
             </TableRow>
           </TableHead>
           <TableBody>
-            {data.map((row, i) => (
-              <TableRow key={i} sx={{ "&:nth-of-type(even)": { background: TOKENS.surfaceAlt }, "&:hover": { background: TOKENS.dvft.light } }}>
-                <TableCell sx={{ ...tableCellSx, fontWeight: 600 }}>{row.name}</TableCell>
-                <TableCell sx={{ ...tableCellSx, color: TOKENS.textSub, fontSize: 12 }}>{row.email}</TableCell>
-                <PctCell value={row.intermediate} absentOnZero />
-                <PctCell value={row.breakdown?.digital} absentOnZero />
-                <PctCell value={row.breakdown?.verilog} absentOnZero />
-                <PctCell value={row.dvGroup1} absentOnZero />
-                <PctCell value={row.breakdown?.sv} absentOnZero />
-                <PctCell value={row.breakdown?.uvm} absentOnZero />
-                <PctCell value={row.breakdown?.python} absentOnZero />
-                <PctCell value={row.dvGroup2} absentOnZero />
-                <PctCell value={row.project} absentOnZero />
-                <PctCell value={row.viva} absentOnZero />
-                <OverallCell value={row.overall} accentColor={TOKENS.dvft.fill} absentOnZero />
-                <TableCell align="center" sx={tableCellSx}><GradeChip grade={row.grade} /></TableCell>
-                <TableCell align="center" sx={tableCellSx}><YesNoChip value={row.certification} /></TableCell>
-                <TableCell align="center" sx={tableCellSx}><YesNoChip value={row.placement} /></TableCell>
-              </TableRow>
-            ))}
+            {data.map((row, i) => {
+              const em   = row.email;
+              const cell = (field, value) => (
+                <EditablePctCell value={value} editable={canEdit} absentOnZero
+                  changed={canEdit && edit.changed(em, field)}
+                  onChange={v => edit.onField(em, field, v)} />
+              );
+              return (
+                <TableRow key={i} sx={{ "&:nth-of-type(even)": { background: TOKENS.surfaceAlt }, "&:hover": { background: TOKENS.dvft.light } }}>
+                  <TableCell sx={{ ...tableCellSx, fontWeight: 600 }}>{row.name}</TableCell>
+                  <TableCell sx={{ ...tableCellSx, color: TOKENS.textSub, fontSize: 12 }}>{row.email}</TableCell>
+                  {cell("intermediate", row.intermediate)}
+                  {cell("digital", row.breakdown?.digital)}
+                  {cell("verilog", row.breakdown?.verilog)}
+                  {/* Grp1 %, Grp2 %, Overall % and Grade stay derived — never edited directly */}
+                  <PctCell value={row.dvGroup1} absentOnZero />
+                  {cell("sv",     row.breakdown?.sv)}
+                  {cell("uvm",    row.breakdown?.uvm)}
+                  {cell("python", row.breakdown?.python)}
+                  <PctCell value={row.dvGroup2} absentOnZero />
+                  {cell("project", row.project)}
+                  {cell("viva",    row.viva)}
+                  <OverallCell value={row.overall} accentColor={TOKENS.dvft.fill} absentOnZero />
+                  <TableCell align="center" sx={tableCellSx}><GradeChip grade={row.grade} /></TableCell>
+                  <EditableYesNoCell value={row.certification} editable={canEdit}
+                    changed={canEdit && edit.changed(em, "certification")}
+                    onChange={v => edit.onField(em, "certification", v)} />
+                  <EditableYesNoCell value={row.placement} editable={canEdit}
+                    changed={canEdit && edit.changed(em, "placement")}
+                    onChange={v => edit.onField(em, "placement", v)} />
+                  <RemarksCell editable={canEdit}
+                    value={canEdit ? edit.remarks(em) : row.remarks}
+                    required={canEdit && edit.rowChanged(em)}
+                    error={canEdit && edit.remarksError(em)}
+                    onChange={v => edit.onRemarks(em, v)} />
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       </TableContainer>
@@ -483,6 +699,18 @@ export default function MarksDashboard({ user }) {
   const [fetchLoading,   setFetchLoading]   = useState(false);
   const [message,        setMessage]        = useState("");
 
+  /* ── Scorecard editing state (Admin / Manager / Coordinator) ── */
+  const [editMode,     setEditMode]     = useState(false); // read-only until switched on
+  const [edits,        setEdits]        = useState({});    // { email: { field: value } }
+  const [remarksDraft, setRemarksDraft] = useState({});    // { email: remarks }
+  const [showErrors,   setShowErrors]   = useState(false);
+  const [saving,       setSaving]       = useState(false);
+
+  /* Prefer the prop; fall back to the stored session so role detection works
+   * regardless of which login flow ran. */
+  const sessionUser = useMemo(getSessionUser, []);
+  const activeUser  = (user && (user.role || user.email)) ? user : sessionUser;
+
   const welcomeName = user?.name || "User";
   const roleTitle   = user?.role
     ? user.role.charAt(0).toUpperCase() + user.role.slice(1)
@@ -491,6 +719,11 @@ export default function MarksDashboard({ user }) {
   const isPdft      = isPdftBatch(batchNo);
   const isDvft      = isDvftBatch(batchNo);
   const isScorecard = assessmentType === "scorecard";
+
+  const scorecardKind    = isDvft ? "dvft" : "pdft";
+  const canEditScorecard = SCORECARD_EDIT_ROLES.includes(
+    (activeUser?.role || "").toString().trim().toLowerCase()
+  );
 
   /* ── Load batches ── */
   useEffect(() => {
@@ -503,6 +736,7 @@ export default function MarksDashboard({ user }) {
   const fetchMarks = async () => {
     if (!batchNo) { setMessage("⚠️ Please select a batch"); return; }
     setFetchLoading(true); setMessage(""); setMarksData([]); setScorecardData([]);
+    resetScorecardDrafts();
 
     try {
       if (isScorecard) {
@@ -555,6 +789,152 @@ export default function MarksDashboard({ user }) {
     }
   };
 
+  /* ─── Scorecard editing ──────────────────────────────────────────────────
+   * Edits live in local state until Save. Overall %, Grade and the group
+   * averages are re-derived on every keystroke, so the table always shows the
+   * result the backend will store. */
+
+  /* Drops pending edits but stays in edit mode. */
+  function resetScorecardDrafts() {
+    setEdits({}); setRemarksDraft({}); setShowErrors(false);
+  }
+  /* Full reset — also leaves edit mode (batch / assessment type switch). */
+  function clearScorecardEdits() {
+    resetScorecardDrafts(); setEditMode(false);
+  }
+
+  const baseRowByEmail = useMemo(() => {
+    const m = {};
+    scorecardData.forEach(r => { m[r.email] = r; });
+    return m;
+  }, [scorecardData]);
+
+  const handleFieldChange = (email, field, value) => {
+    setEdits(prev => {
+      const orig    = scorecardFieldValue(baseRowByEmail[email], field);
+      const rowNext = { ...(prev[email] || {}) };
+      /* Typing the original value back clears the edit, so the row stops
+       * counting as changed and its remarks stop being mandatory. */
+      const isYesNo = SCORECARD_YESNO_FIELDS.includes(field);
+      const same    = isYesNo
+        ? String(value) === String(orig ?? "")
+        : value !== "" && parseFloat(value) === parseFloat(orig);
+
+      if (same) delete rowNext[field]; else rowNext[field] = value;
+
+      const next = { ...prev };
+      if (Object.keys(rowNext).length) next[email] = rowNext; else delete next[email];
+      return next;
+    });
+  };
+
+  const handleRemarksChange = (email, value) =>
+    setRemarksDraft(prev => ({ ...prev, [email]: value }));
+
+  const remarksFor = email =>
+    remarksDraft[email] !== undefined
+      ? remarksDraft[email]
+      : (baseRowByEmail[email]?.remarks || "");
+
+  const dirtyEmails = Object.keys(edits);
+  const dirtyCount  = dirtyEmails.length;
+
+  const missingRemarks = dirtyEmails.filter(em => !remarksFor(em).trim());
+  const invalidMarks   = dirtyEmails.filter(em =>
+    Object.entries(edits[em]).some(([f, v]) => {
+      if (SCORECARD_YESNO_FIELDS.includes(f)) return false;
+      const num = parseFloat(v);
+      return v === "" || isNaN(num) || num < 0 || num > 100;
+    })
+  );
+
+  /* Rows with edits applied + derived fields recomputed. Untouched rows are
+   * passed through by reference so the existing view is byte-for-byte
+   * unchanged when nothing has been edited. */
+  const displayScorecard = useMemo(() => scorecardData.map(row => {
+    const e = edits[row.email];
+    if (!e || !Object.keys(e).length) return row;
+
+    const breakdown = { ...(row.breakdown || {}) };
+    const comp      = { ...breakdown, intermediate: row.intermediate, project: row.project, viva: row.viva };
+    const merged    = { ...row, breakdown };
+
+    Object.entries(e).forEach(([f, v]) => {
+      if (SCORECARD_YESNO_FIELDS.includes(f)) return;
+      comp[f] = v;
+      if (SCORECARD_TOP_FIELDS.includes(f)) merged[f] = v; else breakdown[f] = v;
+    });
+
+    const out = { ...merged, ...recalcScorecard(scorecardKind, comp, row.breakdownOut) };
+    /* An explicit Certification / Placement override wins over the rule. */
+    if (e.certification) out.certification = e.certification;
+    if (e.placement)     out.placement     = e.placement;
+    return out;
+  }), [scorecardData, edits, scorecardKind]);
+
+  const saveScorecardChanges = async () => {
+    if (!dirtyCount || saving) return;
+
+    if (invalidMarks.length) {
+      setShowErrors(true);
+      setMessage("⚠️ Every changed mark must be a number between 0 and 100");
+      return;
+    }
+    if (missingRemarks.length) {
+      setShowErrors(true);
+      setMessage(`⚠️ Remarks are mandatory — ${missingRemarks.length} changed learner${missingRemarks.length !== 1 ? "s are" : " is"} missing one`);
+      return;
+    }
+
+    setSaving(true); setMessage("");
+    try {
+      await axios.post(`${API_BASE}/api/scorecard/override`, {
+        batch_no:  batchNo,
+        kind:      scorecardKind,
+        role:      activeUser?.role  || "",
+        edited_by: activeUser?.email || activeUser?.name || "",
+        updates:   dirtyEmails.map(em => ({
+          learner_email: em,
+          overrides:     edits[em],
+          remarks:       remarksFor(em).trim(),
+        })),
+      });
+
+      const saved = dirtyCount;
+      resetScorecardDrafts();
+      await fetchMarks();   // reload so the saved overrides come back merged
+      setMessage(`✅ Saved changes for ${saved} learner${saved !== 1 ? "s" : ""}`);
+    } catch (err) {
+      setMessage(`Error saving scorecard: ${err?.response?.data?.error || err.message || "unknown"}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /* Leaving edit mode with unsaved work would hide the pending changes, so
+   * it is blocked until they are saved or discarded. */
+  const toggleEditMode = () => {
+    if (editMode && dirtyCount > 0) {
+      setMessage("⚠️ Save or discard your changes before leaving edit mode");
+      return;
+    }
+    setMessage("");
+    setShowErrors(false);
+    setEditMode(v => !v);
+  };
+
+  /* Handed to the scorecard tables. */
+  const scorecardEdit = {
+    allowed:      canEditScorecard,
+    enabled:      canEditScorecard && editMode,
+    changed:      (email, field) => edits[email]?.[field] !== undefined,
+    rowChanged:   email => !!edits[email],
+    onField:      handleFieldChange,
+    remarks:      remarksFor,
+    onRemarks:    handleRemarksChange,
+    remarksError: email => showErrors && !!edits[email] && !remarksFor(email).trim(),
+  };
+
   /* ── Column definitions for non-scorecard tables ── */
   const getNonScorecardColumns = () => {
     if (!marksData.length || isScorecard) return [];
@@ -586,7 +966,7 @@ export default function MarksDashboard({ user }) {
     let exportData;
 
     if (isScorecard && isPdft) {
-      exportData = scorecardData.map(r => ({
+      exportData = displayScorecard.map(r => ({
         Name: r.name, Email: r.email,
         "Intermediate (%)": ab(r.intermediate),
         "Digital (%)":       ab(r.breakdown?.digital),
@@ -598,9 +978,10 @@ export default function MarksDashboard({ user }) {
         "Viva (%)":          ab(r.viva),
         "Overall (%)":       ab(r.overall),
         Grade: r.grade, Certification: r.certification, Placement: r.placement,
+        Remarks: remarksFor(r.email) || "",
       }));
     } else if (isScorecard && isDvft) {
-      exportData = scorecardData.map(r => ({
+      exportData = displayScorecard.map(r => ({
         Name: r.name, Email: r.email,
         "Intermediate (%)":  ab(r.intermediate),
         "Digital (%)":       ab(r.breakdown?.digital),
@@ -614,6 +995,7 @@ export default function MarksDashboard({ user }) {
         "Viva (%)":          ab(r.viva),
         "Overall (%)":       ab(r.overall),
         Grade: r.grade, Certification: r.certification, Placement: r.placement,
+        Remarks: remarksFor(r.email) || "",
       }));
     } else {
       const cols = getNonScorecardColumns();
@@ -646,12 +1028,12 @@ export default function MarksDashboard({ user }) {
     if (isScorecard && isPdft) {
       doc.autoTable({
         startY: 30,
-        head: [["Name","Email","Inter %","Digital %","CMOS %","TCL %","Theory %","Physical %","Project %","Viva %","Overall %","Grade","Cert","Place"]],
-        body: scorecardData.map(r => [
+        head: [["Name","Email","Inter %","Digital %","CMOS %","TCL %","Theory %","Physical %","Project %","Viva %","Overall %","Grade","Cert","Place","Remarks"]],
+        body: displayScorecard.map(r => [
           r.name, r.email,
           ab(r.intermediate), ab(r.breakdown?.digital), ab(r.breakdown?.cmos), ab(r.breakdown?.tcl),
           ab(r.theory), ab(r.breakdown?.physical), ab(r.project), ab(r.viva), ab(r.overall),
-          r.grade, r.certification, r.placement,
+          r.grade, r.certification, r.placement, remarksFor(r.email) || "",
         ]),
         styles: { fontSize: 7 }, alternateRowStyles: { fillColor: [245, 247, 255] },
         headStyles: { fillColor: [124, 58, 237], textColor: 255, fontStyle: "bold" },
@@ -659,12 +1041,13 @@ export default function MarksDashboard({ user }) {
     } else if (isScorecard && isDvft) {
       doc.autoTable({
         startY: 30,
-        head: [["Name","Email","Inter %","Digital %","Verilog %","Grp1 %","SV %","UVM %","Python %","Grp2 %","Project %","Viva %","Overall %","Grade","Cert","Place"]],
-        body: scorecardData.map(r => [
+        head: [["Name","Email","Inter %","Digital %","Verilog %","Grp1 %","SV %","UVM %","Python %","Grp2 %","Project %","Viva %","Overall %","Grade","Cert","Place","Remarks"]],
+        body: displayScorecard.map(r => [
           r.name, r.email,
           ab(r.intermediate), ab(r.breakdown?.digital), ab(r.breakdown?.verilog), ab(r.dvGroup1),
           ab(r.breakdown?.sv), ab(r.breakdown?.uvm), ab(r.breakdown?.python), ab(r.dvGroup2),
           ab(r.project), ab(r.viva), ab(r.overall), r.grade, r.certification, r.placement,
+          remarksFor(r.email) || "",
         ]),
         styles: { fontSize: 7 }, alternateRowStyles: { fillColor: [240, 249, 255] },
         headStyles: { fillColor: [8, 145, 178], textColor: 255, fontStyle: "bold" },
@@ -719,7 +1102,34 @@ export default function MarksDashboard({ user }) {
             </Typography>
           </Box>
           {hasData && (
-            <Box sx={{ display: "flex", gap: 1.5 }}>
+            <Box sx={{ display: "flex", gap: 1.5, flexWrap: "wrap" }}>
+              {/* ── Edit toggle — Admin / Manager / Coordinator only ── */}
+              {isScorecard && canEditScorecard && (isPdft || isDvft) && (
+                <Button variant={editMode ? "contained" : "outlined"} onClick={toggleEditMode} disabled={saving}
+                  startIcon={editMode ? <LockOpenIcon sx={{ fontSize: 16 }} /> : <LockIcon sx={{ fontSize: 16 }} />}
+                  sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 12, borderRadius: "10px", textTransform: "none",
+                        ...(editMode
+                          ? { background: TOKENS.warning.fill, color: "#fff", "&:hover": { background: "#d97706" } }
+                          : { borderColor: TOKENS.accent + "55", color: TOKENS.accent, "&:hover": { borderColor: TOKENS.accent, background: TOKENS.accentLight } }) }}>
+                  {editMode ? "Editing" : "Edit Scorecard"}
+                </Button>
+              )}
+
+              {/* ── Save bar — only once something on the scorecard changed ── */}
+              {isScorecard && canEditScorecard && dirtyCount > 0 && (
+                <>
+                  <Button variant="text" startIcon={<UndoIcon sx={{ fontSize: 16 }} />}
+                    onClick={() => { resetScorecardDrafts(); setMessage(""); }} disabled={saving}
+                    sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 12, borderRadius: "10px", textTransform: "none", color: TOKENS.textSub, "&:hover": { background: TOKENS.surfaceAlt } }}>
+                    Discard
+                  </Button>
+                  <Button variant="contained" onClick={saveScorecardChanges} disabled={saving}
+                    startIcon={saving ? <CircularProgress size={14} color="inherit" /> : <SaveIcon sx={{ fontSize: 16 }} />}
+                    sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 12, borderRadius: "10px", textTransform: "none", px: 2.5, background: TOKENS.success.fill, "&:hover": { background: "#0e9f74" }, "&:disabled": { opacity: 0.6 } }}>
+                    {saving ? "Saving…" : `Save Changes (${dirtyCount})`}
+                  </Button>
+                </>
+              )}
               <Button variant="outlined" startIcon={<DownloadIcon sx={{ fontSize: 16 }} />} onClick={downloadExcel}
                 sx={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 12, borderRadius: "10px", textTransform: "none", borderColor: TOKENS.border, color: TOKENS.textSub, "&:hover": { borderColor: TOKENS.accent, color: TOKENS.accent, background: TOKENS.accentLight } }}>
                 Excel
@@ -743,7 +1153,7 @@ export default function MarksDashboard({ user }) {
             <FormControl size="small" sx={{ minWidth: 200 }}>
               <InputLabel sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Select Batch</InputLabel>
               <Select value={batchNo} label="Select Batch"
-                onChange={e => { setBatchNo(e.target.value); setMarksData([]); setScorecardData([]); setMessage(""); }}
+                onChange={e => { setBatchNo(e.target.value); setMarksData([]); setScorecardData([]); setMessage(""); clearScorecardEdits(); }}
                 sx={inputSx}>
                 <MenuItem value="" sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TOKENS.textSub }}>— Select Batch —</MenuItem>
                 {batches.map((b, i) => (
@@ -755,7 +1165,7 @@ export default function MarksDashboard({ user }) {
             <FormControl size="small" sx={{ minWidth: 220 }}>
               <InputLabel sx={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>Assessment Type</InputLabel>
               <Select value={assessmentType} label="Assessment Type"
-                onChange={e => { setAssessmentType(e.target.value); setMarksData([]); setScorecardData([]); setMessage(""); }}
+                onChange={e => { setAssessmentType(e.target.value); setMarksData([]); setScorecardData([]); setMessage(""); clearScorecardEdits(); }}
                 sx={inputSx}>
                 {[
                   { v: "weekly",       l: "Weekly"          },
@@ -792,12 +1202,12 @@ export default function MarksDashboard({ user }) {
 
         {/* ── PDFT Scorecard ── */}
         {isScorecard && isPdft && scorecardData.length > 0 && (
-          <PdftScorecardTable data={scorecardData} batchNo={batchNo} />
+          <PdftScorecardTable data={displayScorecard} batchNo={batchNo} edit={scorecardEdit} />
         )}
 
         {/* ── DVFT Scorecard ── */}
         {isScorecard && isDvft && scorecardData.length > 0 && (
-          <DvftScorecardTable data={scorecardData} batchNo={batchNo} />
+          <DvftScorecardTable data={displayScorecard} batchNo={batchNo} edit={scorecardEdit} />
         )}
 
         {/* ── Scorecard: non-special batch ── */}
