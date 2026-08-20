@@ -48,7 +48,14 @@
       "Bash(cp '/c/Users/hariharan_chipedge/Music/engg-automation-git-file - Copy \\(2\\)/backend/routes/pushTokens.js' /c/Users/hariharan_chipedge/Music/engg-automation-git-file/backend/routes/)",
       "PowerShell(Get-ChildItem -Path . -Recurse -Filter \"CoursePlannerGenerator.js\" -File -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch 'node_modules' } | Select-Object -ExpandProperty FullName)",
       "Bash(npx --no-install eslint --no-eslintrc --config '{\"extends\":[\"react-app\"],\"parserOptions\":{\"ecmaVersion\":2022,\"sourceType\":\"module\",\"ecmaFeatures\":{\"jsx\":true}}}' src/pages/MarksDashboard.js)",
-      "PowerShell(git *)"
+      "PowerShell(git *)",
+      "Bash(xargs wc -l)",
+      "Bash(grep -n \"onClick=\\\\|const handle\\\\|axios.post\\\\|fetch\\(\\\\`\" HomeDashboard.js)",
+      "Bash(node --input-type=module -e ' *)",
+      "Bash(node \"C:/Users/hariharan_chipedge/AppData/Local/Temp/gen_automation_report.mjs\" \"c:/Users/hariharan_chipedge/Music/engg-automation-git-file/AUTOMATION_BLUEPRINT.pdf\")",
+      "Bash(sed 's|bufferPages: true }|bufferPages: true, compress: false }|' \"C:/Users/hariharan_chipedge/AppData/Local/Temp/gen_automation_report.mjs\")",
+      "Bash(node \"C:/Users/hariharan_chipedge/AppData/Local/Temp/gen_uncompressed.mjs\" \"C:/Users/hariharan_chipedge/AppData/Local/Temp/verify.pdf\")",
+      "Bash(node *)"
     ]
   }
 }

@@ -14,7 +14,9 @@
 -- Group averages (Theory % / Grp1 % / Grp2 %), Overall % and Grade are never
 -- stored — they are re-derived from the merged component percentages.
 --
--- Run once in the Supabase SQL editor.
+-- The backend now creates this table on demand (see ensureScorecardOverridesTable
+-- in backend/index.js), so running this file is optional — it is kept as the
+-- canonical schema reference and for provisioning the table up front.
 -- ============================================================================
 
 create table if not exists public.scorecard_overrides (
@@ -22,7 +24,7 @@ create table if not exists public.scorecard_overrides (
   batch_no      text        not null,
   learner_email text        not null,
   overrides     jsonb       not null default '{}'::jsonb,
-  remarks       text        not null,
+  remarks       text        not null default '',
   edited_by     text,
   edited_at     timestamptz not null default now(),
   constraint scorecard_overrides_batch_learner_key unique (batch_no, learner_email)

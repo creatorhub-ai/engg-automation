@@ -141,6 +141,22 @@ function ab(val) {
   return parseFloat(val) === 0 ? "AB" : val;
 }
 
+/* Overall % is the ONLY figure that is displayed/exported as a whole number:
+ * 82.14 -> 82, 82.52 -> 83. Every other percentage keeps its two decimals, and
+ * the unrounded value is still what drives Grade / Certification / Placement. */
+function roundOverall(val) {
+  const num = parseFloat(val);
+  return isNaN(num) ? null : Math.round(num);
+}
+
+/* Export variant of roundOverall — keeps the "AB" absentee marker. */
+function abOverall(val) {
+  if (val === null || val === undefined || val === "") return val;
+  const num = parseFloat(val);
+  if (isNaN(num)) return val;
+  return num === 0 ? "AB" : Math.round(num);
+}
+
 /* ─── Scorecard editing ──────────────────────────────────────────────────────
  * Admin / Manager / Coordinator may override the computed scorecard values.
  * Edits are held locally until Save; every learner whose row changed must
@@ -298,7 +314,8 @@ function PctCell({ value, absentOnZero }) {
   );
 }
 
-/* Overall cell — slightly larger */
+/* Overall cell — slightly larger. The only percentage shown rounded to a whole
+ * number; the colour band still uses the exact value. */
 function OverallCell({ value, accentColor, absentOnZero }) {
   const num = parseFloat(value) || 0;
   if (absentOnZero && parseFloat(value) === 0) {
@@ -308,7 +325,7 @@ function OverallCell({ value, accentColor, absentOnZero }) {
   return (
     <TableCell align="center" sx={tableCellSx}>
       <Box sx={{ display: "inline-flex", px: 1.5, py: 0.4, borderRadius: "20px", background: `${c}18`, border: `1px solid ${c}44` }}>
-        <Typography sx={{ fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 800, color: c }}>{Math.round(num)}%</Typography>
+        <Typography sx={{ fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 800, color: c }}>{roundOverall(num)}%</Typography>
       </Box>
     </TableCell>
   );
@@ -836,11 +853,24 @@ export default function MarksDashboard({ user }) {
       ? remarksDraft[email]
       : (baseRowByEmail[email]?.remarks || "");
 
-  const dirtyEmails = Object.keys(edits);
+  /* Rows whose marks / YES-NO values changed. */
+  const markDirtyEmails = Object.keys(edits);
+
+  /* Rows where only the Remarks text was touched. These have to be saveable on
+   * their own — otherwise a remark typed against an untouched row is silently
+   * dropped and the Save button never even appears. */
+  const remarksDirtyEmails = Object.keys(remarksDraft).filter(em =>
+    !edits[em] &&
+    baseRowByEmail[em] &&
+    (remarksDraft[em] ?? "").trim() !== (baseRowByEmail[em]?.remarks || "").trim()
+  );
+
+  const dirtyEmails = [...markDirtyEmails, ...remarksDirtyEmails];
   const dirtyCount  = dirtyEmails.length;
 
-  const missingRemarks = dirtyEmails.filter(em => !remarksFor(em).trim());
-  const invalidMarks   = dirtyEmails.filter(em =>
+  /* Remarks are mandatory only for rows whose marks changed. */
+  const missingRemarks = markDirtyEmails.filter(em => !remarksFor(em).trim());
+  const invalidMarks   = markDirtyEmails.filter(em =>
     Object.entries(edits[em]).some(([f, v]) => {
       if (SCORECARD_YESNO_FIELDS.includes(f)) return false;
       const num = parseFloat(v);
@@ -886,26 +916,43 @@ export default function MarksDashboard({ user }) {
       return;
     }
 
+    /* Numeric overrides are sent as numbers so the backend never has to guess,
+     * and rows that only carry a remark send an empty override map. */
+    const updates = dirtyEmails.map(em => {
+      const raw       = edits[em] || {};
+      const overrides = {};
+      Object.entries(raw).forEach(([f, v]) => {
+        if (v === "" || v === null || v === undefined) return;
+        overrides[f] = SCORECARD_YESNO_FIELDS.includes(f)
+          ? String(v).trim().toUpperCase()
+          : Number(parseFloat(v).toFixed(2));
+      });
+      return { learner_email: em, overrides, remarks: remarksFor(em).trim() };
+    });
+
     setSaving(true); setMessage("");
     try {
-      await axios.post(`${API_BASE}/api/scorecard/override`, {
+      const res = await axios.post(`${API_BASE}/api/scorecard/override`, {
         batch_no:  batchNo,
         kind:      scorecardKind,
         role:      activeUser?.role  || "",
         edited_by: activeUser?.email || activeUser?.name || "",
-        updates:   dirtyEmails.map(em => ({
-          learner_email: em,
-          overrides:     edits[em],
-          remarks:       remarksFor(em).trim(),
-        })),
+        updates,
       });
 
-      const saved = dirtyCount;
+      /* A 200 with success:false still means nothing was written — surface it
+       * instead of reporting a save that never happened. */
+      if (res?.data && res.data.success === false) {
+        throw new Error(res.data.error || "The server did not save the changes");
+      }
+
+      const saved = res?.data?.saved ?? dirtyCount;
       resetScorecardDrafts();
       await fetchMarks();   // reload so the saved overrides come back merged
       setMessage(`✅ Saved changes for ${saved} learner${saved !== 1 ? "s" : ""}`);
     } catch (err) {
-      setMessage(`Error saving scorecard: ${err?.response?.data?.error || err.message || "unknown"}`);
+      const d = err?.response?.data;
+      setMessage(`Error saving scorecard: ${d?.error || err.message || "unknown"}${d?.details ? ` — ${d.details}` : ""}`);
     } finally {
       setSaving(false);
     }
@@ -976,7 +1023,7 @@ export default function MarksDashboard({ user }) {
         "Physical (%)":      ab(r.breakdown?.physical),
         "Project (%)":       ab(r.project),
         "Viva (%)":          ab(r.viva),
-        "Overall (%)":       ab(r.overall),
+        "Overall (%)":       abOverall(r.overall),
         Grade: r.grade, Certification: r.certification, Placement: r.placement,
         Remarks: remarksFor(r.email) || "",
       }));
@@ -993,7 +1040,7 @@ export default function MarksDashboard({ user }) {
         "Grp2 Avg (%)":      ab(r.dvGroup2),
         "Project (%)":       ab(r.project),
         "Viva (%)":          ab(r.viva),
-        "Overall (%)":       ab(r.overall),
+        "Overall (%)":       abOverall(r.overall),
         Grade: r.grade, Certification: r.certification, Placement: r.placement,
         Remarks: remarksFor(r.email) || "",
       }));
@@ -1032,7 +1079,7 @@ export default function MarksDashboard({ user }) {
         body: displayScorecard.map(r => [
           r.name, r.email,
           ab(r.intermediate), ab(r.breakdown?.digital), ab(r.breakdown?.cmos), ab(r.breakdown?.tcl),
-          ab(r.theory), ab(r.breakdown?.physical), ab(r.project), ab(r.viva), ab(r.overall),
+          ab(r.theory), ab(r.breakdown?.physical), ab(r.project), ab(r.viva), abOverall(r.overall),
           r.grade, r.certification, r.placement, remarksFor(r.email) || "",
         ]),
         styles: { fontSize: 7 }, alternateRowStyles: { fillColor: [245, 247, 255] },
@@ -1046,7 +1093,7 @@ export default function MarksDashboard({ user }) {
           r.name, r.email,
           ab(r.intermediate), ab(r.breakdown?.digital), ab(r.breakdown?.verilog), ab(r.dvGroup1),
           ab(r.breakdown?.sv), ab(r.breakdown?.uvm), ab(r.breakdown?.python), ab(r.dvGroup2),
-          ab(r.project), ab(r.viva), ab(r.overall), r.grade, r.certification, r.placement,
+          ab(r.project), ab(r.viva), abOverall(r.overall), r.grade, r.certification, r.placement,
           remarksFor(r.email) || "",
         ]),
         styles: { fontSize: 7 }, alternateRowStyles: { fillColor: [240, 249, 255] },
