@@ -4459,6 +4459,27 @@ async function ensureScorecardOverridesTable() {
   return scorecardOverridesReady;
 }
 
+/* supabase-js hands back { data, error, status, statusText }. A PostgREST
+ * failure normally fills error.message/.code, but a proxy-level failure (bad
+ * key, empty body, network) can leave an error object with neither — so this
+ * reports the HTTP status and the raw serialised error rather than printing
+ * "undefined" and leaving nothing to go on. */
+function describeSupabaseError(resp) {
+  const e = resp?.error;
+  const bits = [];
+  if (resp?.status) bits.push(`HTTP ${resp.status}${resp.statusText ? ` ${resp.statusText}` : ""}`);
+  if (e?.code)      bits.push(`code=${e.code}`);
+  if (e?.message)   bits.push(e.message);
+  if (e?.details)   bits.push(`details=${e.details}`);
+  if (e?.hint)      bits.push(`hint=${e.hint}`);
+  if (!bits.length || (!e?.message && !e?.code)) {
+    let raw;
+    try { raw = JSON.stringify(e, Object.getOwnPropertyNames(e || {})); } catch { raw = String(e); }
+    bits.push(`raw=${raw}`);
+  }
+  return bits.join(" ") || "unknown PostgREST error";
+}
+
 /* Normalises a DB row into the shape mergeScorecardOverrides expects. */
 function toOverrideEntry(r) {
   let ov = r.overrides;
@@ -4476,23 +4497,24 @@ function toOverrideEntry(r) {
 async function fetchScorecardOverrides(batchNo) {
   const map = {};
   try {
-    const { data, error } = await supabase
+    const resp = await supabase
       .from("scorecard_overrides")
       .select("learner_email, overrides, remarks, edited_by, edited_at")
       .eq("batch_no", batchNo);
 
-    if (!error) {
-      (data || []).forEach((r) => {
+    if (!resp.error) {
+      (resp.data || []).forEach((r) => {
         map[(r.learner_email || "").trim().toLowerCase()] = toOverrideEntry(r);
       });
       return map;
     }
-    console.error("SCORECARD overrides read error:", error.message);
+    console.error("SCORECARD overrides read error:", describeSupabaseError(resp));
   } catch (err) {
     console.error("SCORECARD overrides exception:", err.message);
   }
 
-  /* PostgREST could not read it — go straight to Postgres. */
+  /* PostgREST could not read it — go straight to Postgres, when possible. */
+  if (!process.env.DATABASE_URL) return map;
   try {
     await ensureScorecardOverridesTable();
     const { rows } = await pool.query(
@@ -4667,19 +4689,36 @@ app.post("/api/scorecard/override", async (req, res) => {
       });
     }
 
-    /* Try PostgREST first; if the table is missing from its schema cache (or
-     * has never been created) fall back to a direct Postgres write, which also
-     * creates/repairs the table on the very first save. */
-    const { error: restErr } = await supabase
+    /* Try PostgREST first. `.select()` is deliberate: without it supabase-js
+     * sends Prefer: return=minimal, and a failure can come back as an error
+     * object carrying neither code nor message — which is exactly the opaque
+     * "PostgREST: ? undefined" this endpoint was reporting. */
+    const resp = await supabase
       .from("scorecard_overrides")
-      .upsert(rows, { onConflict: "batch_no,learner_email" });
+      .upsert(rows, { onConflict: "batch_no,learner_email" })
+      .select("learner_email");
 
-    if (!restErr) return res.json({ success: true, saved: rows.length, via: "postgrest" });
+    if (!resp.error) return res.json({ success: true, saved: rows.length, via: "postgrest" });
 
-    console.warn(
-      "SCORECARD override supabase save failed, falling back to pg:",
-      restErr.code || "", restErr.message, restErr.details || "", restErr.hint || ""
-    );
+    const restDesc = describeSupabaseError(resp);
+    console.warn("SCORECARD override supabase save failed, falling back to pg:", restDesc);
+
+    /* No DATABASE_URL means the auto-create fallback cannot run at all — say so
+     * plainly instead of burying it behind a generic failure. */
+    if (!process.env.DATABASE_URL) {
+      return res.status(500).json({
+        error:   "Failed to save scorecard changes",
+        details: `PostgREST: ${restDesc}`,
+        hint:    "The scorecard_overrides table is not reachable and DATABASE_URL is not set on " +
+                 "the backend, so it cannot be created automatically. Run " +
+                 "backend/sql/scorecard_overrides.sql once in the Supabase SQL editor.",
+        postgrest: {
+          status: resp.status, statusText: resp.statusText,
+          code: resp.error?.code, message: resp.error?.message,
+          details: resp.error?.details, hint: resp.error?.hint,
+        },
+      });
+    }
 
     try {
       await saveScorecardOverridesViaPg(rows);
@@ -4690,12 +4729,14 @@ app.post("/api/scorecard/override", async (req, res) => {
        * than a bare "Failed to save scorecard changes". */
       return res.status(500).json({
         error:   "Failed to save scorecard changes",
-        details: `PostgREST: ${restErr.code || "?"} ${restErr.message}` +
-                 ` | Postgres: ${pgErr.code || "?"} ${pgErr.message}`,
-        hint:    "Run backend/sql/scorecard_overrides.sql once in the Supabase SQL editor, " +
-                 "or set DATABASE_URL on the backend so the table can be created automatically.",
-        postgrest: { code: restErr.code, message: restErr.message, details: restErr.details, hint: restErr.hint },
-        postgres:  { code: pgErr.code,   message: pgErr.message },
+        details: `PostgREST: ${restDesc} | Postgres: ${pgErr.code || "?"} ${pgErr.message}`,
+        hint:    "Run backend/sql/scorecard_overrides.sql once in the Supabase SQL editor.",
+        postgrest: {
+          status: resp.status, statusText: resp.statusText,
+          code: resp.error?.code, message: resp.error?.message,
+          details: resp.error?.details, hint: resp.error?.hint,
+        },
+        postgres:  { code: pgErr.code, message: pgErr.message },
       });
     }
   } catch (err) {
@@ -4704,32 +4745,60 @@ app.post("/api/scorecard/override", async (req, res) => {
   }
 });
 
-/* Diagnostic — tells you in one request which storage path works and why the
- * other one does not. Safe to call from a browser. */
+/* Diagnostic — tells you in one request whether the scorecard_overrides table
+ * is actually usable, and if not, exactly why. It performs a real round-trip
+ * write (then removes it) because a successful SELECT does not prove the table
+ * accepts inserts. Safe to call from a browser. */
 app.get("/api/scorecard/override/health", async (_req, res) => {
+  const PROBE_BATCH = "__healthcheck__";
   const out = {
     database_url_configured: !!process.env.DATABASE_URL,
-    postgrest: { ok: false },
-    postgres:  { ok: false },
+    postgrest: { read: false, write: false },
+    postgres:  { available: false },
   };
 
-  try {
-    const { error } = await supabase.from("scorecard_overrides").select("id").limit(1);
-    if (error) out.postgrest = { ok: false, code: error.code, message: error.message, hint: error.hint };
-    else       out.postgrest = { ok: true };
-  } catch (err) {
-    out.postgrest = { ok: false, message: err.message };
+  /* ── PostgREST read ── */
+  const readResp = await supabase.from("scorecard_overrides").select("id").limit(1);
+  if (readResp.error) out.postgrest.read_error = describeSupabaseError(readResp);
+  else                out.postgrest.read = true;
+
+  /* ── PostgREST write round-trip ── */
+  const probe = {
+    batch_no: PROBE_BATCH, learner_email: "healthcheck@local",
+    overrides: {}, remarks: "healthcheck", edited_by: "healthcheck",
+    edited_at: new Date().toISOString(),
+  };
+  const writeResp = await supabase
+    .from("scorecard_overrides")
+    .upsert([probe], { onConflict: "batch_no,learner_email" })
+    .select("learner_email");
+
+  if (writeResp.error) {
+    out.postgrest.write_error = describeSupabaseError(writeResp);
+  } else {
+    out.postgrest.write = true;
+    await supabase.from("scorecard_overrides").delete().eq("batch_no", PROBE_BATCH);
   }
 
-  try {
-    await ensureScorecardOverridesTable();
-    const { rows } = await pool.query("select count(*)::int as n from public.scorecard_overrides");
-    out.postgres = { ok: true, rows: rows[0]?.n ?? 0 };
-  } catch (err) {
-    out.postgres = { ok: false, code: err.code, message: err.message };
+  /* ── Direct Postgres (only possible with DATABASE_URL) ── */
+  if (!process.env.DATABASE_URL) {
+    out.postgres.error = "DATABASE_URL is not set — the table cannot be created automatically.";
+  } else {
+    try {
+      await ensureScorecardOverridesTable();
+      const { rows } = await pool.query("select count(*)::int as n from public.scorecard_overrides");
+      out.postgres = { available: true, rows: rows[0]?.n ?? 0 };
+    } catch (err) {
+      out.postgres = { available: false, code: err.code, error: err.message };
+    }
   }
 
-  out.can_save = out.postgrest.ok || out.postgres.ok;
+  out.can_save = out.postgrest.write || out.postgres.available;
+  if (!out.can_save) {
+    out.fix = "Run backend/sql/scorecard_overrides.sql once in the Supabase SQL editor " +
+              "(it creates the table and repairs an existing one), or set DATABASE_URL " +
+              "on the backend so it can be created automatically.";
+  }
   res.status(out.can_save ? 200 : 500).json(out);
 });
 
