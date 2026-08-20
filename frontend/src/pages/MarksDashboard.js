@@ -952,7 +952,14 @@ export default function MarksDashboard({ user }) {
       setMessage(`✅ Saved changes for ${saved} learner${saved !== 1 ? "s" : ""}`);
     } catch (err) {
       const d = err?.response?.data;
-      setMessage(`Error saving scorecard: ${d?.error || err.message || "unknown"}${d?.details ? ` — ${d.details}` : ""}`);
+      /* The backend returns details + hint on a storage failure — showing them
+       * beats a bare "Failed to save scorecard changes" with a 500 in the
+       * console and no way to tell what actually broke. */
+      const parts = [d?.error || err.message || "unknown"];
+      if (d?.details) parts.push(d.details);
+      if (d?.hint)    parts.push(d.hint);
+      console.error("Scorecard save failed:", d || err);
+      setMessage(`Error saving scorecard: ${parts.join(" — ")}`);
     } finally {
       setSaving(false);
     }

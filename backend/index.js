@@ -4377,25 +4377,81 @@ function recalcScorecardRow(kind, comp, weights) {
  * written. It is now created on demand over the direct Postgres pool, and every
  * read/write falls back to that pool when PostgREST cannot see the table yet
  * (its schema cache only refreshes periodically after a DDL change). */
-const SCORECARD_OVERRIDES_DDL = `
+/* Table bootstrap.
+ *
+ * `CREATE` is the only statement that must succeed; everything after it repairs
+ * a table that already exists but is missing columns or the
+ * (batch_no, learner_email) unique key — that missing key is what makes an
+ * ON CONFLICT upsert fail with SQLSTATE 42P10. Each repair runs on its own so
+ * one failing (e.g. insufficient privileges on someone else's table) cannot
+ * abort the rest. */
+const SCORECARD_OVERRIDES_CREATE = `
   create table if not exists public.scorecard_overrides (
     id            bigserial   primary key,
     batch_no      text        not null,
     learner_email text        not null,
     overrides     jsonb       not null default '{}'::jsonb,
-    remarks       text        not null default '',
+    remarks       text                 default '',
     edited_by     text,
-    edited_at     timestamptz not null default now(),
-    constraint scorecard_overrides_batch_learner_key unique (batch_no, learner_email)
-  );
-  create index if not exists scorecard_overrides_batch_no_idx
-    on public.scorecard_overrides (batch_no);
+    edited_at     timestamptz not null default now()
+  )
 `;
+
+const SCORECARD_OVERRIDES_REPAIRS = [
+  `alter table public.scorecard_overrides add column if not exists batch_no      text`,
+  `alter table public.scorecard_overrides add column if not exists learner_email text`,
+  `alter table public.scorecard_overrides add column if not exists overrides     jsonb not null default '{}'::jsonb`,
+  `alter table public.scorecard_overrides add column if not exists remarks       text`,
+  `alter table public.scorecard_overrides add column if not exists edited_by     text`,
+  `alter table public.scorecard_overrides add column if not exists edited_at     timestamptz not null default now()`,
+  /* A NOT NULL on remarks would reject a marks-only edit. */
+  `alter table public.scorecard_overrides alter column remarks drop not null`,
+  `alter table public.scorecard_overrides alter column remarks set default ''`,
+  /* Collapse duplicates so the unique key below can be installed. */
+  `delete from public.scorecard_overrides a
+    using public.scorecard_overrides b
+    where a.batch_no = b.batch_no
+      and a.learner_email = b.learner_email
+      and a.id < b.id`,
+  `do $do$
+   begin
+     if not exists (
+       select 1 from pg_constraint
+        where conrelid = 'public.scorecard_overrides'::regclass
+          and conname  = 'scorecard_overrides_batch_learner_key'
+     ) then
+       alter table public.scorecard_overrides
+         add constraint scorecard_overrides_batch_learner_key
+         unique (batch_no, learner_email);
+     end if;
+   end $do$`,
+  `create index if not exists scorecard_overrides_batch_no_idx
+     on public.scorecard_overrides (batch_no)`,
+  /* PostgREST caches the schema; without this nudge the Supabase client keeps
+   * reporting the table as missing until its next periodic reload. */
+  `select pg_notify('pgrst', 'reload schema')`,
+];
 
 let scorecardOverridesReady = null;
 async function ensureScorecardOverridesTable() {
   if (!scorecardOverridesReady) {
-    scorecardOverridesReady = pool.query(SCORECARD_OVERRIDES_DDL).catch((err) => {
+    scorecardOverridesReady = (async () => {
+      if (!process.env.DATABASE_URL) {
+        throw new Error(
+          "DATABASE_URL is not configured, so the scorecard_overrides table cannot be " +
+          "created automatically. Set DATABASE_URL on the backend, or run " +
+          "backend/sql/scorecard_overrides.sql once in the Supabase SQL editor."
+        );
+      }
+      await pool.query(SCORECARD_OVERRIDES_CREATE);
+      for (const stmt of SCORECARD_OVERRIDES_REPAIRS) {
+        try {
+          await pool.query(stmt);
+        } catch (err) {
+          console.warn("SCORECARD overrides repair skipped:", err.code || "", err.message);
+        }
+      }
+    })().catch((err) => {
       scorecardOverridesReady = null;           // let the next call retry
       throw err;
     });
@@ -4455,21 +4511,52 @@ async function fetchScorecardOverrides(batchNo) {
 }
 
 /* Writes the overrides straight over the Postgres pool, creating the table if
- * this is the first ever save. */
+ * this is the first ever save.
+ *
+ * Deliberately UPDATE-then-INSERT rather than ON CONFLICT: the upsert form
+ * needs a unique index on (batch_no, learner_email) and blows up with 42P10
+ * when it is absent, which is exactly the state a hand-created table is in.
+ * The whole batch runs in one transaction so a partial save is impossible. */
 async function saveScorecardOverridesViaPg(rows) {
   await ensureScorecardOverridesTable();
-  for (const r of rows) {
-    await pool.query(
-      `insert into public.scorecard_overrides
-         (batch_no, learner_email, overrides, remarks, edited_by, edited_at)
-       values ($1, $2, $3::jsonb, $4, $5, $6)
-       on conflict (batch_no, learner_email) do update
-         set overrides = excluded.overrides,
-             remarks   = excluded.remarks,
-             edited_by = excluded.edited_by,
-             edited_at = excluded.edited_at`,
-      [r.batch_no, r.learner_email, JSON.stringify(r.overrides), r.remarks, r.edited_by, r.edited_at]
-    );
+
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    for (const r of rows) {
+      const params = [
+        r.batch_no,
+        r.learner_email,
+        JSON.stringify(r.overrides || {}),
+        r.remarks || "",
+        r.edited_by,
+        r.edited_at,
+      ];
+      const upd = await client.query(
+        `update public.scorecard_overrides
+            set overrides = $3::jsonb,
+                remarks   = $4,
+                edited_by = $5,
+                edited_at = $6
+          where batch_no = $1
+            and lower(learner_email) = lower($2)`,
+        params
+      );
+      if (upd.rowCount === 0) {
+        await client.query(
+          `insert into public.scorecard_overrides
+             (batch_no, learner_email, overrides, remarks, edited_by, edited_at)
+           values ($1, $2, $3::jsonb, $4, $5, $6)`,
+          params
+        );
+      }
+    }
+    await client.query("commit");
+  } catch (err) {
+    try { await client.query("rollback"); } catch { /* connection already gone */ }
+    throw err;
+  } finally {
+    client.release();
   }
 }
 
@@ -4581,35 +4668,69 @@ app.post("/api/scorecard/override", async (req, res) => {
     }
 
     /* Try PostgREST first; if the table is missing from its schema cache (or
-     * has never been created) fall back to a direct Postgres upsert, which also
-     * creates the table on the very first save. */
-    let writeErr = null;
-    const { error } = await supabase
+     * has never been created) fall back to a direct Postgres write, which also
+     * creates/repairs the table on the very first save. */
+    const { error: restErr } = await supabase
       .from("scorecard_overrides")
       .upsert(rows, { onConflict: "batch_no,learner_email" });
 
-    if (error) {
-      console.warn("SCORECARD override supabase save failed, falling back to pg:", error.message);
-      try {
-        await saveScorecardOverridesViaPg(rows);
-      } catch (pgErr) {
-        writeErr = pgErr;
-        console.error("SCORECARD override pg save error:", pgErr);
-      }
-    }
+    if (!restErr) return res.json({ success: true, saved: rows.length, via: "postgrest" });
 
-    if (writeErr) {
+    console.warn(
+      "SCORECARD override supabase save failed, falling back to pg:",
+      restErr.code || "", restErr.message, restErr.details || "", restErr.hint || ""
+    );
+
+    try {
+      await saveScorecardOverridesViaPg(rows);
+      return res.json({ success: true, saved: rows.length, via: "postgres" });
+    } catch (pgErr) {
+      console.error("SCORECARD override pg save error:", pgErr);
+      /* Both paths failed — hand back everything needed to diagnose it rather
+       * than a bare "Failed to save scorecard changes". */
       return res.status(500).json({
         error:   "Failed to save scorecard changes",
-        details: writeErr.message,
+        details: `PostgREST: ${restErr.code || "?"} ${restErr.message}` +
+                 ` | Postgres: ${pgErr.code || "?"} ${pgErr.message}`,
+        hint:    "Run backend/sql/scorecard_overrides.sql once in the Supabase SQL editor, " +
+                 "or set DATABASE_URL on the backend so the table can be created automatically.",
+        postgrest: { code: restErr.code, message: restErr.message, details: restErr.details, hint: restErr.hint },
+        postgres:  { code: pgErr.code,   message: pgErr.message },
       });
     }
-
-    res.json({ success: true, saved: rows.length });
   } catch (err) {
     console.error("SCORECARD override exception:", err);
     res.status(500).json({ error: "Failed to save scorecard changes", details: err.message });
   }
+});
+
+/* Diagnostic — tells you in one request which storage path works and why the
+ * other one does not. Safe to call from a browser. */
+app.get("/api/scorecard/override/health", async (_req, res) => {
+  const out = {
+    database_url_configured: !!process.env.DATABASE_URL,
+    postgrest: { ok: false },
+    postgres:  { ok: false },
+  };
+
+  try {
+    const { error } = await supabase.from("scorecard_overrides").select("id").limit(1);
+    if (error) out.postgrest = { ok: false, code: error.code, message: error.message, hint: error.hint };
+    else       out.postgrest = { ok: true };
+  } catch (err) {
+    out.postgrest = { ok: false, message: err.message };
+  }
+
+  try {
+    await ensureScorecardOverridesTable();
+    const { rows } = await pool.query("select count(*)::int as n from public.scorecard_overrides");
+    out.postgres = { ok: true, rows: rows[0]?.n ?? 0 };
+  } catch (err) {
+    out.postgres = { ok: false, code: err.code, message: err.message };
+  }
+
+  out.can_save = out.postgrest.ok || out.postgres.ok;
+  res.status(out.can_save ? 200 : 500).json(out);
 });
 
 app.get("/api/scorecard/:batchNo", async (req, res) => {
