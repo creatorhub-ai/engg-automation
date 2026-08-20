@@ -30,6 +30,7 @@ import { getWindowStatus } from "./marksWindowService.js";
 import marksWindowsRouter from "./routes/marksWindows.js";
 import marksSaveRouter from "./routes/marksSave.js";
 import { pool } from "./db.js";
+import pgDriver from "pg";
 import announceRouter from "./routes/announce.js";
 import attendanceRoutes from "./routes/attendance.js";
 import jwt from "jsonwebtoken";
@@ -4432,21 +4433,61 @@ const SCORECARD_OVERRIDES_REPAIRS = [
   `select pg_notify('pgrst', 'reload schema')`,
 ];
 
+/* Creating the table needs a real Postgres connection — the Supabase REST
+ * client cannot issue DDL. Three ways to supply one, cheapest first:
+ *   DATABASE_URL          — the standard full connection string
+ *   SUPABASE_DB_URL       — an explicit override, same format
+ *   SUPABASE_DB_PASSWORD  — just the DB password; the host is derived from
+ *                           SUPABASE_URL as db.<project-ref>.supabase.co
+ * With none of them set the table has to be created by hand in the SQL editor. */
+function scorecardOverridesDbUrl() {
+  if (process.env.DATABASE_URL)    return process.env.DATABASE_URL;
+  if (process.env.SUPABASE_DB_URL) return process.env.SUPABASE_DB_URL;
+
+  const pwd = process.env.SUPABASE_DB_PASSWORD;
+  const ref = (process.env.SUPABASE_URL || "").match(/^https?:\/\/([a-z0-9-]+)\.supabase\.(co|in)/i)?.[1];
+  if (pwd && ref) {
+    return `postgresql://postgres:${encodeURIComponent(pwd)}@db.${ref}.supabase.co:5432/postgres`;
+  }
+  return null;
+}
+
+const SCORECARD_DDL_HELP =
+  "The scorecard_overrides table does not exist in this Supabase project and none of " +
+  "DATABASE_URL / SUPABASE_DB_URL / SUPABASE_DB_PASSWORD is set on the backend, so it " +
+  "cannot be created automatically. Run backend/sql/scorecard_overrides.sql once in the " +
+  "Supabase SQL editor (Dashboard > SQL Editor > New query > paste > Run).";
+
+/* Reuses the shared pool when it is the one holding DATABASE_URL, otherwise
+ * opens a small dedicated pool for the derived connection string. */
+let scorecardDdlPool = null;
+function scorecardOverridesPool() {
+  const url = scorecardOverridesDbUrl();
+  if (!url) return null;
+  if (process.env.DATABASE_URL && url === process.env.DATABASE_URL) return pool;
+  if (!scorecardDdlPool) {
+    scorecardDdlPool = new pgDriver.Pool({
+      connectionString: url,
+      ssl: { rejectUnauthorized: false },
+      max: 2,
+    });
+    scorecardDdlPool.on("error", (err) =>
+      console.error("SCORECARD overrides pool error:", err.message));
+  }
+  return scorecardDdlPool;
+}
+
 let scorecardOverridesReady = null;
 async function ensureScorecardOverridesTable() {
   if (!scorecardOverridesReady) {
     scorecardOverridesReady = (async () => {
-      if (!process.env.DATABASE_URL) {
-        throw new Error(
-          "DATABASE_URL is not configured, so the scorecard_overrides table cannot be " +
-          "created automatically. Set DATABASE_URL on the backend, or run " +
-          "backend/sql/scorecard_overrides.sql once in the Supabase SQL editor."
-        );
-      }
-      await pool.query(SCORECARD_OVERRIDES_CREATE);
+      const db = scorecardOverridesPool();
+      if (!db) throw new Error(SCORECARD_DDL_HELP);
+
+      await db.query(SCORECARD_OVERRIDES_CREATE);
       for (const stmt of SCORECARD_OVERRIDES_REPAIRS) {
         try {
-          await pool.query(stmt);
+          await db.query(stmt);
         } catch (err) {
           console.warn("SCORECARD overrides repair skipped:", err.code || "", err.message);
         }
@@ -4514,10 +4555,11 @@ async function fetchScorecardOverrides(batchNo) {
   }
 
   /* PostgREST could not read it — go straight to Postgres, when possible. */
-  if (!process.env.DATABASE_URL) return map;
+  const db = scorecardOverridesPool();
+  if (!db) return map;
   try {
     await ensureScorecardOverridesTable();
-    const { rows } = await pool.query(
+    const { rows } = await db.query(
       `select learner_email, overrides, remarks, edited_by, edited_at
          from public.scorecard_overrides
         where batch_no = $1`,
@@ -4542,7 +4584,10 @@ async function fetchScorecardOverrides(batchNo) {
 async function saveScorecardOverridesViaPg(rows) {
   await ensureScorecardOverridesTable();
 
-  const client = await pool.connect();
+  const db = scorecardOverridesPool();
+  if (!db) throw new Error(SCORECARD_DDL_HELP);
+
+  const client = await db.connect();
   try {
     await client.query("begin");
     for (const r of rows) {
@@ -4703,15 +4748,21 @@ app.post("/api/scorecard/override", async (req, res) => {
     const restDesc = describeSupabaseError(resp);
     console.warn("SCORECARD override supabase save failed, falling back to pg:", restDesc);
 
-    /* No DATABASE_URL means the auto-create fallback cannot run at all — say so
-     * plainly instead of burying it behind a generic failure. */
-    if (!process.env.DATABASE_URL) {
+    /* HTTP 404 from PostgREST means the relation is not in its schema cache —
+     * i.e. the table has never been created. Name that outright; "not
+     * reachable" sends people looking at credentials that are demonstrably
+     * fine, since every other scorecard query uses the same client. */
+    const tableMissing = resp.status === 404 || resp.error?.code === "PGRST205";
+
+    /* Without a Postgres connection string the auto-create fallback cannot run
+     * at all — say so plainly instead of burying it behind a generic failure. */
+    if (!scorecardOverridesPool()) {
       return res.status(500).json({
-        error:   "Failed to save scorecard changes",
+        error:   tableMissing
+          ? "The scorecard_overrides table does not exist in this Supabase project"
+          : "Failed to save scorecard changes",
         details: `PostgREST: ${restDesc}`,
-        hint:    "The scorecard_overrides table is not reachable and DATABASE_URL is not set on " +
-                 "the backend, so it cannot be created automatically. Run " +
-                 "backend/sql/scorecard_overrides.sql once in the Supabase SQL editor.",
+        hint:    SCORECARD_DDL_HELP,
         postgrest: {
           status: resp.status, statusText: resp.statusText,
           code: resp.error?.code, message: resp.error?.message,
@@ -4752,7 +4803,11 @@ app.post("/api/scorecard/override", async (req, res) => {
 app.get("/api/scorecard/override/health", async (_req, res) => {
   const PROBE_BATCH = "__healthcheck__";
   const out = {
-    database_url_configured: !!process.env.DATABASE_URL,
+    ddl_connection: scorecardOverridesDbUrl()
+      ? (process.env.DATABASE_URL    ? "DATABASE_URL"
+      :  process.env.SUPABASE_DB_URL ? "SUPABASE_DB_URL"
+      :                                "SUPABASE_DB_PASSWORD")
+      : null,
     postgrest: { read: false, write: false },
     postgres:  { available: false },
   };
@@ -4780,25 +4835,24 @@ app.get("/api/scorecard/override/health", async (_req, res) => {
     await supabase.from("scorecard_overrides").delete().eq("batch_no", PROBE_BATCH);
   }
 
-  /* ── Direct Postgres (only possible with DATABASE_URL) ── */
-  if (!process.env.DATABASE_URL) {
-    out.postgres.error = "DATABASE_URL is not set — the table cannot be created automatically.";
+  /* ── Direct Postgres (needs one of the DDL connection sources) ── */
+  const db = scorecardOverridesPool();
+  if (!db) {
+    out.postgres.error = "No DATABASE_URL / SUPABASE_DB_URL / SUPABASE_DB_PASSWORD is set — " +
+                         "the table cannot be created automatically.";
   } else {
     try {
       await ensureScorecardOverridesTable();
-      const { rows } = await pool.query("select count(*)::int as n from public.scorecard_overrides");
+      const { rows } = await db.query("select count(*)::int as n from public.scorecard_overrides");
       out.postgres = { available: true, rows: rows[0]?.n ?? 0 };
     } catch (err) {
       out.postgres = { available: false, code: err.code, error: err.message };
     }
   }
 
-  out.can_save = out.postgrest.write || out.postgres.available;
-  if (!out.can_save) {
-    out.fix = "Run backend/sql/scorecard_overrides.sql once in the Supabase SQL editor " +
-              "(it creates the table and repairs an existing one), or set DATABASE_URL " +
-              "on the backend so it can be created automatically.";
-  }
+  out.table_exists = out.postgrest.read || out.postgres.available;
+  out.can_save     = out.postgrest.write || out.postgres.available;
+  if (!out.can_save) out.fix = SCORECARD_DDL_HELP;
   res.status(out.can_save ? 200 : 500).json(out);
 });
 
