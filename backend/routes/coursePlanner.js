@@ -143,6 +143,13 @@ router.post("/generate", async (req, res) => {
       template: summary.template || null,
       holidaysMarked: summary.holidays_marked || 0,
       startDate: summary.start_date || null,
+      // Offline batches teach Mon-Fri, so a start date mid-week (or on a
+      // weekend) reshapes the plan: the effective start can roll forward to the
+      // Monday, and week 1 only holds the days left in that week.
+      effectiveStartDate: summary.effective_start_date || null,
+      startWeekday: summary.start_weekday || null,
+      weeks: summary.weeks || 0,
+      firstWeekDays: summary.first_week_days || 0,
     });
   } catch (err) {
     console.error("Course planner generate error:", err);

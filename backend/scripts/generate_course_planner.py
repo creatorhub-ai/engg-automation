@@ -8,6 +8,20 @@ Fills a domain-specific Course Planner *template* with the batch metadata
 stamps working-day dates down the grid starting from a batch start date,
 and marks company holidays (from the Holiday list) and weekends.
 
+Offline batches teach Monday-Friday, so two calendar rules shape the grid:
+
+  * A batch that starts mid-week only gets the days left in that week.  The
+    template lays its weeks out as blocks of day-rows separated by a
+    "Saturday & Sunday - Weekend Break" banner, so the grid is re-flowed: each
+    weekend banner is pulled up until no week holds more than five teaching
+    days.  A Wednesday start therefore delivers three topics in week 1
+    (Wed-Fri) and pushes the rest into week 2, which runs Mon-Fri.  No topic
+    is dropped; the course simply finishes a few days later, and the Week No
+    column is renumbered to match the new weeks.
+  * A company holiday is a whole non-teaching day, so it is banded right
+    across the schedule columns -- exactly like the weekend banner -- as
+    "HOLIDAY - <name>", instead of being written into a single cell.
+
 The template is picked *dynamically* by domain: the first workbook in the
 template directory whose filename contains the domain token AND the words
 "Course Planner Template" is used (e.g. domain "PD" -> "PD Course Planner
@@ -49,7 +63,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "ven
 
 try:
     import openpyxl
-    from openpyxl.styles import PatternFill, Font
+    from openpyxl.styles import PatternFill, Font, Alignment
+    from openpyxl.cell.cell import MergedCell
 except ImportError:
     sys.exit("openpyxl is required.  Install it with:  pip install openpyxl")
 
@@ -61,7 +76,9 @@ HOLIDAY_FONT = Font(bold=True, color="FFC00000")   # dark-red, bold banner text
 TOPIC_COLS = range(3, 10)          # C..I  (covers both PD and DV layouts)
 DATE_COL = 2                       # column B holds the date
 WEEKEND_RE = re.compile(r"weekend|saturday\s*&\s*sunday", re.I)
-SATURDAY, SUNDAY = 5, 6            # datetime.date.weekday() values
+MONDAY = 0                         # datetime.date.weekday() values
+SATURDAY, SUNDAY = 5, 6
+TEACHING_DAYS_PER_WEEK = 5         # offline batches teach Monday-Friday
 
 
 # --------------------------------------------------------------------------- #
@@ -327,6 +344,299 @@ def fill_metadata(ws, cfg):
 
 
 # --------------------------------------------------------------------------- #
+# Week re-flow (mid-week batch start)
+# --------------------------------------------------------------------------- #
+
+def first_data_row(ws):
+    """Row where the schedule starts: the first Week-No cell (col A integer).
+    Sits below single- *and* two-row headers (DV has a 'Course/Topic Planned'
+    sub-header)."""
+    return next(
+        (r for r in range(1, ws.max_row + 1)
+         if isinstance(ws.cell(r, 1).value, (int, float))
+         and not isinstance(ws.cell(r, 1).value, bool)),
+        5,
+    )
+
+
+def last_content_row(ws):
+    """Last row that holds anything.  ws.max_row over-reports badly on these
+    templates (the PD workbook claims 997 rows for 152 rows of schedule), and
+    the re-flow must not drag hundreds of blank rows around."""
+    for r in range(ws.max_row, 0, -1):
+        if any(ws.cell(r, c).value is not None for c in range(1, ws.max_column + 1)):
+            return r
+    return ws.max_row
+
+
+def is_weekend_row(value, r, date_col):
+    """True for the full-width 'Saturday & Sunday - Weekend Break' banner rows
+    that separate one week of the template from the next."""
+    v = value(r, date_col)
+    return isinstance(v, str) and bool(WEEKEND_RE.search(v))
+
+
+def weekend_banner_end(ws, data_start, region_end, value, date_col):
+    """Last column the weekend banner spans (I on both offline templates).
+    Holiday banners copy this span so a holiday reads as a full day off, the
+    same way a weekend does.  0 when the template has no weekend row."""
+    end = 0
+    for r in range(data_start, region_end + 1):
+        if not is_weekend_row(value, r, date_col):
+            continue
+        for m in ws.merged_cells.ranges:
+            if m.min_row == r and m.min_col <= date_col <= m.max_col:
+                end = max(end, m.max_col)
+    return end
+
+
+def classify_rows(ws, value, span, data_start, region_end, date_col, topic_cols):
+    """Tag every schedule row 'weekend', 'day' or 'other' (banners, spacers).
+    Only 'day' rows carry a teaching date, and only they count towards the five
+    teaching days a week can hold."""
+    kind = {}
+    for r in range(data_start, region_end + 1):
+        if is_weekend_row(value, r, date_col):
+            kind[r] = "weekend"
+        elif is_day_row(ws, value, span, r, date_col, topic_cols):
+            kind[r] = "day"
+        else:
+            kind[r] = "other"
+    return kind
+
+
+def plan_row_order(kind, data_start, region_end, pad):
+    """Re-order the schedule rows so no week holds more than five teaching days.
+
+    `pad` is how many weekdays of the start week are already gone (Mon=0 ..
+    Fri=4), so week 1 starts with that many days already spent.  Walking down
+    the grid we count teaching days; the moment a sixth would land in the same
+    week we pull the next weekend banner up to here, which pushes the surplus
+    topics into the following week.  Template weeks that legitimately run short
+    (the project and assessment weeks hold 1-4 day-rows) close early on their
+    own banner, so their shape is preserved.
+
+    Returns the new ordering of the source row numbers."""
+    seq = list(range(data_start, region_end + 1))
+    out = []
+    day_count = pad
+    i = 0
+    while i < len(seq):
+        r = seq[i]
+        k = kind[r]
+        if k == "weekend":
+            out.append(r)
+            day_count = 0
+            i += 1
+            continue
+        if k == "day" and day_count >= TEACHING_DAYS_PER_WEEK:
+            nxt = next((x for x in seq[i:] if kind[x] == "weekend"), None)
+            if nxt is not None:
+                seq.remove(nxt)          # steal it from further down the grid
+                out.append(nxt)
+                day_count = 0
+                continue                 # re-test this day row against a fresh week
+        if k == "day":
+            day_count += 1
+        out.append(r)
+        i += 1
+    return out
+
+
+def merges_touching(ws, row_start, row_end):
+    """Every merged range that reaches into [row_start..row_end], including the
+    ones anchored outside it.  The DV template runs merges straight through the
+    boundary (its 'Module Name - S1' cell is F4:F28, and the last Week No cell
+    spills past the final row of content), and a range left merged makes every
+    cell it covers read-only."""
+    return [m for m in list(ws.merged_cells.ranges)
+            if m.max_row >= row_start and m.min_row <= row_end]
+
+
+def _contiguous_runs(nums):
+    """[1,2,3,7,8] -> [[1,2,3],[7,8]]"""
+    runs, run = [], []
+    for n in nums:
+        if run and n == run[-1] + 1:
+            run.append(n)
+        else:
+            if run:
+                runs.append(run)
+            run = [n]
+    if run:
+        runs.append(run)
+    return runs
+
+
+def apply_row_order(ws, region_start, region_end, order):
+    """Rewrite [region_start..region_end] in `order`, carrying values, styles,
+    row heights and merges.  openpyxl cannot move rows, so the region is
+    snapshotted, unmerged, then written back in the new order.
+
+    A merged range whose rows are no longer adjacent (a week's 'Module Name'
+    cell that a re-flowed weekend now cuts in two) is re-created as one merge
+    per contiguous run, and the text is repeated so the module name still reads
+    on both sides of the break -- except onto a run of rows that were blank in
+    the template, which must stay blank (the templates keep a spacer row at the
+    end of a week, and text there would read as another teaching day).
+
+    Returns {source row -> new row}."""
+    ncols = ws.max_column
+    snap = {
+        r: [(ws.cell(r, c).value, ws.cell(r, c)._style) for c in range(1, ncols + 1)]
+        for r in range(region_start, region_end + 1)
+    }
+    heights = {r: ws.row_dimensions[r].height
+               for r in range(region_start, region_end + 1)}
+
+    touching = merges_touching(ws, region_start, region_end)
+    merge_specs = [(m.min_row, m.min_col, m.max_row, m.max_col,
+                    ws.cell(m.min_row, m.min_col).value) for m in touching]
+    for m in touching:
+        ws.unmerge_cells(str(m))
+
+    pos = {s: region_start + i for i, s in enumerate(order)}
+    for s, r in pos.items():
+        for c, (v, style) in enumerate(snap[s], start=1):
+            cell = ws.cell(r, c)
+            cell.value = v
+            cell._style = style
+        ws.row_dimensions[r].height = heights[s]
+
+    blank_src = {r for r, cells in snap.items() if all(v is None for v, _ in cells)}
+    for r0, c0, r1, c1, anchor_val in merge_specs:
+        # rows outside the re-flowed region did not move, so they map to themselves
+        back = {pos.get(r, r): r for r in range(r0, r1 + 1)}
+        for run in _contiguous_runs(sorted(back)):
+            a, b = run[0], run[-1]
+            if a != b or c0 != c1:                     # a 1x1 range is not a merge
+                ws.merge_cells(start_row=a, start_column=c0, end_row=b, end_column=c1)
+            if back[a] == r0:
+                continue                               # anchor already carries the text
+            if all(back[x] in blank_src for x in run):
+                continue                               # spacer rows stay blank
+            ws.cell(a, c0).value = anchor_val
+    return pos
+
+
+def renumber_weeks(ws, data_start, region_end, kind_by_row):
+    """Renumber the Week No column so it matches the re-flowed weeks: every
+    stretch of rows closed by a weekend banner is one week.  Returns the number
+    of weeks written."""
+    for m in [m for m in merges_touching(ws, data_start, region_end)
+              if m.min_col == 1 and m.max_col == 1]:
+        ws.unmerge_cells(str(m))
+
+    # Rows whose column A is swallowed by a wide banner (the DV weekend rows
+    # merge A:E / A:I) must not be written to, nor folded into a Week No merge.
+    banner_rows = set()
+    for m in ws.merged_cells.ranges:
+        if m.min_col == 1 and m.max_col > 1:
+            banner_rows.update(range(m.min_row, m.max_row + 1))
+
+    blocks, cur = [], []
+    for r in range(data_start, region_end + 1):
+        if kind_by_row.get(r) == "weekend":
+            blocks.append((cur, r))
+            cur = []
+        else:
+            cur.append(r)
+    if cur:
+        blocks.append((cur, None))
+
+    week = 0
+    for rows, weekend_row in blocks:
+        if not any(kind_by_row.get(r) == "day" for r in rows):
+            continue                       # trailing spacers are not a week
+        week += 1
+        for r in rows:
+            if r not in banner_rows and not isinstance(ws.cell(r, 1), MergedCell):
+                ws.cell(r, 1).value = None
+        first, last = rows[0], rows[-1]
+        if weekend_row is not None and weekend_row not in banner_rows:
+            last = weekend_row
+        ws.cell(first, 1).value = week
+        if last > first:
+            ws.merge_cells(start_row=first, start_column=1, end_row=last, end_column=1)
+    return week
+
+
+def reflow_for_start(ws, data_start, date_col, pad):
+    """Adjust the grid for a batch that starts mid-week.  Returns
+    (weeks, first_week_days): how many weeks the schedule now spans and how
+    many teaching days land in week 1."""
+    region_end = last_content_row(ws)
+    value, span = build_resolvers(ws)
+    topic_cols = range(date_col + 1, date_col + 8)
+    kind = classify_rows(ws, value, span, data_start, region_end, date_col, topic_cols)
+
+    # Runs even for a Monday start (pad 0): a couple of template blocks carry a
+    # sixth day-row, which would otherwise push a teaching day past the weekend
+    # banner and cost the batch the rest of that calendar week.
+    order = plan_row_order(kind, data_start, region_end, pad)
+    if order != list(range(data_start, region_end + 1)):
+        pos = apply_row_order(ws, data_start, region_end, order)
+        kind = {pos[r]: k for r, k in kind.items()}
+
+    weeks = renumber_weeks(ws, data_start, region_end, kind)
+    first_week_days = 0
+    for r in range(data_start, region_end + 1):
+        if kind.get(r) == "weekend":
+            break
+        if kind.get(r) == "day":
+            first_week_days += 1
+    return weeks, first_week_days
+
+
+# --------------------------------------------------------------------------- #
+# Holiday banner
+# --------------------------------------------------------------------------- #
+
+def _split_merge_around_row(ws, m, r):
+    """Free row `r` from merged range `m`, keeping the parts above and below it
+    merged.  Unmerging leaves the text on the original anchor, so the part above
+    the holiday still reads; the part below is deliberately left blank rather
+    than given a copy -- the row under a Friday holiday is usually the template's
+    blank end-of-week spacer, and text there would read as a teaching day."""
+    r0, c0, r1, c1 = m.min_row, m.min_col, m.max_row, m.max_col
+    ws.unmerge_cells(str(m))
+    for a, b in ((r0, r - 1), (r + 1, r1)):
+        if b < a or (a == b and c0 == c1):
+            continue                       # nothing left that needs a merge
+        ws.merge_cells(start_row=a, start_column=c0, end_row=b, end_column=c1)
+
+
+def mark_holiday_row(ws, r, name, banner_start, banner_end, note_col, last_col):
+    """Turn a day row into a full-width holiday banner.
+
+    A company holiday is a whole day off, so it is shown the way the weekend
+    break is -- one banner merged straight across the schedule columns --
+    rather than a label dropped into the first topic cell.  Any merge reaching
+    into this row is split around it first, so the module names above and below
+    the holiday survive."""
+    for m in list(ws.merged_cells.ranges):
+        if m.max_col < banner_start or m.min_col > banner_end:
+            continue
+        if m.max_row < r or m.min_row > r:
+            continue
+        _split_merge_around_row(ws, m, r)
+
+    for c in range(banner_start, banner_end + 1):
+        ws.cell(r, c).value = None
+    if banner_end > banner_start:
+        ws.merge_cells(start_row=r, start_column=banner_start,
+                       end_row=r, end_column=banner_end)
+
+    banner = ws.cell(r, banner_start)
+    banner.value = f"HOLIDAY - {name}"
+    banner.font = HOLIDAY_FONT
+    banner.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    ws.cell(r, note_col).value = f"Holiday - {name}"      # keep the remark too
+    for c in range(1, last_col + 1):
+        ws.cell(r, c).fill = HOLIDAY_FILL
+
+
+# --------------------------------------------------------------------------- #
 # Date + holiday fill
 # --------------------------------------------------------------------------- #
 
@@ -351,8 +661,13 @@ def is_day_row(ws, value, span, r, date_col, topic_cols):
 def fill_dates(ws, start_date, holidays, date_col, online=False):
     """Stamp dates down the day-rows and mark company holidays.
 
-    Offline (default): classes run Mon-Fri, so weekday dates are stamped and
-    weekends are rolled past.
+    Offline (default): classes run Mon-Fri.  Weekday dates are stamped down the
+    day-rows, weekends are rolled past, and every "Saturday & Sunday - Weekend
+    Break" banner closes the week -- the next teaching day is the following
+    Monday.  Because the grid has already been re-flowed for the start weekday
+    (see reflow_for_start), that keeps each block on exactly one calendar week:
+    a mid-week start fills only the days left in week 1 and the rest of the
+    course runs Mon-Fri from week 2 on.
     Online: classes run on weekends, so ONLY Saturday/Sunday dates are stamped
     and weekdays are skipped.  A company holiday landing on a weekend does not
     cancel an online session -- the class is scheduled that day regardless.
@@ -369,19 +684,17 @@ def fill_dates(ws, start_date, holidays, date_col, online=False):
     current = start_date
     marked = 0
     last_stamped = None
-    # data begins at the first week-number row (col A integer); this sits below
-    # single- *and* two-row headers (DV has a 'Course/Topic Planned' sub-header)
-    data_start = next(
-        (r for r in range(1, ws.max_row + 1)
-         if isinstance(ws.cell(r, 1).value, (int, float))
-         and not isinstance(ws.cell(r, 1).value, bool)),
-        5,
-    )
+    data_start = first_data_row(ws)
     header_row = data_start - 1
     tl_col = find_theory_lab_column(ws, data_start) if online else 0
     note_col = ws.max_column + 1        # fixed "Remarks" column, computed once
     last_col = note_col
     banner_start = date_col + 1         # first topic/schedule column
+    # A holiday is banded across exactly the columns the weekend banner uses,
+    # so both read as a full day off.
+    banner_end = weekend_banner_end(ws, data_start, last_content_row(ws), value, date_col)
+    if banner_end < banner_start:
+        banner_end = note_col - 1
     ws.cell(header_row, note_col).value = "Remarks"
     for r in range(data_start, ws.max_row + 1):
         # Online Course Break: the banner takes the weekend after the last class
@@ -393,6 +706,12 @@ def fill_dates(ws, start_date, holidays, date_col, online=False):
                     current = resume_from
                     last_stamped = None    # next weekend is fresh, not a break
                 continue
+        elif is_weekend_row(value, r, date_col):
+            # Weekend banner: the week ends here, so teaching resumes on the
+            # next Monday even when the week ran short (project/assessment
+            # weeks) or started mid-week.
+            current = on_or_after(current, MONDAY)
+            continue
         if not is_day_row(ws, value, span, r, date_col, topic_cols):
             continue
         if online:
@@ -406,7 +725,7 @@ def fill_dates(ws, start_date, holidays, date_col, online=False):
                     current += datetime.timedelta(days=1)
         else:
             # topics run Monday-Friday; roll past weekends
-            while current.weekday() >= 5:                  # 5=Sat, 6=Sun
+            while current.weekday() >= SATURDAY:           # 5=Sat, 6=Sun
                 current += datetime.timedelta(days=1)
         set_cell(ws, r, date_col, current)
         ws.cell(r, date_col).number_format = "m/d/yyyy"
@@ -415,18 +734,11 @@ def fill_dates(ws, start_date, holidays, date_col, online=False):
         # falls on one does NOT cancel the session -- the class is scheduled that
         # day anyway.  Offline (weekday) holidays keep the banner behaviour.
         if not online and current in holidays:
-            # Company holiday: this is a non-teaching day.  Drop the topic that
-            # fell here and show a "HOLIDAY - <name>" banner across the topic
-            # columns (shaded), so the day is clearly marked as a holiday.
-            name = holidays[current]
-            for c in range(banner_start, note_col):   # clear all topic/schedule cells
-                set_cell(ws, r, c, None)
-            banner = target_cell(ws, r, banner_start)
-            banner.value = f"HOLIDAY - {name}"
-            banner.font = HOLIDAY_FONT
-            ws.cell(r, note_col).value = f"Holiday - {name}"   # keep the remark too
-            for c in range(1, last_col + 1):
-                ws.cell(r, c).fill = HOLIDAY_FILL
+            # Company holiday: a non-teaching day.  Drop the topic that fell
+            # here and band "HOLIDAY - <name>" right across the schedule
+            # columns, so the whole day reads as off exactly like a weekend.
+            mark_holiday_row(ws, r, holidays[current], banner_start, banner_end,
+                             note_col, last_col)
             marked += 1
         current += datetime.timedelta(days=1)
     return marked
@@ -459,17 +771,23 @@ def main():
 
     fill_metadata(ws, cfg)
     holidays_marked = 0
+    weeks = 0
+    first_week_days = 0
     if start_date:
         # data begins at the first week-number row; use it to locate the Date
         # column (it moves between templates: B for Offline/Online-PD, C for
         # Online DV/DFT).
-        data_start = next(
-            (r for r in range(1, ws.max_row + 1)
-             if isinstance(ws.cell(r, 1).value, (int, float))
-             and not isinstance(ws.cell(r, 1).value, bool)),
-            5,
-        )
+        data_start = first_data_row(ws)
         date_col = find_date_column(ws, data_start)
+        if not online:
+            # Offline batches teach Mon-Fri.  A start date on a weekend is not
+            # a teaching day, so the batch begins the following Monday.
+            if start_date.weekday() >= SATURDAY:
+                start_date = on_or_after(start_date, MONDAY)
+            # Days of the start week already gone (Mon=0 .. Fri=4): week 1 only
+            # gets what is left, and the grid is re-flowed to match.
+            pad = start_date.weekday()
+            weeks, first_week_days = reflow_for_start(ws, data_start, date_col, pad)
         holidays_marked = fill_dates(ws, start_date, holidays, date_col, online)
 
     out_path = cfg["out_path"]
@@ -481,6 +799,10 @@ def main():
         "out_path": out_path,
         "holidays_marked": holidays_marked,
         "start_date": start,
+        "effective_start_date": start_date.isoformat() if start_date else None,
+        "start_weekday": start_date.strftime("%A") if start_date else None,
+        "weeks": weeks,
+        "first_week_days": first_week_days,
         "batch_type": batch_type,
         "online": online,
     }))

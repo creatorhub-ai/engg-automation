@@ -225,6 +225,14 @@ export default function CoursePlannerGenerator({ user }) {
   const downloadUrl = (kind) =>
     `${API_BASE}/api/course-planner/download/${result.id}/${kind}`;
 
+  // Offline batches cannot start on a Saturday or Sunday, so the generator
+  // rolls the start forward to the Monday -- worth calling out, because the
+  // date on the form is then not the date the batch actually begins.
+  const rolledToMonday =
+    !!result?.effectiveStartDate &&
+    !!result?.startDate &&
+    result.effectiveStartDate !== result.startDate;
+
   return (
     <Box sx={{ maxWidth: 720, mx: "auto", p: 2 }}>
       <Typography variant="h5" gutterBottom fontWeight={600}>
@@ -232,8 +240,11 @@ export default function CoursePlannerGenerator({ user }) {
       </Typography>
       <Typography variant="body2" color="text.secondary" gutterBottom>
         Pick the batch details, generate the course planner from its domain
-        template (weekends &amp; company holidays applied), then convert it to the
-        system CSV.
+        template, then convert it to the system CSV. Offline batches teach
+        Monday&ndash;Friday: Saturday &amp; Sunday are marked as the weekend break,
+        a company holiday is banded across that whole day, and a batch starting
+        mid-week only fills the days left in that week before settling into
+        Monday&ndash;Friday.
       </Typography>
 
       <Card variant="outlined" sx={{ mt: 2 }}>
@@ -349,7 +360,7 @@ export default function CoursePlannerGenerator({ user }) {
               helperText={
                 batchType === "Online"
                   ? "Online batches run on weekends: only Saturday (Theory) and Sunday (Lab) dates are stamped."
-                  : "Used to place weekday dates, weekends and holidays on the grid."
+                  : "Offline batches teach Mon\u2013Fri. Starting mid-week gives week 1 only the days left in that week (the rest of the topics move on); a weekend date starts the batch on the following Monday."
               }
               fullWidth
             />
@@ -449,6 +460,30 @@ export default function CoursePlannerGenerator({ user }) {
                 <> — {result.holidaysMarked} holiday(s) marked.</>
               ) : (
                 <>.</>
+              )}
+              {/* Offline only: show how the mid-week start reshaped the plan. */}
+              {result.batchType !== "Online" && result.weeks > 0 && (
+                <Box component="span" sx={{ display: "block", mt: 0.5 }}>
+                  {result.weeks} week(s)
+                  {result.startWeekday && (
+                    <> — starts {result.startWeekday}</>
+                  )}
+                  {result.firstWeekDays > 0 &&
+                    result.firstWeekDays < 5 && (
+                      <>
+                        , so week 1 holds {result.firstWeekDays} teaching day(s)
+                        and the remaining topics move into week 2 (Mon–Fri)
+                      </>
+                    )}
+                  .
+                  {rolledToMonday && (
+                    <>
+                      {" "}
+                      The date picked falls on a weekend, so the batch starts on{" "}
+                      <strong>{result.effectiveStartDate}</strong>.
+                    </>
+                  )}
+                </Box>
               )}
             </Alert>
             <Button
