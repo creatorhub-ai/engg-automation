@@ -99,7 +99,7 @@ const PDFT_OUT_OF_RULES = [
 ];
 const DVFT_OUT_OF_RULES = [
   { keywords: ["intermediate"],    outOf: 25  },
-  { keywords: ["python"],          outOf: 15  },
+  { keywords: ["python"],          outOf: 20  },
   { keywords: ["uvm"],             outOf: 30  },
   { keywords: ["sv"],              outOf: 30  },
   { keywords: ["verilog"],         outOf: 25  },
